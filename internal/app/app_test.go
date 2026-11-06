@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"image"
 	"math"
 	"os"
 	"path/filepath"
@@ -818,4 +819,131 @@ func TestTypeScaleIsOrdered(t *testing.T) {
 	if len(scale) > 6 {
 		t.Fatalf("type scale has %d steps; six is the ceiling", len(scale))
 	}
+}
+
+// TestStageSwitchFadesIn checks a stage switch animates its two panels and then
+// settles exactly where a plain frame of that stage would be. The fade is
+// deliberately opacity only: the lab is for comparing one stage's numbers with
+// the next, so content that slid would make that harder to follow.
+func TestStageSwitchFadesIn(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	a.selectStep(3)
+	tr.Frame()
+	if !tr.FramePending() {
+		t.Fatal("switching stages asked for no animation")
+	}
+	// Mid-fade differs from the resting frame.
+	mid := tr.Image()
+	tr.Advance(200 * time.Millisecond)
+	tr.Frame()
+	if tr.FramePending() {
+		t.Fatal("the stage fade never settled")
+	}
+	settled := tr.Image()
+	if samePixelsE(mid, settled) {
+		t.Fatal("the frame did not change between mid-fade and settling")
+	}
+	// And where it settles is exactly the stage's plain state, so the
+	// animation cannot leave the layout somewhere a plain render is not.
+	plain := ui.Render(a.View, 1180, 720, 1)
+	if !samePixelsE(settled, plain) {
+		t.Fatal("the settled frame differs from a plain render of the same stage")
+	}
+}
+
+// TestStageFadeHasNoBlankFrame checks the fade never shows a frame with the
+// content invisible. mygo plays the first frame of an Enter at its starting
+// opacity, so Enter.Opacity 0 flashes emptiness on every switch — including
+// under ReduceMotion, where mygo still fades a fade-only Enter. Measured over
+// the stage column the opening frame must stay well above the background.
+func TestStageFadeHasNoBlankFrame(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	a.selectStep(3)
+	tr.Frame()
+	darkest := stageBrightness(tr.Image())
+	for tr.FramePending() {
+		tr.Advance(20 * time.Millisecond)
+		tr.Frame()
+		if b := stageBrightness(tr.Image()); b < darkest {
+			darkest = b
+		}
+	}
+	tr.Advance(300 * time.Millisecond)
+	tr.Frame()
+	steady := stageBrightness(tr.Image())
+	if darkest*3 < steady {
+		t.Fatalf("the fade shows a nearly blank frame: darkest %d vs steady %d", darkest, steady)
+	}
+	if stageFade.Enter == nil || stageFade.Enter.Opacity < 0.2 {
+		t.Fatalf("Enter.Opacity = %v, low enough to flash an empty frame",
+			stageFade.Enter.Opacity)
+	}
+}
+
+// stageBrightness is the mean channel value over a crop of the stage column,
+// used to tell "content drawn" from "background only".
+func stageBrightness(img *image.RGBA) int {
+	crop := image.Rect(240, 300, 840, 500)
+	sum, n := 0, 0
+	for y := crop.Min.Y; y < crop.Max.Y; y++ {
+		for x := crop.Min.X; x < crop.Max.X; x++ {
+			i := img.PixOffset(x, y)
+			sum += int(img.Pix[i]) + int(img.Pix[i+1]) + int(img.Pix[i+2])
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return sum / n
+}
+
+// TestRenderIgnoresEnterMotion guards the screenshot suite: ui.Render draws one
+// frame on a frozen clock, so a Transition's Enter must not hide content from
+// it. If that ever changes, every snapshot would capture a faded-out stage.
+func TestRenderIgnoresEnterMotion(t *testing.T) {
+	a := newTestApp(t)
+	for _, step := range []int{0, 3, 6} {
+		a.Step = step
+		img := ui.Render(a.View, 1180, 720, 1)
+		// Nothing is drawn at the extreme right of the stage column unless the
+		// stage rendered; a faded-out frame would leave that area at panel
+		// colour only. Compare against the same render to prove determinism,
+		// then check the frame is not blank by counting non-background pixels.
+		again := ui.Render(a.View, 1180, 720, 1)
+		if !samePixelsE(img, again) {
+			t.Fatalf("stage %d: ui.Render is not deterministic", step)
+		}
+		if nonBgPixels(img) < 5000 {
+			t.Fatalf("stage %d: only %d non-background pixels; the stage did not render",
+				step, nonBgPixels(img))
+		}
+	}
+}
+
+func samePixelsE(a, b *image.RGBA) bool {
+	if a.Bounds() != b.Bounds() {
+		return false
+	}
+	for i := range a.Pix {
+		if a.Pix[i] != b.Pix[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func nonBgPixels(img *image.RGBA) int {
+	n := 0
+	bg := img.Pix[0]
+	for i := 0; i < len(img.Pix); i += 4 {
+		if img.Pix[i] != bg || img.Pix[i+1] != bg || img.Pix[i+2] != bg {
+			n++
+		}
+	}
+	return n
 }

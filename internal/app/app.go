@@ -196,6 +196,25 @@ func (a *App) clearHover() {
 	a.HoverDimV, a.HoverDimH = -1, -1
 }
 
+// stageFade is how a stage switch animates: both panels that describe the stage
+// fade in over 160 ms.
+//
+// The motion is opacity only and never position or size. The lab exists to
+// compare one stage's numbers against the next, so content that slid into place
+// would make that comparison harder, not easier.
+//
+// Enter starts at 0.35 rather than 0 on purpose. At 0 mygo draws one frame of
+// the fade with the content fully transparent, and measured over the stage
+// column that frame is plain background — a visible flash of emptiness on every
+// switch, including for readers who ask for reduced motion, since mygo still
+// plays a fade-only Enter under that preference. Starting part-opaque keeps
+// every frame of the transition readable.
+var stageFade = ui.ElementTransition{
+	Duration: 160 * time.Millisecond,
+	Ease:     ui.EaseOut,
+	Enter:    &ui.Motion{Opacity: 0.35},
+}
+
 // selectStep changes the lesson and returns the main scroll area to the top.
 // It is the manual counterpart to play's automatic advance.
 func (a *App) selectStep(step int) {
@@ -262,9 +281,17 @@ func (a *App) View(c *ui.Context) {
 				// MinHeight(0) lets the scroll view give up height; without it
 				// the fixed rows above are squeezed to nothing at 1180×720.
 				ui.Scroll(c).Grow(1).MinHeight(0).Padding(16, 16, 24).Gap(12).TrackScroll(&a.Scroll).Children(func() {
-					a.stageHeader(c)
-					a.stage(c)
-					a.lesson(c)
+					// One key per stage, so switching rebuilds this subtree as
+					// new content and it fades in rather than swapping
+					// instantly. The motion is opacity only, never position:
+					// the whole point of the lab is comparing two stages' data,
+					// and content that slides would make that harder to follow.
+					ui.Column(c).Key(a.Step).Gap(12).FillWidth().
+						Transition(stageFade).Children(func() {
+						a.stageHeader(c)
+						a.stage(c)
+						a.lesson(c)
+					})
 				})
 			})
 			ui.Box(c).Width(1).FillHeight().Background(colBorder)
@@ -629,24 +656,30 @@ func (a *App) inspector(c *ui.Context) {
 			mutedText(c, "点击 token 或热力图的格子，这里会显示它的数值。")
 			return
 		}
-		a.inspectorToken(c, tr)
-		switch a.Step {
-		case 0:
-			a.inspectorBytes(c, tr)
-		case 1:
-			a.inspectorEmbed(c, tr)
-		case 2:
-			a.inspectorScores(c, tr)
-		case 3:
-			a.inspectorAttention(c, tr)
-		case 4:
-			a.inspectorResidual(c)
-		case 5:
-			a.inspectorFFN(c)
-		case 6:
-			a.inspectorLogits(c, tr)
-		}
-		a.inspectorHoverCell(c)
+		// The same faint-fade as the stage area, under the same key, so the
+		// two panels that describe one stage change together instead of one
+		// snapping while the other eases.
+		ui.Column(c).Key(a.Step).Gap(12).FillWidth().
+			Transition(stageFade).Children(func() {
+			a.inspectorToken(c, tr)
+			switch a.Step {
+			case 0:
+				a.inspectorBytes(c, tr)
+			case 1:
+				a.inspectorEmbed(c, tr)
+			case 2:
+				a.inspectorScores(c, tr)
+			case 3:
+				a.inspectorAttention(c, tr)
+			case 4:
+				a.inspectorResidual(c)
+			case 5:
+				a.inspectorFFN(c)
+			case 6:
+				a.inspectorLogits(c, tr)
+			}
+			a.inspectorHoverCell(c)
+		})
 	})
 }
 

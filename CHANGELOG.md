@@ -4,8 +4,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- 阶段切换时淡入（160ms，只改不透明度、不动位置）：中栏与检查器各自带一个按阶段变化的 `Key`，切换阶段时一起淡入。mygo v0.7.4 的 `Transition`/`Enter` 已确认可用；动效刻意不做位移，因为这个工具的用法就是「同一位置比较两个阶段的数据」
+
 ### Changed
 
+- 淡入起点用 0.35 而不是 0：实测 `Enter.Opacity = 0` 时首帧内容完全透明（那一帧就是纯背景），每次切阶段都会闪一下空白；mygo 在 `ReduceMotion` 下对「纯淡入」的 Enter 仍然会播，所以偏好减少动效的读者同样会看到这一闪
 - 字号收敛成 6 级阶梯（`fontMicro/Small/Body/Data/Title/Hero`，10/11/12/13/15/16），全部写在 `theme.go` 里；此前散落 10 个字号（9、10、10.5、11、12、12.5、13、14、15、16），其中 10.5 和 12.5 各只出现两三次
   - 最小一级从 9px 提到 10px：侧栏状态行、字节 id、热力图 min/max、步进器序号都在这级
   - 字号不再有字面量，`TestTypeScaleIsTheOnlySourceOfFontSizes` 扫描全部源文件，出现 `FontSize(10.5)` 或 `Size: 9` 就失败
