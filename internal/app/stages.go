@@ -100,30 +100,45 @@ func (a *App) emptyPromptCard(c *ui.Context) {
 			"这是一个字节级分词器：每个 UTF-8 字节是一个 token，所以任何文字都能进来，"+
 			"不需要先出现在词表里。")
 		ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "或者从一句现成的开始").FontSize(10).TextColor(colFaint).Shrink(0)
+			ui.Text(c, "或者从一句现成的开始").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
 			for _, p := range promptPresets {
-				p := p
 				// The empty preset is the state the reader is already in: a
 				// chip for it would be a button that does nothing.
 				if p.prompt == "" {
 					continue
 				}
-				chip := ui.Row(c).Padding(5, 9).Radius(6).Gap(5).AlignItems(ui.Center).
-					Background(colPanel2).Border(1, colBorder).Children(func() {
-					ui.Text(c, p.name).FontSize(11).TextColor(colMuted).NoWrap()
-				})
-				if chip.Clicked() {
-					a.applyPrompt(p.prompt)
-				}
-				chip.Tooltip(truncateRunes(p.prompt, 48))
+				a.promptChip(c, p, false)
 			}
 		})
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "提示：").FontSize(10).TextColor(colFaint).Shrink(0)
+			ui.Text(c, "提示：").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
 			ui.Text(c, "输入后按任意阶段键（1–7）继续，顶部的 token 条会立刻出现。").
-				FontSize(10).TextColor(colFaint)
+				FontSize(fontMicro).TextColor(colFaint)
 		})
 	})
+}
+
+// promptChip draws one preset prompt. Both places that offer the presets — the
+// tokenising card and the empty-prompt card — go through here: they had drifted
+// into two different looks (10.5px/4-8-5 versus 11px/5-9-6) for the same
+// control, which reads as two different things rather than one.
+//
+// showSelected marks the preset currently in the field; the empty-prompt card
+// passes false because it only ever lists the presets the reader is not using.
+func (a *App) promptChip(c *ui.Context, p promptPreset, showSelected bool) {
+	chip := ui.Row(c).Padding(4, 9).Radius(6).AlignItems(ui.Center).
+		Background(colPanel2).Border(1, colBorder).Children(func() {
+		ui.Text(c, p.name).FontSize(fontSmall).TextColor(colMuted).NoWrap()
+	})
+	if showSelected && a.Prompt == p.prompt {
+		chip = chip.Background(colAccent.Alpha(0.14)).Border(1, colAccent.Alpha(0.6))
+	}
+	if chip.Clicked() {
+		a.applyPrompt(p.prompt)
+	}
+	if p.prompt != "" {
+		chip.Tooltip(truncateRunes(p.prompt, 48))
+	}
 }
 
 // truncateRunes shortens s to at most n runes, for a tooltip about a prompt
@@ -144,29 +159,19 @@ func (a *App) stageTokens(c *ui.Context) {
 	card(c, func() {
 		sectionTitle(c, "提示词变成 token 序列", fmt.Sprintf("T = %d", len(tr.Tokens)))
 		ui.Row(c).Gap(16).Wrap().Children(func() {
-			ui.Text(c, fmt.Sprintf("字节数 %d", len(tr.Tokens))).FontSize(11).TextColor(colFaint)
-			ui.Text(c, fmt.Sprintf("字符数 %d", utf8.RuneCountInString(tr.Text))).FontSize(11).TextColor(colFaint)
-			ui.Text(c, fmt.Sprintf("上下文上限 %d", tr.Config.Ctx)).FontSize(11).TextColor(colFaint)
+			ui.Text(c, fmt.Sprintf("字节数 %d", len(tr.Tokens))).FontSize(fontSmall).TextColor(colFaint)
+			ui.Text(c, fmt.Sprintf("字符数 %d", utf8.RuneCountInString(tr.Text))).FontSize(fontSmall).TextColor(colFaint)
+			ui.Text(c, fmt.Sprintf("上下文上限 %d", tr.Config.Ctx)).FontSize(fontSmall).TextColor(colFaint)
 			if extra := len(tr.Tokens) - utf8.RuneCountInString(tr.Text); extra > 0 {
-				ui.Text(c, fmt.Sprintf("多字节字符多占 %d 个 token", extra)).FontSize(11).TextColor(colAccent2)
+				ui.Text(c, fmt.Sprintf("多字节字符多占 %d 个 token", extra)).FontSize(fontSmall).TextColor(colAccent2)
 			}
 		})
 		mutedText(c, "窗口顶部的 token 条就是这条序列：每个格子是一个 token，上面的字是它的字面形态，"+
 			"下面的数字是它的 id。点任意一格，右侧检查器会显示这个 token 在当前阶段的数值。")
 		ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "试试").FontSize(10).TextColor(colFaint).Shrink(0)
+			ui.Text(c, "试试").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
 			for _, p := range promptPresets {
-				p := p
-				chip := ui.Row(c).Padding(4, 8).Radius(5).Gap(4).AlignItems(ui.Center).
-					Background(colPanel2).Border(1, colBorder).Children(func() {
-					ui.Text(c, p.name).FontSize(10.5).TextColor(colMuted).NoWrap()
-				})
-				if a.Prompt == p.prompt {
-					chip = chip.Background(colAccent.Alpha(0.14)).Border(1, colAccent.Alpha(0.6))
-				}
-				if chip.Clicked() {
-					a.applyPrompt(p.prompt)
-				}
+				a.promptChip(c, p, true)
 			}
 		})
 	})
@@ -194,10 +199,10 @@ func (a *App) stageTokens(c *ui.Context) {
 					label = fmt.Sprintf("0x%02X", g.bytes[0])
 				}
 				ui.Column(c).Gap(3).Children(func() {
-					ui.Text(c, label).FontSize(14).TextColor(colText)
+					ui.Text(c, label).FontSize(fontData).TextColor(colText)
 					ui.Row(c).Gap(2).Children(func() {
 						for _, b := range g.bytes {
-							ui.Text(c, fmt.Sprintf("%d", b)).FontSize(9).TextColor(colFaint).
+							ui.Text(c, fmt.Sprintf("%d", b)).FontSize(fontMicro).TextColor(colFaint).
 								Padding(2, 3).Radius(3).Background(colPanel2)
 						}
 					})
@@ -226,8 +231,8 @@ func (a *App) stageTokens(c *ui.Context) {
 				i, r := i, r
 				chip := ui.Column(c).Gap(1).Padding(5, 9).Radius(6).
 					Background(colPanel2).Border(1, colBorder).Children(func() {
-					ui.Text(c, r.name).FontSize(10).TextColor(colMuted).NoWrap()
-					ui.Text(c, r.shape).FontSize(10.5).TextColor(colAccent2).NoWrap()
+					ui.Text(c, r.name).FontSize(fontMicro).TextColor(colMuted).NoWrap()
+					ui.Text(c, r.shape).FontSize(fontMicro).TextColor(colAccent2).NoWrap()
 				})
 				if r.step == a.Step {
 					chip = chip.Background(colAccent.Alpha(0.12)).Border(1, colAccent.Alpha(0.6))
@@ -236,7 +241,7 @@ func (a *App) stageTokens(c *ui.Context) {
 					a.selectStep(r.step)
 				}
 				if i < len(rows)-1 {
-					ui.Text(c, "→").FontSize(11).TextColor(colFaint)
+					ui.Text(c, "→").FontSize(fontSmall).TextColor(colFaint)
 				}
 			}
 		})
@@ -251,11 +256,11 @@ func (a *App) stageEmbed(c *ui.Context) {
 	}
 	card(c, func() {
 		sectionTitle(c, fmt.Sprintf("token %d「%s」的输入向量", i, tr.Tokens[i].Text), fmt.Sprintf("d_model = %d", tr.Config.DModel))
-		ui.Text(c, "token embedding").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "token embedding").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, tr.Embed[i], 20, &a.HoverDimIn)
-		ui.Text(c, "position embedding").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "position embedding").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, tr.Pos[i], 20, &a.HoverDimIn)
-		ui.Text(c, "x = embedding + position").FontSize(10).TextColor(colAccent2)
+		ui.Text(c, "x = embedding + position").FontSize(fontMicro).TextColor(colAccent2)
 		vectorStrip(c, tr.Input[i], 24, &a.HoverDimIn)
 	})
 
@@ -263,7 +268,7 @@ func (a *App) stageEmbed(c *ui.Context) {
 		sectionTitle(c, "位置向量随位置变化", "取前四个位置的 P[t]")
 		for t := 0; t < 4 && t < len(tr.Pos); t++ {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Text(c, fmt.Sprintf("t=%d", t)).FontSize(10).TextColor(colFaint).Width(26)
+				ui.Text(c, fmt.Sprintf("t=%d", t)).FontSize(fontMicro).TextColor(colFaint).Width(26)
 				ui.Box(c).Grow(1).Children(func() {
 					vectorStrip(c, tr.Pos[t], 14, &a.HoverDimIn)
 				})
@@ -279,11 +284,11 @@ func (a *App) stageScores(c *ui.Context) {
 	h := l.Heads[a.Head]
 	card(c, func() {
 		sectionTitle(c, fmt.Sprintf("token %d 的 Q / K / V", i), fmt.Sprintf("头 %d · d_head = %d", a.Head, tr.Config.DHead()))
-		ui.Text(c, "Query").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "Query").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, h.Q[i], 18, &a.HoverDimQ)
-		ui.Text(c, "Key（同位置）").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "Key（同位置）").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, h.K[i], 18, &a.HoverDimK)
-		ui.Text(c, "Value（同位置）").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "Value（同位置）").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, h.V[i], 18, &a.HoverDimV)
 	})
 
@@ -303,11 +308,11 @@ func (a *App) stageScores(c *ui.Context) {
 				ui.Row(c).Gap(12).Children(func() {
 					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
 						ui.Box(c).Size(9, 9).Radius(2).Background(colWarm)
-						ui.Text(c, "正分（暖色）").FontSize(10).TextColor(colMuted)
+						ui.Text(c, "正分（暖色）").FontSize(fontMicro).TextColor(colMuted)
 					})
 					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
 						ui.Box(c).Size(9, 9).Radius(2).Background(colNeg)
-						ui.Text(c, "负分（蓝色）").FontSize(10).TextColor(colMuted)
+						ui.Text(c, "负分（蓝色）").FontSize(fontMicro).TextColor(colMuted)
 					})
 				})
 				kv(c, "缩放", fmt.Sprintf("1/√%d = %.3f", tr.Config.DHead(), 1/math.Sqrt(float64(tr.Config.DHead()))))
@@ -378,13 +383,13 @@ func (a *App) stageSoftmax(c *ui.Context) {
 
 	card(c, func() {
 		sectionTitle(c, "加权求和", "本头的输出，以及它在残差里的份额")
-		ui.Text(c, fmt.Sprintf("Σ α·v（头内输出，d_head = %d）", tr.Config.DHead())).FontSize(10).TextColor(colFaint)
+		ui.Text(c, fmt.Sprintf("Σ α·v（头内输出，d_head = %d）", tr.Config.DHead())).FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, h.Out[i], 18, &a.HoverDimH)
 		// Head h only multiplies the rows of Wo that belong to its own slice,
 		// so this is the head's actual contribution, not the sum of all heads.
-		ui.Text(c, "· Wo[h] 切片（本头贡献 Δ_h，d_model 宽）").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "· Wo[h] 切片（本头贡献 Δ_h，d_model 宽）").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.HeadProj[a.Head][i], 18, &a.HoverDimH)
-		ui.Text(c, "全部头相加 = 本层注意力输出").FontSize(10).TextColor(colAccent2)
+		ui.Text(c, "全部头相加 = 本层注意力输出").FontSize(fontMicro).TextColor(colAccent2)
 		vectorStrip(c, l.AttnProj[i], 18, &a.HoverDimH)
 	})
 }
@@ -395,15 +400,15 @@ func (a *App) stageResidual(c *ui.Context) {
 
 	card(c, func() {
 		sectionTitle(c, "残差流", "两次加法，信息都绕过了子层")
-		ui.Text(c, "进入注意力子层 x").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "进入注意力子层 x").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.In[i], 16, &a.HoverDimIn)
-		ui.Text(c, "注意力子层输出 Δ_attn").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "注意力子层输出 Δ_attn").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.AttnProj[i], 16, &a.HoverDimIn)
-		ui.Text(c, "x + Δ_attn").FontSize(10).TextColor(colAccent2)
+		ui.Text(c, "x + Δ_attn").FontSize(fontMicro).TextColor(colAccent2)
 		vectorStrip(c, l.AfterAttn[i], 20, &a.HoverDimIn)
-		ui.Text(c, "FFN 子层输出 Δ_ffn").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "FFN 子层输出 Δ_ffn").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.FFNOut[i], 16, &a.HoverDimIn)
-		ui.Text(c, "x + Δ_attn + Δ_ffn（送往下一层）").FontSize(10).TextColor(colAccent2)
+		ui.Text(c, "x + Δ_attn + Δ_ffn（送往下一层）").FontSize(fontMicro).TextColor(colAccent2)
 		vectorStrip(c, l.AfterFFN[i], 20, &a.HoverDimIn)
 	})
 
@@ -413,9 +418,9 @@ func (a *App) stageResidual(c *ui.Context) {
 		mb, sb := meanStd(before)
 		ma, sa := meanStd(after)
 		sectionTitle(c, "LayerNorm", fmt.Sprintf("μ %.3f → %.3f · σ %.3f → %.3f", mb, ma, sb, sa))
-		ui.Text(c, "归一化前").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "归一化前").FontSize(fontMicro).TextColor(colFaint)
 		histogram(c, before, 32, colWarm)
-		ui.Text(c, "归一化后").FontSize(10).TextColor(colAccent2)
+		ui.Text(c, "归一化后").FontSize(fontMicro).TextColor(colAccent2)
 		histogram(c, after, 32, colAccent2)
 		mutedText(c, "LayerNorm 先减均值、除标准差，再乘可学习的 γ、加 β；直方图展示最终的 γ/β 输出，所以方差不必恰好为 1。")
 	})
@@ -508,12 +513,12 @@ func (a *App) stageFFN(c *ui.Context) {
 		sectionTitle(c, "升维 → GELU → 降维",
 			fmt.Sprintf("d_ff = %d · 占全部参数 %.0f%%（块内 %.0f%%）",
 				len(hidden), ofAll*100, ofBlocks*100))
-		ui.Text(c, "W₁·LN(x) 后过 GELU").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "W₁·LN(x) 后过 GELU").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, hidden, 22, &a.HoverDimH)
 		ui.Row(c).Gap(16).Wrap().Children(func() {
-			ui.Text(c, fmt.Sprintf("输出 > 0.01 的维度 %d / %d (%.0f%%)", active, len(hidden), 100*float64(active)/float64(len(hidden)))).FontSize(11).TextColor(colMuted)
+			ui.Text(c, fmt.Sprintf("输出 > 0.01 的维度 %d / %d (%.0f%%)", active, len(hidden), 100*float64(active)/float64(len(hidden)))).FontSize(fontSmall).TextColor(colMuted)
 			_, hi := minMaxFloat(hidden)
-			ui.Text(c, fmt.Sprintf("峰值 %+.2f", hi)).FontSize(11).TextColor(colFaint)
+			ui.Text(c, fmt.Sprintf("峰值 %+.2f", hi)).FontSize(fontSmall).TextColor(colFaint)
 		})
 		histogram(c, hidden, 36, colGreen)
 		mutedText(c, "GELU 不是 ReLU：负值不会被截成 0，只是被平滑压向 0，所以分布右侧拖出一条长尾，这就是「稀疏但连续」。")
@@ -524,7 +529,7 @@ func (a *App) stageFFN(c *ui.Context) {
 				"所以这里的「稀疏」指「大部分维度接近 0」，而不是「大部分维度恰好等于 0」——"+
 				"这一行里恰好等于 0 的有 %d 个。",
 				len(hidden), negDims(hidden), geluFloor, geluFloor, zeroDims(hidden)))
-		ui.Text(c, "× W₂ 回到 d_model").FontSize(10).TextColor(colFaint)
+		ui.Text(c, "× W₂ 回到 d_model").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.FFNOut[i], 18, &a.HoverDimH)
 	})
 }
@@ -596,7 +601,7 @@ func (a *App) stageOutput(c *ui.Context) {
 			if ui.PrimaryButton(c, "采样并续写").Clicked() {
 				a.sampleNext()
 			}
-			ui.Text(c, "续写结果会追加到提示词，并重新跑一遍前向。").FontSize(10).TextColor(colFaint)
+			ui.Text(c, "续写结果会追加到提示词，并重新跑一遍前向。").FontSize(fontMicro).TextColor(colFaint)
 		})
 		if a.LastSample != "" {
 			kv(c, "上一次", a.LastSample)
@@ -625,10 +630,10 @@ func (a *App) lesson(c *ui.Context) {
 		if len(off) > 0 {
 			ui.Text(c, fmt.Sprintf("顶部「%s」在这一步不生效：%s",
 				strings.Join(off, " / "), controlScopeNote(off))).
-				FontSize(10).TextColor(colFaint).LineHeight(1.4)
+				FontSize(fontMicro).TextColor(colFaint).LineHeight(1.4)
 		}
 		ui.Text(c, "快捷键：← → 切换阶段 · Shift+← → 切换 token · 空格 播放/暂停 · 1–7 跳转").
-			FontSize(10).TextColor(colFaint)
+			FontSize(fontMicro).TextColor(colFaint)
 	})
 }
 
@@ -704,9 +709,9 @@ func (a *App) inspectorBytes(c *ui.Context, tr *model.Trace) {
 			for i := from; i <= to; i++ {
 				i := i
 				ui.Column(c).Gap(2).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, fmt.Sprintf("%d", tr.Tokens[i].Byte)).FontSize(13).TextColor(colText).
+					ui.Text(c, fmt.Sprintf("%d", tr.Tokens[i].Byte)).FontSize(fontData).TextColor(colText).
 						Padding(3, 7).Radius(4).Background(colPanel2)
-					ui.Text(c, fmt.Sprintf("#%d", i)).FontSize(9).TextColor(colFaint)
+					ui.Text(c, fmt.Sprintf("#%d", i)).FontSize(fontMicro).TextColor(colFaint)
 				})
 			}
 		})

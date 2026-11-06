@@ -149,7 +149,7 @@ main.go                  窗口与权重加载
 justfile                 多端构建、测试、运行命令
 internal/model/          纯 Go 模型：tokenizer / tensor / gpt / weights
 internal/model/testdata/ PyTorch 逐层对拍夹具（parity.json.gz）
-internal/app/            MyGo 界面：布局、组件、七个阶段的视图、检查器
+internal/app/            MyGo 界面：布局、组件、七个阶段的视图、检查器（theme.go 有调色板与字号阶梯）
 tools/train.py           PyTorch 训练并导出 weights.json
 tools/parity.py          PyTorch 逐层中间结果导出，用于对拍
 docs/                    截图

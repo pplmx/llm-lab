@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -757,5 +759,63 @@ func TestAttentionRowsSumToOneButColumnsDoNot(t *testing.T) {
 	}
 	if math.Abs(total-float64(len(h.Attn))) > 1e-3 {
 		t.Fatalf("grand total %v, want %d (one per row)", total, len(h.Attn))
+	}
+}
+
+// TestTypeScaleIsTheOnlySourceOfFontSizes keeps the ten-by-eye sizing from
+// creeping back: every FontSize and Span Size in the package must be one of the
+// six scale constants, never a literal. A literal here is a size nobody
+// remembers writing and nobody dares change.
+func TestTypeScaleIsTheOnlySourceOfFontSizes(t *testing.T) {
+	sources, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Both the call form and the struct-field form the strip and stepper use.
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`FontSize\(\s*[0-9]`),
+		regexp.MustCompile(`Size:\s*[0-9]`),
+	}
+	for _, src := range sources {
+		if strings.HasSuffix(src, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(body), "\n") {
+			// The scale's own definition is the one place literals belong.
+			if strings.Contains(line, "fontMicro =") || strings.Contains(line, "//\tfont") {
+				continue
+			}
+			for _, re := range patterns {
+				if re.MatchString(line) {
+					t.Errorf("%s:%d sizes text with a literal, not the scale: %s",
+						src, i+1, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+}
+
+// TestTypeScaleIsOrdered checks the scale itself stays monotonic and covers the
+// roles it names, so the mapping table in theme.go and the numbers agree.
+func TestTypeScaleIsOrdered(t *testing.T) {
+	scale := []float32{fontMicro, fontSmall, fontBody, fontData, fontTitle, fontHero}
+	for i := 1; i < len(scale); i++ {
+		if scale[i] <= scale[i-1] {
+			t.Fatalf("type scale is not increasing at step %d: %v", i, scale)
+		}
+	}
+	// The smallest step has to stay legible: 9px was too small for the status
+	// line, which is why the micro step is 10.
+	if fontMicro < 10 {
+		t.Fatalf("fontMicro = %v, below the 10px legibility floor", fontMicro)
+	}
+	// The scale must not grow back into a dozen steps by adding constants at
+	// 1px intervals.
+	if len(scale) > 6 {
+		t.Fatalf("type scale has %d steps; six is the ceiling", len(scale))
 	}
 }

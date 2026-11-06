@@ -16,13 +16,16 @@ type modelToken = model.Token
 
 const defaultPrompt = "The transformer reads the tokens and"
 
+// promptPreset is one example prompt offered as a chip.
+type promptPreset struct {
+	name   string
+	prompt string
+}
+
 // promptPresets are short examples that exercise the tokenizer's edges:
 // ASCII, CJK (three bytes per rune), a prompt past the context window, and
 // the empty state.
-var promptPresets = []struct {
-	name   string
-	prompt string
-}{
+var promptPresets = []promptPreset{
 	{"英文", defaultPrompt},
 	{"中文", "注意力就是加权求和"},
 	{"长提示词", strings.Repeat("attention ", 12)},
@@ -315,11 +318,11 @@ func (a *App) stageHeader(c *ui.Context) {
 	l := lessons[a.Step]
 	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(10).Children(func() {
 		ui.Text(c, fmt.Sprintf("第 %d / %d 步", a.Step+1, len(lessons))).
-			FontSize(10).Bold().TextColor(colBg).
+			FontSize(fontMicro).Bold().TextColor(colBg).
 			Padding(4, 8).Radius(5).Background(colAccent).Shrink(0)
-		ui.Text(c, l.title).FontSize(15).Bold().TextColor(colText)
+		ui.Text(c, l.title).FontSize(fontTitle).Bold().TextColor(colText)
 		ui.Spacer(c).Grow(1)
-		ui.Text(c, l.formula).FontSize(11).TextColor(colAccent2).
+		ui.Text(c, l.formula).FontSize(fontSmall).TextColor(colAccent2).
 			Padding(4, 8).Radius(5).Background(colPanel2).Shrink(0)
 	})
 }
@@ -330,11 +333,11 @@ func (a *App) sidebar(c *ui.Context) {
 	ui.Column(c).Width(a.SidebarW).FillHeight().Padding(16).Gap(14).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Box(c).Size(26, 26).Radius(7).Background(colAccent).Children(func() {
-				ui.Text(c, "λ").FontSize(16).Bold().TextColor(colBg)
+				ui.Text(c, "λ").FontSize(fontHero).Bold().TextColor(colBg)
 			})
 			ui.Column(c).Gap(0).Children(func() {
-				ui.Text(c, "LLM Lab").FontSize(15).Bold().TextColor(colText)
-				ui.Text(c, "Transformer 解剖台").FontSize(10).TextColor(colFaint)
+				ui.Text(c, "LLM Lab").FontSize(fontTitle).Bold().TextColor(colText)
+				ui.Text(c, "Transformer 解剖台").FontSize(fontMicro).TextColor(colFaint)
 			})
 		})
 
@@ -345,7 +348,7 @@ func (a *App) sidebar(c *ui.Context) {
 		ui.Spacer(c).Grow(1)
 
 		ui.Column(c).FillWidth().Padding(10).Gap(6).Background(colPanel).Radius(8).Children(func() {
-			ui.Text(c, "模型").FontSize(10).TextColor(colFaint)
+			ui.Text(c, "模型").FontSize(fontMicro).TextColor(colFaint)
 			kv(c, "vocab", fmt.Sprint(a.W.Config.Vocab))
 			kv(c, "d_model", fmt.Sprint(a.W.Config.DModel))
 			kv(c, "layers", fmt.Sprint(a.W.Config.NLayer))
@@ -353,17 +356,17 @@ func (a *App) sidebar(c *ui.Context) {
 			kv(c, "ctx", fmt.Sprint(a.W.Config.Ctx))
 			kv(c, "参数", humanCount(a.paramCount()))
 		})
-		ui.Text(c, "权重："+a.W.Source).FontSize(9).TextColor(colFaint)
+		ui.Text(c, "权重："+a.W.Source).FontSize(fontMicro).TextColor(colFaint)
 		if a.W.Steps > 0 {
-			ui.Text(c, fmt.Sprintf("训练 %d 步 · loss %.3f", a.W.Steps, a.W.Loss)).FontSize(9).TextColor(colFaint)
+			ui.Text(c, fmt.Sprintf("训练 %d 步 · loss %.3f", a.W.Steps, a.W.Loss)).FontSize(fontMicro).TextColor(colFaint)
 		} else {
 			// The one line that stops a reader from reading meaning into the
 			// logits: these weights were never trained.
-			ui.Text(c, "未训练 · 数值真实但输出无意义").FontSize(9).TextColor(colWarm).LineHeight(1.35)
+			ui.Text(c, "未训练 · 数值真实但输出无意义").FontSize(fontMicro).TextColor(colWarm).LineHeight(1.35)
 		}
 		// The status line used to sit in the top bar, where it pushed the
 		// temperature slider out of the window at 1180 wide.
-		ui.Text(c, a.Status).FontSize(9).TextColor(colFaint).LineHeight(1.35)
+		ui.Text(c, a.Status).FontSize(fontMicro).TextColor(colFaint).LineHeight(1.35)
 	})
 }
 
@@ -452,12 +455,12 @@ func (a *App) untrainedBanner(c *ui.Context) {
 	ui.Row(c).FillWidth().Padding(8, 10).Radius(7).Gap(8).AlignItems(ui.Center).
 		Background(colWarm.Alpha(0.12)).Border(1, colWarm.Alpha(0.45)).
 		Children(func() {
-			ui.Text(c, "⚠").FontSize(13).TextColor(colWarm).Shrink(0)
+			ui.Text(c, "⚠").FontSize(fontData).TextColor(colWarm).Shrink(0)
 			ui.Text(c, "权重未训练").
-				FontSize(11).Bold().TextColor(colWarm).Shrink(0)
+				FontSize(fontSmall).Bold().TextColor(colWarm).Shrink(0)
 			ui.Text(c, a.untrainedWhy()+
 				"形状、掩码、每行和为 1 都是真算出来的，但权重是随机数——别从输出里读出意义。").
-				FontSize(10.5).TextColor(colText).LineHeight(1.35)
+				FontSize(fontMicro).TextColor(colText).LineHeight(1.35)
 		})
 }
 
@@ -496,7 +499,7 @@ func (a *App) controlGroup(c *ui.Context, label string, from, to int, tip string
 		group = group.Opacity(dimmed)
 	}
 	group.Children(func() {
-		ui.Text(c, label).FontSize(11).TextColor(colFaint).Shrink(0)
+		ui.Text(c, label).FontSize(fontSmall).TextColor(colFaint).Shrink(0)
 		build(!enabled)
 	})
 }
@@ -568,7 +571,7 @@ func (a *App) stepbar(c *ui.Context) {
 			}
 		})
 		ui.Text(c, fmt.Sprintf("%d / %d · %s", a.Step+1, len(lessons), lessons[a.Step].name)).
-			FontSize(11).TextColor(colMuted).NoWrap()
+			FontSize(fontSmall).TextColor(colMuted).NoWrap()
 		ui.Spacer(c).Grow(1)
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 			label := "▶ 自动播放"
@@ -608,8 +611,8 @@ func (a *App) stepbar(c *ui.Context) {
 func (a *App) inspector(c *ui.Context) {
 	ui.Scroll(c).Width(a.InspectorW).FillHeight().Padding(14).Gap(12).Children(func() {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "检查器").FontSize(12).Bold().TextColor(colMuted)
-			ui.Text(c, lessons[a.Step].name).FontSize(10).TextColor(colFaint)
+			ui.Text(c, "检查器").FontSize(fontBody).Bold().TextColor(colMuted)
+			ui.Text(c, lessons[a.Step].name).FontSize(fontMicro).TextColor(colFaint)
 		})
 		ui.Box(c).FillWidth().Height(1).Background(colBorder)
 
@@ -652,11 +655,11 @@ func (a *App) inspectorToken(c *ui.Context, tr *model.Trace) {
 	card(c, func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Size(34, 34).Radius(6).Background(colAccent.Alpha(0.16)).Children(func() {
-				ui.Text(c, tk.Text).FontSize(16).Bold().TextColor(colAccent).NoWrap()
+				ui.Text(c, tk.Text).FontSize(fontHero).Bold().TextColor(colAccent).NoWrap()
 			})
 			ui.Column(c).Gap(1).Children(func() {
-				ui.Text(c, fmt.Sprintf("token #%d / %d", a.SelToken, len(tr.Tokens)-1)).FontSize(12).Bold()
-				ui.Text(c, fmt.Sprintf("byte 0x%02X · rune %q", tk.ID, tk.Rune)).FontSize(10).TextColor(colFaint)
+				ui.Text(c, fmt.Sprintf("token #%d / %d", a.SelToken, len(tr.Tokens)-1)).FontSize(fontBody).Bold()
+				ui.Text(c, fmt.Sprintf("byte 0x%02X · rune %q", tk.ID, tk.Rune)).FontSize(fontMicro).TextColor(colFaint)
 			})
 		})
 	})

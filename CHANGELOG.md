@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 字号收敛成 6 级阶梯（`fontMicro/Small/Body/Data/Title/Hero`，10/11/12/13/15/16），全部写在 `theme.go` 里；此前散落 10 个字号（9、10、10.5、11、12、12.5、13、14、15、16），其中 10.5 和 12.5 各只出现两三次
+  - 最小一级从 9px 提到 10px：侧栏状态行、字节 id、热力图 min/max、步进器序号都在这级
+  - 字号不再有字面量，`TestTypeScaleIsTheOnlySourceOfFontSizes` 扫描全部源文件，出现 `FontSize(10.5)` 或 `Size: 9` 就失败
+- 两处「示例提示词」胶囊合并成一个 `promptChip`：第 1 步是 10.5px + `Padding(4,8)` + `Radius(5)`，空态卡片是 11px + `Padding(5,9)` + `Radius(6)`，同一个控件长成了两种样子
+
 ### Added
 
 - 四个阶段的「常见误解」提示（第 3、4、6、7 步）：每条先写出画面上最容易得出的错误读法，再用这个模型真实产生的数字纠正它

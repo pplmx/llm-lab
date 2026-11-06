@@ -34,9 +34,9 @@ func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 		}
 	}
 	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, label).FontSize(10).TextColor(colFaint)
+		ui.Text(c, label).FontSize(fontMicro).TextColor(colFaint)
 		if *hover >= 0 && *hover < len(v) {
-			ui.Text(c, fmt.Sprintf("d%d = %+.4f", *hover, v[*hover])).FontSize(10).TextColor(colAccent2)
+			ui.Text(c, fmt.Sprintf("d%d = %+.4f", *hover, v[*hover])).FontSize(fontMicro).TextColor(colAccent2)
 		}
 	})
 }
@@ -51,10 +51,10 @@ func (a *App) tokenRail(c *ui.Context) {
 	tr := a.Trace
 	ui.Column(c).FillWidth().Padding(16, 8, 6).Shrink(0).Children(func() {
 		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "token").FontSize(10).TextColor(colFaint).Shrink(0).Width(34)
+			ui.Text(c, "token").FontSize(fontMicro).TextColor(colFaint).Shrink(0).Width(34)
 			if len(tr.Tokens) == 0 {
 				ui.Text(c, "空提示词 · 在上面输入文字，整条流水线会从这里开始").
-					FontSize(11).TextColor(colFaint)
+					FontSize(fontSmall).TextColor(colFaint)
 				return
 			}
 			// Grow(1) plus MinWidth(0) lets the strip give up width to the
@@ -95,10 +95,10 @@ func (a *App) tokenRailChips(c *ui.Context, tokens []modelToken) {
 		// tokens and the id is a caption, not something the reader interacts
 		// with.
 		chip.Children(func() {
-			ui.Text(c, tk.Text).FontSize(12.5).TextColor(colText).NoWrap()
+			ui.Text(c, tk.Text).FontSize(fontBody).TextColor(colText).NoWrap()
 		})
 		chip.Draw(func(p *ui.Painter, r ui.Rect) {
-			id := ui.Span{Text: fmt.Sprint(tk.ID), Size: 9, Color: colFaint}
+			id := ui.Span{Text: fmt.Sprint(tk.ID), Size: fontMicro, Color: colFaint}
 			w, _ := p.MeasureText(0, id)
 			p.RichText(r.X+(r.W-w)/2, r.Y+r.H-13, 0, id)
 		})
@@ -150,25 +150,25 @@ func (a *App) tokenRailReadout(c *ui.Context) {
 		case a.HoverQ >= 0 && a.HoverK >= 0 && a.HoverQ < len(tr.Tokens) && a.HoverK < len(tr.Tokens):
 			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 				markChip(c, "Q", colWarm)
-				ui.Text(c, railTokenText(tr.Tokens, a.HoverQ)).FontSize(11).TextColor(colText).NoWrap()
-				ui.Text(c, "×").FontSize(11).TextColor(colFaint)
+				ui.Text(c, railTokenText(tr.Tokens, a.HoverQ)).FontSize(fontSmall).TextColor(colText).NoWrap()
+				ui.Text(c, "×").FontSize(fontSmall).TextColor(colFaint)
 				markChip(c, "K", colAccent2)
-				ui.Text(c, railTokenText(tr.Tokens, a.HoverK)).FontSize(11).TextColor(colText).NoWrap()
+				ui.Text(c, railTokenText(tr.Tokens, a.HoverK)).FontSize(fontSmall).TextColor(colText).NoWrap()
 			})
 		case a.SelToken >= 0 && a.SelToken < len(tr.Tokens):
 			tk := tr.Tokens[a.SelToken]
 			ui.Text(c, fmt.Sprintf("#%d %q · byte %d", a.SelToken, tk.Rune, tk.ID)).
-				FontSize(11).TextColor(colMuted).NoWrap()
+				FontSize(fontSmall).TextColor(colMuted).NoWrap()
 			ui.Text(c, fmt.Sprintf("位置 %d / %d", a.SelToken, len(tr.Tokens)-1)).
-				FontSize(10).TextColor(colFaint).NoWrap()
+				FontSize(fontMicro).TextColor(colFaint).NoWrap()
 		default:
-			ui.Text(c, "点一个 token 看数值").FontSize(10).TextColor(colFaint).NoWrap()
+			ui.Text(c, "点一个 token 看数值").FontSize(fontMicro).TextColor(colFaint).NoWrap()
 		}
 	})
 }
 
 func markChip(c *ui.Context, label string, color ui.Color) {
-	ui.Text(c, label).FontSize(9).Bold().TextColor(colBg).
+	ui.Text(c, label).FontSize(fontMicro).Bold().TextColor(colBg).
 		Padding(2, 4).Radius(3).Background(color).Shrink(0)
 }
 
@@ -212,7 +212,7 @@ func (a *App) stepper(c *ui.Context) {
 					Draw(func(p *ui.Painter, r ui.Rect) {
 						drawStepDot(p, r, i, len(lessons), state, a.Step)
 					})
-				name := ui.Text(c, s.name).FontSize(12.5).TextColor(stepTextColor(state))
+				name := ui.Text(c, s.name).FontSize(fontBody).TextColor(stepTextColor(state))
 				if state == 1 {
 					name = name.Bold()
 				}
@@ -264,7 +264,7 @@ func drawStepDot(p *ui.Painter, r ui.Rect, i, n, state, current int) {
 	}
 
 	num := fmt.Sprint(i + 1)
-	label := ui.Span{Text: num, Size: 9, Weight: 600}
+	label := ui.Span{Text: num, Size: fontMicro, Weight: 600}
 	tw, th := p.MeasureText(0, label)
 	switch state {
 	case 1:
@@ -273,9 +273,9 @@ func drawStepDot(p *ui.Painter, r ui.Rect, i, n, state, current int) {
 			colAccent.Alpha(0.18), radius+3)
 		label.Color = colBg
 	case 0:
-		// Opaque, not half-transparent: a 9px digit on a 50% fill of colBg
-		// lands near 2.7:1, which is unreadable, and the number is the stage's
-		// keyboard shortcut as much as its name.
+		// Opaque, not half-transparent: a micro-sized digit on a 50% fill of
+		// colBg lands near 2.7:1, which is unreadable, and the number is the
+		// stage's keyboard shortcut as much as its name.
 		p.Fill(ui.Rect{X: cx - radius, Y: cy - radius, W: 2 * radius, H: 2 * radius}, colMuted, radius)
 		label.Color = colBg
 	default:
@@ -398,7 +398,7 @@ func bars(c *ui.Context, rows []barRow, max float32, color ui.Color) {
 	for _, r := range rows {
 		row := r
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, row.Label).FontSize(11).TextColor(colMuted).Width(row.LabelWidth).
+			ui.Text(c, row.Label).FontSize(fontSmall).TextColor(colMuted).Width(row.LabelWidth).
 				TextAlign(ui.End).NoWrap()
 			bar := ui.Box(c).Grow(1).Height(14).Radius(3).Background(colPanel2).
 				Draw(func(p *ui.Painter, rr ui.Rect) {
@@ -411,7 +411,7 @@ func bars(c *ui.Context, rows []barRow, max float32, color ui.Color) {
 			if row.Tip != "" {
 				bar.Tooltip(row.Tip)
 			}
-			ui.Text(c, row.ValueText).FontSize(11).TextColor(colFaint).Width(row.ValueWidth).NoWrap()
+			ui.Text(c, row.ValueText).FontSize(fontSmall).TextColor(colFaint).Width(row.ValueWidth).NoWrap()
 		})
 	}
 }
@@ -469,9 +469,9 @@ func histogram(c *ui.Context, values []float32, bins int, color ui.Color) {
 			}
 		})
 	ui.Row(c).FillWidth().Gap(0).Children(func() {
-		ui.Text(c, fmt.Sprintf("%+.2f", lo)).FontSize(9).TextColor(colFaint).Width(40)
+		ui.Text(c, fmt.Sprintf("%+.2f", lo)).FontSize(fontMicro).TextColor(colFaint).Width(40)
 		ui.Spacer(c).Grow(1)
-		ui.Text(c, fmt.Sprintf("%+.2f", hi)).FontSize(9).TextColor(colFaint).Width(40).TextAlign(ui.End)
+		ui.Text(c, fmt.Sprintf("%+.2f", hi)).FontSize(fontMicro).TextColor(colFaint).Width(40).TextAlign(ui.End)
 	})
 }
 

@@ -25,6 +25,26 @@ var (
 	colGreen   = ui.Hex("#3DD68C")
 )
 
+// Type scale. The lesson used to carry ten sizes — 9, 10, 10.5, 11, 12, 12.5,
+// 13, 14, 15, 16 — which is what happens when each new piece of text picks a
+// size by eye. Six steps cover every role, named by the job rather than the
+// number, and each substitution below moves a glyph by at most 1px:
+//
+//	fontMicro 9 10 10.5  captions, axis labels, chip names, status lines
+//	fontSmall 11         secondary prose, kv keys, computed readouts
+//	fontBody  12 12.5    prose, kv values, stepper labels
+//	fontData  13 14      the token glyph and byte numbers being taught
+//	fontTitle 15         card and section titles
+//	fontHero  16         the selected token, the largest thing on screen
+const (
+	fontMicro = 10
+	fontSmall = 11
+	fontBody  = 12
+	fontData  = 13
+	fontTitle = 15
+	fontHero  = 16
+)
+
 func labTheme() *ui.Theme {
 	t := ui.DarkTheme()
 	t.Background = colBg
@@ -100,9 +120,9 @@ func scoreColor(v, scale float32) ui.Color {
 
 func sectionTitle(c *ui.Context, title, note string) {
 	ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, title).FontSize(15).Bold().TextColor(colText)
+		ui.Text(c, title).FontSize(fontTitle).Bold().TextColor(colText)
 		if note != "" {
-			ui.Text(c, note).FontSize(11).TextColor(colFaint)
+			ui.Text(c, note).FontSize(fontSmall).TextColor(colFaint)
 		}
 	})
 }
@@ -113,7 +133,7 @@ func card(c *ui.Context, fn func()) ui.Element {
 }
 
 func mutedText(c *ui.Context, s string) ui.Element {
-	return ui.Text(c, s).FontSize(12).TextColor(colMuted).LineHeight(1.45)
+	return ui.Text(c, s).FontSize(fontBody).TextColor(colMuted).LineHeight(1.45)
 }
 
 // misconception is the callout for a reading that the picture invites but that
@@ -132,10 +152,10 @@ func misconception(c *ui.Context, belief, correction string) ui.Element {
 		Children(func() {
 			ui.Column(c).Gap(4).Grow(1).Children(func() {
 				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-					ui.Text(c, "常见误解").FontSize(10).Bold().TextColor(colWarm).Shrink(0)
-					ui.Text(c, belief).FontSize(11).TextColor(colMuted).LineHeight(1.4)
+					ui.Text(c, "常见误解").FontSize(fontMicro).Bold().TextColor(colWarm).Shrink(0)
+					ui.Text(c, belief).FontSize(fontSmall).TextColor(colMuted).LineHeight(1.4)
 				})
-				ui.Text(c, correction).FontSize(11).TextColor(colText).LineHeight(1.45)
+				ui.Text(c, correction).FontSize(fontSmall).TextColor(colText).LineHeight(1.45)
 			})
 		})
 }
@@ -146,7 +166,7 @@ func kv(c *ui.Context, k, v string) {
 
 func kvW(c *ui.Context, k, v string, width float32) {
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
-		ui.Text(c, k).FontSize(11).TextColor(colFaint).Width(width).NoWrap()
-		ui.Text(c, v).FontSize(12).TextColor(colText).Grow(1)
+		ui.Text(c, k).FontSize(fontSmall).TextColor(colFaint).Width(width).NoWrap()
+		ui.Text(c, v).FontSize(fontBody).TextColor(colText).Grow(1)
 	})
 }
