@@ -466,7 +466,11 @@ func scoreWorkings(c *ui.Context, q, k, dHead int, p scoreParts) {
 	for _, t := range p.Top {
 		terms = append(terms, fmt.Sprintf("d%d %+.3f", t.D, t.V))
 	}
-	scale := 1 / math.Sqrt(float64(dHead))
+	// The scale is shown at the precision the model multiplies with: float32. A
+	// float64 1/sqrt(d) prints as 0.204124145, but multiplying the printed dot by
+	// it gives 0.932751018 while the printed score is 0.932751060 — a reader
+	// checking the line by hand would find the last digits do not close.
+	scale := float64(float32(1 / math.Sqrt(float64(dHead))))
 	workingsLines(c, []string{
 		fmt.Sprintf("q%d · k%d 的三项最大贡献：%s", q, k, strings.Join(terms, "  ")),
 		fmt.Sprintf("+ 其余 %d 维 %+.4f = 点积 %.4f", dHead-len(p.Top), p.Rest, p.Dot),

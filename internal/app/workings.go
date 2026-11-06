@@ -108,7 +108,18 @@ func computeScore(q, k []float32, dHead int, traceScore float32) scoreParts {
 	for d := 0; d < dHead; d++ {
 		dot32 += q[d] * k[d]
 	}
-	p := scoreParts{Top: terms[:top], Dot: float64(dot32), Score: float64(traceScore), OK: true}
+	// The printed chain has to close in the reader's hands, so the score shown
+	// beside it is recomputed the way the model computes it — float32 dot times a
+	// float32 scale — not by dividing the float64 dot by sqrt(d). Those two differ
+	// in the last digit (4.569528103 × 0.204124145 = 0.932751018 by hand, while
+	// the trace holds 0.932751060), which is exactly the gap a reader would hit
+	// after carefully redoing the arithmetic.
+	scale32 := float32(1 / math.Sqrt(float64(len(q[:dHead]))))
+	printed := float64(dot32 * scale32)
+	if math.IsInf(float64(traceScore), -1) {
+		printed = math.Inf(-1)
+	}
+	p := scoreParts{Top: terms[:top], Dot: float64(dot32), Score: printed, OK: true}
 	p.Rest = p.Dot
 	for _, t := range p.Top {
 		p.Rest -= t.V

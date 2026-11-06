@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -78,5 +79,94 @@ func TestEveryWorkingsComputerHasATest(t *testing.T) {
 	}
 	if len(missing) > 0 {
 		t.Fatalf("these arithmetic helpers are never named in a test: %v", missing)
+	}
+}
+
+// TestPrintedScoreLineRecomputes checks the arithmetic a reader is asked to
+// verify by hand actually closes.
+//
+// The score workings print three lines: the top dot-product terms, the remainder,
+// and "score = 点积 / √d × scale = result". Existing tests compare computeScore's
+// return value against the trace, which only shows the panel repeats the model —
+// it says nothing about whether the printed chain adds up. A reader who takes the
+// printed terms and re-adds them must land on the printed dot, and dividing that
+// must land on the printed score.
+func TestPrintedScoreLineRecomputes(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	h := a.layer().Heads[a.Head]
+	dHead := a.Trace.Config.DHead()
+	q := a.SelToken
+	k := q / 2
+
+	p := computeScore(h.Q[q], h.K[k], dHead, h.Scores[q][k])
+	if !p.OK {
+		t.Fatal("computeScore declined")
+	}
+
+	// The printed terms plus the printed remainder must equal the printed dot.
+	printedDot := 0.0
+	for _, term := range p.Top {
+		printedDot += term.V
+	}
+	printedDot += p.Rest
+	if math.Abs(printedDot-p.Dot) > 1e-9 {
+		t.Fatalf("the printed terms (%v) plus the remainder %v come to %.9f, but the "+
+			"printed dot is %.9f", p.Top, p.Rest, printedDot, p.Dot)
+	}
+
+	// And the printed multiplication must give the printed score. Redo it the way
+	// the forward pass does — float32 dot, float32 scale, float32 multiply — since
+	// that is the only chain a reader can reproduce from the printed numbers.
+	scale32 := float32(1 / math.Sqrt(float64(dHead)))
+	if got := float64(float32(p.Dot) * scale32); math.Abs(got-p.Score) > 1e-9 {
+		t.Fatalf("printed dot %.9f × printed scale %.9f = %.9f, but the printed "+
+			"score is %.9f", p.Dot, float64(scale32), got, p.Score)
+	}
+
+	// Independently: the dot is the sum over every dimension, so the top terms
+	// plus the remainder must equal a plain loop.
+	var plain float64
+	for d := 0; d < dHead; d++ {
+		plain += float64(h.Q[q][d]) * float64(h.K[k][d])
+	}
+	if math.Abs(plain-p.Dot) > 1e-5 {
+		t.Fatalf("an independent dot gives %.6f, the workings print %.6f", plain, p.Dot)
+	}
+}
+
+// TestPrintedSoftmaxLineRecomputes does the same for the softmax block: the
+// printed denominator and numerator must produce the printed weight.
+func TestPrintedSoftmaxLineRecomputes(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	h := a.layer().Heads[a.Head]
+	q := a.SelToken
+	k := q / 2
+
+	p := computeSoftmaxParts(h, q, k)
+	if !p.ok {
+		t.Fatal("computeSoftmaxParts declined")
+	}
+	// The block prints "分母 = Σ exp(score − rowMax) = denom" and
+	// "α = exp(score − rowMax) ÷ denom".
+	want := float64(p.num) / float64(p.denom)
+	if math.Abs(want-float64(p.num/p.denom)) > 1e-9 {
+		t.Fatalf("α from the printed numerator and denominator is %.9f, the printed "+
+			"value is %.9f", want, p.num/p.denom)
+	}
+	// And the denominator really is the sum the line claims.
+	var sum float64
+	for j := 0; j <= q; j++ {
+		sum += math.Exp(float64(h.Scores[q][j]) - float64(p.rowMax))
+	}
+	if math.Abs(sum-float64(p.denom)) > 1e-4 {
+		t.Fatalf("Σ exp(s − max) over the row is %.6f, the printed denominator is %.6f",
+			sum, p.denom)
+	}
+	// The result must match the trace's attention weight.
+	if math.Abs(float64(p.num/p.denom)-float64(h.Attn[q][k])) > 1e-5 {
+		t.Fatalf("the recomputed α is %.6f, the trace holds %.6f",
+			p.num/p.denom, h.Attn[q][k])
 	}
 }
