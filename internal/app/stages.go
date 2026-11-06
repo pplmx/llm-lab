@@ -29,7 +29,7 @@ var lessons = []lesson{
 	{
 		name:    "嵌入",
 		title:   "查表得到向量",
-		body:    "嵌入表是一张 vocab × d_model 的矩阵，每一行就是一个 token 的「意思」。查表得到向量后，再加上位置向量：注意力本身对顺序不敏感，位置信息必须显式注入，否则 “dog bites man” 和 “man bites dog” 在模型眼里完全一样。",
+		body:    "嵌入表是一张 vocab × d_model 的矩阵，每一行就是一个 token 的「意思」。查表得到向量后，再加上位置向量：注意力的打分只看 q·k，本质上是对一组 key 加权求和，同一批词换个顺序，这组权重本身不会有任何不同——所以位置信息必须显式注入，否则“谁在前谁在后”就没有任何表示。因果掩码让每个位置只看得到自己及之前的内容，那是另一回事：它限制的是“能看到几个”，不是“这些词排在第几位”。",
 		formula: "x_t = E[token_t] + P[t]",
 	},
 	{
@@ -1073,7 +1073,12 @@ func (a *App) stageOutput(c *ui.Context) {
 				fmt.Sprintf("x 落在 [%.4f, %.4f) 这一段 → 抽到 id %d %q（这一段宽度 %.4f 就是它的概率）",
 					d.lo, d.hi, d.pick, byteText(d.pick), d.prob),
 			}, workingsGapWide)
-			mutedText(c, "种子只来自提示词文字，所以同一句提示词永远抽出同一个 token；改一个字，种子和结果都会变。")
+			// "同一句提示词永远抽出同一个 token" was too strong: the draw is a
+			// function of the prompt AND the temperature, and the temperature
+			// slider sits on this very card. At T=2.2 the same prompt draws a
+			// different token, so the claim needs its condition attached.
+			mutedText(c, "种子只来自提示词文字，所以在温度不变的前提下，同一句提示词永远抽出同一个 token；"+
+				"改一个字种子就会变，拖动温度也会改变落在哪一段（分布的形状变了，同一个 x 可能落进别的区间）。")
 		}
 	})
 }

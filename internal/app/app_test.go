@@ -4298,3 +4298,101 @@ func TestPositionMagnitudeIsComparableToTheEmbedding(t *testing.T) {
 		}
 	}
 }
+
+// TestSamplingClaimIsQualified is the fix this round. The sampling card said "同一
+// 句提示词永远抽出同一个 token", which is only true at a fixed temperature — and
+// the temperature slider sits on the same card. At T=2.2 the same prompt draws a
+// different token, so the sentence left out its own condition.
+func TestSamplingClaimIsQualified(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	var note string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "种子只来自提示词文字") {
+			note = s
+		}
+	}
+	if note == "" {
+		t.Fatal("the sampling card no longer explains where the seed comes from")
+	}
+	if !strings.Contains(note, "温度不变") {
+		t.Fatalf("the note does not qualify the claim with a fixed temperature: %q", note)
+	}
+
+	// And the qualification is real: some temperature draws something else.
+	base := a.Trace.Probabilities(0.8)
+	d0, ok := a.sampleDraw(base)
+	if !ok {
+		t.Fatal("no draw at T=0.8")
+	}
+	differs := false
+	for temp := 0.1; temp <= 3.0; temp += 0.1 {
+		d, ok := a.sampleDraw(a.Trace.Probabilities(temp))
+		if ok && d.pick != d0.pick {
+			differs = true
+			break
+		}
+	}
+	if !differs {
+		t.Skip("temperature does not change the draw on this prompt, so the " +
+			"qualification is untested here")
+	}
+}
+
+// TestOrderBlindnessWordingMatchesTheMask checks the embedding lesson does not
+// claim position is the *only* thing distinguishing word order. The causal mask
+// also makes "dog bites man" and "man bites dog" differ — by changing which keys
+// each position can see, not by encoding where each word sits. The old sentence
+// ("否则两者完全一样") conflated the two mechanisms.
+func TestOrderBlindnessWordingMatchesTheMask(t *testing.T) {
+	// The premise: the two orders really do differ, and not only through
+	// position vectors.
+	a := newTestApp(t)
+	a.Prompt = "dog bites man"
+	a.recompute()
+	first := append([]float32(nil), a.Trace.Logits...)
+	b := newTestApp(t)
+	b.Prompt = "man bites dog"
+	b.recompute()
+	var maxDiff float32
+	for i := range first {
+		if d := first[i] - b.Trace.Logits[i]; d > maxDiff {
+			maxDiff = d
+		} else if -d > maxDiff {
+			maxDiff = -d
+		}
+	}
+	if maxDiff <= 0.01 {
+		t.Skip("the two orders give near-identical logits, so this case cannot " +
+			"demonstrate that the mask separates them")
+	}
+	t.Logf("the two orders differ by up to %.2f in logits", maxDiff)
+
+	// The lesson body lived on stage 2 and must now name both mechanisms.
+	c := newTestApp(t)
+	c.Step = 1
+	tr := ui.NewTester(c.View, 1500, 940)
+	tr.Frame()
+	var body string
+	for _, s := range tr.Texts() {
+		// The lesson body opens with this phrase; the inspector has a shorter
+		// note about position vectors that would otherwise match first.
+		if strings.HasPrefix(s, "嵌入表是一张") {
+			body = s
+		}
+	}
+	if body == "" {
+		t.Fatal("the embedding lesson no longer explains why positions are injected")
+	}
+	if strings.Contains(body, "完全一样") {
+		t.Fatalf("the lesson still claims the two orders would be completely "+
+			"identical without positions: %q", body)
+	}
+	if !strings.Contains(body, "掩码") {
+		t.Fatalf("the lesson does not separate the causal mask from position "+
+			"encoding: %q", body)
+	}
+}
