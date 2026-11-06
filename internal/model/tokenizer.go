@@ -17,22 +17,40 @@ type Token struct {
 	Rune  rune   // the rune this byte belongs to, for grouping
 }
 
-// Tokenize turns a prompt into byte tokens.
+// Tokenize turns a prompt into byte tokens. Invalid UTF-8 bytes are kept
+// as-is: this is a byte-level tokenizer, so a malformed prompt must not
+// expand into replacement-character bytes. Valid multi-byte runes share one
+// rune index in Start and one Rune value across all their byte tokens.
 func Tokenize(s string) []Token {
 	tokens := make([]Token, 0, len(s))
-	for i, r := range s {
-		var buf [4]byte
-		n := utf8.EncodeRune(buf[:], r)
-		for k := 0; k < n; k++ {
-			b := buf[k]
+	runeIndex := 0
+	for i := 0; i < len(s); {
+		r, n := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && n == 1 {
+			b := s[i]
 			tokens = append(tokens, Token{
 				ID:    int(b),
 				Byte:  b,
 				Text:  renderByte(b),
-				Start: i,
+				Start: runeIndex,
+				Rune:  0,
+			})
+			i++
+			runeIndex++
+			continue
+		}
+		for k := 0; k < n; k++ {
+			b := s[i+k]
+			tokens = append(tokens, Token{
+				ID:    int(b),
+				Byte:  b,
+				Text:  renderByte(b),
+				Start: runeIndex,
 				Rune:  r,
 			})
 		}
+		i += n
+		runeIndex++
 	}
 	return tokens
 }
@@ -52,8 +70,8 @@ func renderByte(b byte) string {
 	return fmt.Sprintf("\\x%02x", b)
 }
 
-// DecodeBytes turns ids back into a string, dropping invalid UTF-8 tails so a
-// preview never shows broken runes.
+// DecodeBytes turns ids back into a string, replacing each invalid UTF-8 byte
+// with U+FFFD so a preview never shows a broken rune.
 func DecodeBytes(ids []int) string {
 	buf := make([]byte, len(ids))
 	for i, id := range ids {
@@ -79,8 +97,12 @@ func DecodeBytes(ids []int) string {
 
 // Truncate cuts ids to the model's context window. When it has to drop bytes
 // it advances to the next UTF-8 lead byte, so a truncated prompt never starts
-// in the middle of a multi-byte character.
+// in the middle of a multi-byte character. A non-positive context window
+// yields no tokens.
 func Truncate(ids []int, ctx int) []int {
+	if ctx <= 0 {
+		return nil
+	}
 	if len(ids) <= ctx {
 		return ids
 	}

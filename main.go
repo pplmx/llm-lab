@@ -33,12 +33,15 @@ func main() {
 	)
 	if *weightsPath != "" {
 		w, err = model.Load(*weightsPath)
+		if err != nil {
+			log.Fatalf("weights %s: %v", *weightsPath, err)
+		}
 	} else {
 		w, err = model.Bundled()
-	}
-	if err != nil {
-		log.Printf("weights unavailable (%v); falling back to random weights", err)
-		w = model.Random(model.DefaultConfig, 42)
+		if err != nil {
+			log.Printf("bundled weights unavailable (%v); falling back to random weights", err)
+			w = model.Random(model.DefaultConfig, 42)
+		}
 	}
 
 	a := app.New(w)

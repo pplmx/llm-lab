@@ -248,4 +248,48 @@ func TestInvalidUTF8Prompt(t *testing.T) {
 	if tr.Tokens[4].Rune != 0 {
 		t.Fatalf("stray byte got rune %q", tr.Tokens[4].Rune)
 	}
+	if tr.Tokens[0].Rune != '注' {
+		t.Fatalf("valid rune before the stray byte got %q", tr.Tokens[0].Rune)
+	}
+}
+
+func TestTopKNonPositiveReturnsEmpty(t *testing.T) {
+	for _, k := range []int{0, -1} {
+		if got := TopK([]float32{0.2, 0.8}, k); len(got) != 0 {
+			t.Fatalf("TopK(k=%d) = %v, want empty", k, got)
+		}
+	}
+}
+
+func TestProbabilitiesZeroTemperatureIsGreedy(t *testing.T) {
+	w := smallWeights(t)
+	tr := Forward(w, []int{65, 66, 67})
+	probs := tr.Probabilities(0)
+	best := 0
+	for i, p := range probs {
+		if p > probs[best] {
+			best = i
+		}
+	}
+	if probs[best] != 1 {
+		t.Fatalf("max probability = %v, want 1", probs[best])
+	}
+	var sum float32
+	for _, p := range probs {
+		sum += p
+	}
+	if sum != 1 {
+		t.Fatalf("probability sum = %v, want 1", sum)
+	}
+}
+
+func TestForwardNormalizesIDsToBytes(t *testing.T) {
+	w := smallWeights(t)
+	tr := Forward(w, []int{256, -1})
+	if got := tr.Tokens[0].ID; got != 0 {
+		t.Fatalf("token 0 id = %d, want 0", got)
+	}
+	if got := tr.Tokens[1].ID; got != 255 {
+		t.Fatalf("token 1 id = %d, want 255", got)
+	}
 }

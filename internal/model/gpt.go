@@ -1,6 +1,9 @@
 package model
 
-import "math"
+import (
+	"math"
+	"unicode/utf8"
+)
 
 // Token is declared in tokenizer.go.
 
@@ -50,7 +53,8 @@ func Forward(w *Weights, ids []int) *Trace {
 
 	tokens := make([]Token, T)
 	for i, id := range ids {
-		tokens[i] = Token{ID: id, Byte: byte(id), Text: renderByte(byte(id))}
+		b := byte(id)
+		tokens[i] = Token{ID: int(b), Byte: b, Text: renderByte(b)}
 	}
 	// Tokenize the prompt separately to recover rune grouping and text.
 	if len(ids) > 0 {
@@ -67,7 +71,8 @@ func Forward(w *Weights, ids []int) *Trace {
 	tr.Pos = make([][]float32, T)
 	tr.Input = make([][]float32, T)
 	for i, id := range ids {
-		emb := append([]float32(nil), w.TokEmbed[id*d:(id+1)*d]...)
+		b := int(byte(id))
+		emb := append([]float32(nil), w.TokEmbed[b*d:(b+1)*d]...)
 		pos := append([]float32(nil), w.PosEmbed[i*d:(i+1)*d]...)
 		tr.Embed[i] = emb
 		tr.Pos[i] = pos
@@ -181,37 +186,59 @@ func sliceCols(m [][]float32, start, width int) [][]float32 {
 }
 
 // alignTokens recovers the printable text of each byte token by decoding the
-// prompt and walking it byte by byte.
+// prompt and walking it byte by byte. Invalid bytes keep their raw byte token
+// and Rune zero; valid runes around them still map to their own bytes, so one
+// stray continuation byte from the sampler does not hide all the other runes.
 func alignTokens(ids []int, tokens []Token) []Token {
-	s := DecodeBytes(ids)
-	// A byte-level sampler can append a continuation byte, which the decoder
-	// turns into multi-byte replacement characters. Offsets no longer line up
-	// with token indices, so leave the tokens with their raw byte escapes
-	// rather than attaching the wrong rune to each one.
-	if len(s) != len(ids) {
+	buf := make([]byte, len(ids))
+	for i, id := range ids {
+		buf[i] = byte(id)
+	}
+	s := string(buf)
+	if utf8.ValidString(s) {
+		// Fast path for the overwhelmingly common valid prompt: range over
+		// the string gives the rune and byte offset directly.
+		runeAt := make([]rune, 0, len(ids))
+		for _, r := range s {
+			runeAt = append(runeAt, r)
+		}
+		byteToRune := map[int]int{}
+		pos := 0
+		runeIdx := 0
+		for _, r := range s {
+			n := len(string(r))
+			for k := 0; k < n; k++ {
+				byteToRune[pos+k] = runeIdx
+			}
+			pos += n
+			runeIdx++
+		}
+		for i := range tokens {
+			if r, ok := byteToRune[i]; ok && r < len(runeAt) {
+				tokens[i].Rune = runeAt[r]
+				tokens[i].Start = r
+			}
+		}
 		return tokens
 	}
-	runeAt := make([]rune, 0, len(ids))
-	for _, r := range s {
-		runeAt = append(runeAt, r)
-	}
-	// Re-walk the UTF-8 bytes so each token knows its rune and offset.
-	byteToRune := map[int]int{}
-	pos := 0
-	runeIdx := 0
-	for _, r := range s {
-		n := len(string(r))
-		for k := 0; k < n; k++ {
-			byteToRune[pos+k] = runeIdx
+	runeIndex := 0
+	for i := 0; i < len(buf); {
+		r, n := utf8.DecodeRune(buf[i:])
+		if r == utf8.RuneError && n == 1 {
+			if i < len(tokens) {
+				tokens[i].Rune = 0
+				tokens[i].Start = runeIndex
+			}
+			i++
+			runeIndex++
+			continue
 		}
-		pos += n
-		runeIdx++
-	}
-	for i := range tokens {
-		if r, ok := byteToRune[i]; ok && r < len(runeAt) {
-			tokens[i].Rune = runeAt[r]
-			tokens[i].Start = r
+		for k := 0; k < n && i+k < len(tokens); k++ {
+			tokens[i+k].Rune = r
+			tokens[i+k].Start = runeIndex
 		}
+		i += n
+		runeIndex++
 	}
 	return tokens
 }

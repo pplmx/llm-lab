@@ -5,6 +5,9 @@ import "math"
 // matMulRows multiplies each row of x (rows×inDim) by w (inDim×outDim, row
 // major) and adds bias b, returning rows×outDim.
 func matMulRows(x [][]float32, w []float32, b []float32, outDim int) [][]float32 {
+	if len(x) == 0 {
+		return nil
+	}
 	inDim := len(x[0])
 	out := make([][]float32, len(x))
 	for i := range x {
@@ -105,11 +108,22 @@ func softmaxInPlace(scores []float32) {
 }
 
 // softmaxCopy returns a temperature-scaled softmax of logits without touching
-// its input.
+// its input. A non-positive temperature is the zero-temperature limit: put all
+// mass on the highest logit.
 func softmaxCopy(logits []float32, temperature float64) []float32 {
 	out := make([]float32, len(logits))
-	if temperature <= 0 {
-		temperature = 1
+	if len(logits) == 0 {
+		return out
+	}
+	if !(temperature > 0) { // also catches NaN
+		best := 0
+		for i := 1; i < len(logits); i++ {
+			if logits[i] > logits[best] {
+				best = i
+			}
+		}
+		out[best] = 1
+		return out
 	}
 	max := float32(math.Inf(-1))
 	for _, v := range logits {

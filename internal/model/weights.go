@@ -9,6 +9,11 @@ import (
 	"os"
 )
 
+// ByteVocab is the vocabulary size of a byte-level tokenizer. Prompts produce
+// ids in 0..ByteVocab-1 only, so a weights file with a different vocabulary
+// cannot be used by this app without changing the tokenizer and sampler.
+const ByteVocab = 256
+
 // Config is the shape of the toy model. It is small enough for a full forward
 // pass to run in a few milliseconds on one core, so every keystroke can
 // recompute the trace.
@@ -22,9 +27,14 @@ type Config struct {
 }
 
 // DefaultConfig is the configuration the bundled weights use.
-var DefaultConfig = Config{Vocab: 256, DModel: 96, NLayer: 2, NHead: 4, DFF: 384, Ctx: 64}
+var DefaultConfig = Config{Vocab: ByteVocab, DModel: 96, NLayer: 2, NHead: 4, DFF: 384, Ctx: 64}
 
-func (c Config) DHead() int { return c.DModel / c.NHead }
+func (c Config) DHead() int {
+	if c.NHead <= 0 {
+		return 0
+	}
+	return c.DModel / c.NHead
+}
 
 // LayerWeights holds one transformer block. Linear layers carry no bias, as in
 // LLaMA, which keeps the visualizations readable.
@@ -98,8 +108,32 @@ func Parse(data []byte, source string) (*Weights, error) {
 
 func (w *Weights) validate() error {
 	c := w.Config
-	if c.Vocab == 0 {
-		return fmt.Errorf("weights: missing config")
+	if c.Vocab != ByteVocab {
+		return fmt.Errorf("weights: vocab is %d, want %d for byte-level tokens", c.Vocab, ByteVocab)
+	}
+	if c.DModel <= 0 {
+		return fmt.Errorf("weights: d_model must be positive, got %d", c.DModel)
+	}
+	if c.NLayer <= 0 {
+		return fmt.Errorf("weights: n_layer must be positive, got %d", c.NLayer)
+	}
+	if c.NHead <= 0 {
+		return fmt.Errorf("weights: n_head must be positive, got %d", c.NHead)
+	}
+	if c.DFF <= 0 {
+		return fmt.Errorf("weights: d_ff must be positive, got %d", c.DFF)
+	}
+	if c.Ctx <= 0 {
+		return fmt.Errorf("weights: ctx must be positive, got %d", c.Ctx)
+	}
+	if c.DModel%c.NHead != 0 {
+		return fmt.Errorf("weights: d_model %d is not divisible by n_head %d", c.DModel, c.NHead)
+	}
+	if len(w.LNFG) != c.DModel {
+		return fmt.Errorf("weights: lnf_g has %d values, want %d", len(w.LNFG), c.DModel)
+	}
+	if len(w.LNFB) != c.DModel {
+		return fmt.Errorf("weights: lnf_b has %d values, want %d", len(w.LNFB), c.DModel)
 	}
 	if len(w.TokEmbed) != c.Vocab*c.DModel {
 		return fmt.Errorf("weights: tok_embed has %d values, want %d", len(w.TokEmbed), c.Vocab*c.DModel)
@@ -139,7 +173,6 @@ func Random(c Config, seed int64) *Weights {
 	w.PosEmbed = normalSlice(rng, c.Ctx*c.DModel, 0.01)
 	w.LNFG = ones(c.DModel)
 	w.LNFB = make([]float32, c.DModel)
-	w.LNFG = ones(c.DModel)
 	for i := 0; i < c.NLayer; i++ {
 		l := LayerWeights{
 			LN1G: ones(c.DModel), LN1B: make([]float32, c.DModel),
@@ -178,8 +211,11 @@ func (t *Trace) Probabilities(temperature float64) []float32 {
 }
 
 // TopK returns the k token ids with the highest probability, most likely
-// first.
+// first. A non-positive k returns no ids.
 func TopK(probs []float32, k int) []int {
+	if k <= 0 {
+		return nil
+	}
 	idx := make([]int, len(probs))
 	for i := range idx {
 		idx[i] = i

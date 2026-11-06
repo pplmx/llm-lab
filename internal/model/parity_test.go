@@ -75,12 +75,20 @@ func loadParity(t *testing.T) *parityFixture {
 	if err != nil {
 		t.Skipf("no parity fixture (run tools/parity.py): %v", err)
 	}
-	defer fh.Close()
+	defer func() {
+		if err := fh.Close(); err != nil {
+			t.Errorf("close parity fixture: %v", err)
+		}
+	}()
 	zr, err := gzip.NewReader(fh)
 	if err != nil {
 		t.Fatalf("open fixture: %v", err)
 	}
-	defer zr.Close()
+	defer func() {
+		if err := zr.Close(); err != nil {
+			t.Errorf("close parity reader: %v", err)
+		}
+	}()
 	data, err := io.ReadAll(zr)
 	if err != nil {
 		t.Fatalf("read fixture: %v", err)
