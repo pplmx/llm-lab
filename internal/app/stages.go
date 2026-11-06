@@ -362,7 +362,7 @@ func (a *App) stageScores(c *ui.Context) {
 		sectionTitle(c, "分数矩阵", "行 = query，列 = key，右上三角被掩码")
 		ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
-				a.heatmap(c, h.Scores, "score")
+				a.heatmapAxed(c, h.Scores, "score", true)
 			})
 			ui.Column(c).Gap(6).Grow(1).Children(func() {
 				mutedText(c, "点积越大，说明这个位置的 Query 与那个位置的 Key 越匹配。除法因子让分数的量级不随维度增长。")
@@ -456,7 +456,7 @@ func (a *App) stageSoftmax(c *ui.Context) {
 		sectionTitle(c, "注意力矩阵", fmt.Sprintf("层 %d · 头 %d", a.Layer, a.Head))
 		ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
-				a.heatmap(c, h.Attn, "attn")
+				a.heatmapAxed(c, h.Attn, "attn", true)
 			})
 			ui.Column(c).Gap(6).Grow(1).MaxWidth(480).Children(func() {
 				mutedText(c, "每一行加起来等于 1。颜色越深，这个 query 从那个 key 取走的信息越多。")

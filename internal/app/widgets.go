@@ -348,6 +348,19 @@ func drawStepDot(p *ui.Painter, r ui.Rect, i, n, state, current int) {
 
 // kind "attn" colors probabilities, "score" colors raw logits after scaling.
 func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
+	a.heatmapAxed(c, attn, kind, false)
+}
+
+// heatmapAxed is heatmap with position numbers along the top and left edges.
+//
+// The heading says "行 = query，列 = key", but neither edge carried a number: a
+// reader had to count cells or hover to learn which key a column belonged to,
+// which is the question this stage exists to answer. The labels live inside the
+// box's own rect, so they cost no layout width beyond the gutter reserved here.
+func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes bool) {
+	if a.heatmapAxesForTest != nil {
+		axes = *a.heatmapAxesForTest
+	}
 	T := len(attn)
 	if T == 0 {
 		return
@@ -381,15 +394,24 @@ func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 	if cell < 2.5 {
 		cell = 2.5
 	}
+	// The labels sit in a gutter inside the same box. Reserving it here keeps the
+	// matrix inside the card at 1180px, where the card is already the narrowest
+	// thing on the stage.
+	var gutter ui.Rect
+	if axes {
+		gutter = ui.Rect{X: 20, Y: 9}
+	}
 	size := cell * float32(T)
 	q, k := -1, -1
-	el := ui.Box(c).Size(size, size).Radius(4).Shrink(0).
+	el := ui.Box(c).Size(size+gutter.X, size+gutter.Y).Radius(4).Shrink(0).
 		Draw(func(p *ui.Painter, r ui.Rect) {
 			// Derive the cell from the rect we were actually given, not from the
 			// requested size: a long prompt makes the box wider than the card,
 			// and the layout shrinks it. Drawing with the requested cell then
 			// silently cut the right-hand columns off the matrix.
-			cw, ch := r.W/float32(T), r.H/float32(T)
+			grid := ui.Rect{X: r.X + gutter.X, Y: r.Y + gutter.Y,
+				W: r.W - gutter.X, H: r.H - gutter.Y}
+			cw, ch := grid.W/float32(T), grid.H/float32(T)
 			// The masked cells are colPanel at 45% over the card's colPanel,
 			// which is colPanel again, so they paint nothing the card does not
 			// already show, and neither do the 0.4px gaps between the cells:
@@ -403,8 +425,8 @@ func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 						c = scoreColor(row[j], scale)
 					}
 					p.Fill(ui.Rect{
-						X: r.X + float32(j)*cw,
-						Y: r.Y + float32(i)*ch,
+						X: grid.X + float32(j)*cw,
+						Y: grid.Y + float32(i)*ch,
 						W: cw - 0.4, H: ch - 0.4,
 					}, c, 0)
 				}
@@ -412,10 +434,10 @@ func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 			// Crosshair for the cell under the pointer, from the last frame.
 			if a.HoverQ >= 0 && a.HoverQ < T && a.HoverK >= 0 && a.HoverK < T {
 				p.Stroke(ui.Rect{
-					X: r.X, Y: r.Y + float32(a.HoverQ)*ch, W: r.W, H: ch,
+					X: grid.X, Y: grid.Y + float32(a.HoverQ)*ch, W: grid.W, H: ch,
 				}, colAccent2, 0, 1)
 				p.Stroke(ui.Rect{
-					X: r.X + float32(a.HoverK)*cw, Y: r.Y, W: cw, H: r.H,
+					X: grid.X + float32(a.HoverK)*cw, Y: grid.Y, W: cw, H: grid.H,
 				}, colAccent2, 0, 1)
 			}
 			// The keyboard's cell, as a filled box rather than a crosshair: the
@@ -424,16 +446,44 @@ func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 			// static until the reader presses a key.
 			if q, k := a.cellCursor(); q >= 0 && q < T && k >= 0 && k < T {
 				p.Stroke(ui.Rect{
-					X: r.X + float32(k)*cw - 0.5, Y: r.Y + float32(q)*ch - 0.5,
+					X: grid.X + float32(k)*cw - 0.5, Y: grid.Y + float32(q)*ch - 0.5,
 					W: cw + 1, H: ch + 1,
 				}, colWarm, 0, 2)
+			}
+			// Edge labels. A 64-token matrix has cells under 3 DIPs wide, so
+			// labels are drawn at a stride wide enough not to overlap; the row
+			// the reader selected is always labelled, since that is the one the
+			// inspector and the strip agree on.
+			if axes {
+				put := func(text string, x, y float32, colour ui.Color) {
+					sp := ui.Span{Text: text, Size: fontMicro, Color: colour}
+					w, h := p.MeasureText(0, sp)
+					p.RichText(x-w/2, y-h/2, 0, sp)
+				}
+				stride := 1
+				for float32(stride)*cw < 26 {
+					stride++
+				}
+				for j := 0; j < T; j += stride {
+					put(fmt.Sprint(j), grid.X+float32(j)*cw+cw/2, grid.Y-5, colFaint)
+				}
+				for i := 0; i < T; i++ {
+					if i%stride != 0 && i != a.SelToken {
+						continue
+					}
+					colour := colFaint
+					if i == a.SelToken {
+						colour = colWarm
+					}
+					put(fmt.Sprint(i), grid.X-11, grid.Y+float32(i)*ch+ch/2, colour)
+				}
 			}
 			// The selected query row. A stroked rectangle on the last row reads
 			// as a stray underline, so tint the row and mark its left edge.
 			if a.SelToken >= 0 && a.SelToken < T {
-				y := r.Y + float32(a.SelToken)*ch
-				p.Fill(ui.Rect{X: r.X, Y: y, W: r.W, H: ch - 0.4}, colWarm.Alpha(0.13), 0)
-				p.Fill(ui.Rect{X: r.X - 3, Y: y, W: 2, H: ch - 0.4}, colWarm, 0)
+				y := grid.Y + float32(a.SelToken)*ch
+				p.Fill(ui.Rect{X: grid.X, Y: y, W: grid.W, H: ch - 0.4}, colWarm.Alpha(0.13), 0)
+				p.Fill(ui.Rect{X: grid.X - 3, Y: y, W: 2, H: ch - 0.4}, colWarm, 0)
 			}
 		})
 	if b := el.Bounds(); b.W > 0 && b.H > 0 {

@@ -85,6 +85,11 @@ type App struct {
 	// the strip never steals the scroll back from a reader browsing it.
 	RevealRail bool
 
+	// heatmapAxesForTest lets a test render the matrices with the edge labels
+	// forced on or off, so the difference between the two can be measured. Nil
+	// means "use the call site's choice".
+	heatmapAxesForTest *bool
+
 	LastSample string
 	Status     string
 
