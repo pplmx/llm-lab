@@ -34,6 +34,14 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Added
+
+- 新增 `enums_test.go`：检查 `internal/app` 里「列出部分取值、其余落到 default」的那几个 switch 是否真的取值封闭
+  - 上一轮修的 `railMarkColor` 就是这个形状：`"qk"` 落到 default，而 default 的语义是「没有标记」
+  - 本轮逐个核实剩下三处：stepper 的 0/1/2 三态（完整，且三种文字颜色互不相同）、`controlScopeNote` 的控件名（调用点只会传「层/头/温度」三个字面量）、`byteText` 与 `chipGlyph` 覆盖全部 256 个字节值
+  - **结论是没有发现新缺陷**——三处都成立。测试保留下来是因为这类破坏不会报错，只会悄悄画错
+  - 另加一条：控件作用范围那句话里的步数必须来自 `layerFrom` 等常量，不能写死
+
 ### Fixed
 
 - 热力图对角线格子（query 与 key 是同一个 token，即「某个 token 关注自己」）在 token 条上被画成了**「没有标记」的颜色**
