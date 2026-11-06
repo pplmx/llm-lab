@@ -3,8 +3,11 @@ package app
 import (
 	"fmt"
 	"math"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
+
+	"llmlab/internal/model"
 )
 
 // vectorStrip paints a row of cells, one per dimension, colored by sign.
@@ -95,7 +98,7 @@ func (a *App) tokenRailChips(c *ui.Context, tokens []modelToken) {
 		// tokens and the id is a caption, not something the reader interacts
 		// with.
 		chip.Children(func() {
-			ui.Text(c, tk.Text).FontSize(fontBody).TextColor(colText).NoWrap()
+			ui.Text(c, chipGlyph(a.Trace, i)).FontSize(fontBody).TextColor(colText).NoWrap()
 		})
 		chip.Draw(func(p *ui.Painter, r ui.Rect) {
 			// colMuted, not colFaint: the chip is colPanel normally, colPanel2
@@ -116,6 +119,48 @@ func (a *App) tokenRailChips(c *ui.Context, tokens []modelToken) {
 			chip.ScrollIntoView()
 		}
 	}
+}
+
+// chipGlyph is what one token shows in the strip.
+//
+// The model renders a non-ASCII byte as the four-character escape "\xe6",
+// which is honest about the byte but unreadable in a strip of them: a Chinese
+// prompt became a row of "\xb3 \xa8 \xe6 \x84 ...". The strip is a picture of
+// the text, so a byte belonging to a multi-byte character shows the character
+// itself plus a subscript naming which byte of it this token is. Single-byte
+// tokens keep the model's own rendering, which already covers space, tab, and
+// newline with their own glyphs.
+func chipGlyph(tr *model.Trace, i int) string {
+	if tr == nil || i < 0 || i >= len(tr.Tokens) {
+		return "?"
+	}
+	tk := tr.Tokens[i]
+	if tk.ID < 0x80 {
+		return tk.Text
+	}
+	if tk.Rune == 0 {
+		// An invalid byte decodes to no character; there is nothing to show
+		// but the byte itself.
+		return tk.Text
+	}
+	// Which byte of its character is this token?
+	n := utf8.RuneLen(tk.Rune)
+	if n <= 1 {
+		return tk.Text
+	}
+	// Walk back to the first token of this character: same Start, same rune.
+	idx := 0
+	for j := i; j > 0; j-- {
+		if tr.Tokens[j-1].Start != tk.Start || tr.Tokens[j-1].Rune != tk.Rune {
+			break
+		}
+		idx++
+	}
+	sub := "₁₂₃₄"
+	if idx < len(sub)/3 {
+		return fmt.Sprintf("%c%s", tk.Rune, string([]rune(sub)[idx]))
+	}
+	return string(tk.Rune)
 }
 
 // railMarks says how the strip marks token i for the attention cell under the

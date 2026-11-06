@@ -2140,3 +2140,66 @@ func TestUTF8PrefixMatchesTheEncoding(t *testing.T) {
 		}
 	}
 }
+
+// TestChipGlyphShowsCharactersNotEscapes is the point of the change: a byte of
+// a multi-byte character shows that character, not the model's "\\xe6" escape.
+func TestChipGlyphShowsCharactersNotEscapes(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "a注b"
+	a.recompute()
+	want := []string{"a", "注₁", "注₂", "注₃", "b"}
+	if len(a.Trace.Tokens) != len(want) {
+		t.Fatalf("%d tokens, want %d", len(a.Trace.Tokens), len(want))
+	}
+	for i, w := range want {
+		if got := chipGlyph(a.Trace, i); got != w {
+			t.Fatalf("token %d: glyph %q, want %q", i, got, w)
+		}
+	}
+	// The model still renders the bare byte; only the strip substitutes.
+	if got := a.Trace.Tokens[1].Text; got != `\xe6` {
+		t.Fatalf("token 1 Text = %q; the model's own rendering changed", got)
+	}
+}
+
+// TestChipGlyphCoversEveryCharacterLength checks the subscript index across
+// ASCII, 2-, 3- and 4-byte characters, since each takes a different branch.
+func TestChipGlyphCoversEveryCharacterLength(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "aéb注𝄞"
+	a.recompute()
+	var got []string
+	for i := range a.Trace.Tokens {
+		got = append(got, chipGlyph(a.Trace, i))
+	}
+	want := []string{"a", "é₁", "é₂", "b", "注₁", "注₂", "注₃", "𝄞₁", "𝄞₂", "𝄞₃", "𝄞₄"}
+	if len(got) != len(want) {
+		t.Fatalf("%d tokens %q, want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("token %d: %q, want %q (all: %q)", i, got[i], want[i], got)
+		}
+	}
+}
+
+// TestChipGlyphKeepsASCIIAndControlGlyphs checks the substitution stays away
+// from tokens the model already renders well.
+func TestChipGlyphKeepsASCIIAndControlGlyphs(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "a b\tc\nd"
+	a.recompute()
+	want := []string{"a", "␣", "b", "\\t", "c", "\\n", "d"}
+	var got []string
+	for i := range a.Trace.Tokens {
+		got = append(got, chipGlyph(a.Trace, i))
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%d tokens %q, want %d", len(got), got, len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("token %d: %q, want %q (all: %q)", i, got[i], want[i], got)
+		}
+	}
+}
