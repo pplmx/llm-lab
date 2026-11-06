@@ -4396,3 +4396,79 @@ func TestOrderBlindnessWordingMatchesTheMask(t *testing.T) {
 			"encoding: %q", body)
 	}
 }
+
+// TestLayerStagesNameTheirLayer checks stages 3, 5 and 6 say which layer's
+// numbers they are showing.
+//
+// The layer control lives in the top bar. Once the page is scrolled — and the
+// matrix sits well below the fold at 1180x720 — the control is out of sight while
+// every figure below belongs to one specific layer. Stage 4 already named both
+// layer and head in its heading; the other three did not, so a scrolled reader had
+// no way to tell layer 0's residual stream from layer 1's.
+func TestLayerStagesNameTheirLayer(t *testing.T) {
+	// heading prefix per stage, for the stages the layer control affects minus
+	// stage 4 which already said it.
+	headings := map[int]string{
+		2: "分数矩阵",
+		4: "残差流",
+		5: "升维",
+	}
+	for step, heading := range headings {
+		for _, layer := range []int{0, 1} {
+			a := newTestApp(t)
+			a.Step = step
+			a.Layer = layer
+			tr := ui.NewTester(a.View, 1500, 940)
+			tr.Frame()
+
+			want := fmt.Sprintf("层 %d · ", layer)
+			found := false
+			for _, s := range tr.Texts() {
+				if strings.HasPrefix(s, heading) && strings.Contains(s, want) {
+					found = true
+				}
+				// The note is a sibling element of the title, so it may arrive
+				// as its own text.
+				if strings.HasPrefix(s, want) && strings.Contains(s, "query") {
+					found = true
+				}
+				if strings.HasPrefix(s, want) && strings.Contains(s, "两次加法") {
+					found = true
+				}
+				if strings.HasPrefix(s, want) && strings.Contains(s, "d_ff") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("stage %d at layer %d does not name its layer", step+1, layer)
+			}
+		}
+	}
+}
+
+// TestLayerHeadingsDifferPerLayer is the corollary: if the heading names the
+// layer, two layers must produce different headings.
+func TestLayerHeadingsDifferPerLayer(t *testing.T) {
+	for step := range map[int]bool{2: true, 4: true, 5: true} {
+		texts := map[int]string{}
+		for _, layer := range []int{0, 1} {
+			a := newTestApp(t)
+			a.Step = step
+			a.Layer = layer
+			tr := ui.NewTester(a.View, 1500, 940)
+			tr.Frame()
+			var parts []string
+			for _, s := range tr.Texts() {
+				if strings.HasPrefix(s, "层 ") || strings.HasPrefix(s, "分数矩阵") ||
+					strings.HasPrefix(s, "残差流") || strings.HasPrefix(s, "升维") {
+					parts = append(parts, s)
+				}
+			}
+			texts[layer] = strings.Join(parts, "|")
+		}
+		if texts[0] == texts[1] {
+			t.Fatalf("stage %d: the layer headings are identical for both layers: %q",
+				step+1, texts[0])
+		}
+	}
+}

@@ -369,7 +369,10 @@ func (a *App) stageScores(c *ui.Context) {
 	})
 
 	card(c, func() {
-		sectionTitle(c, "分数矩阵", "行 = query，列 = key，右上三角被掩码")
+		// Name the layer in the heading, not only on the control at the top of
+		// the window: once the page is scrolled the control is out of sight, and
+		// every number below belongs to one specific layer.
+		sectionTitle(c, "分数矩阵", fmt.Sprintf("层 %d · 行 = query，列 = key，右上三角被掩码", a.Layer))
 		ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
 				a.heatmapAxed(c, h.Scores, "score", true)
@@ -580,7 +583,7 @@ func (a *App) stageResidual(c *ui.Context) {
 	i := clampIndex(a.SelToken, len(tr.Tokens))
 
 	card(c, func() {
-		sectionTitle(c, "残差流", "两次加法，信息都绕过了子层")
+		sectionTitle(c, "残差流", fmt.Sprintf("层 %d · 两次加法，信息都绕过了子层", a.Layer))
 		ui.Text(c, "进入注意力子层 x").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.In[i], 16, &a.HoverDimIn)
 		ui.Text(c, "注意力子层输出 Δ_attn").FontSize(fontMicro).TextColor(colFaint)
@@ -859,8 +862,8 @@ func (a *App) stageFFN(c *ui.Context) {
 	card(c, func() {
 		ofAll, ofBlocks := ffnParamShare(a.Trace.Config)
 		sectionTitle(c, "升维 → GELU → 降维",
-			fmt.Sprintf("d_ff = %d · 占全部参数 %.0f%%（块内 %.0f%%）",
-				len(hidden), ofAll*100, ofBlocks*100))
+			fmt.Sprintf("层 %d · d_ff = %d · 占全部参数 %.0f%%（块内 %.0f%%）",
+				a.Layer, len(hidden), ofAll*100, ofBlocks*100))
 		ui.Text(c, "W₁·LN(x) 后过 GELU").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, hidden, 22, &a.HoverDimH)
 		// "稀疏" is a claim about concentration, and a count of values above an
