@@ -5618,3 +5618,64 @@ func TestTokenRailChipLabelsAreZeroBased(t *testing.T) {
 		t.Fatal("the first token's chip is not labelled \"token 0\"")
 	}
 }
+
+// TestSamplingCardArithmeticReproducesX pins the drawn value to the printed line.
+//
+// The card shows "x = (种子 mod 1000003) ÷ 1000003 = 587537 ÷ 1000003 = 0.587535".
+// Three mutations to that line and its constant left every test green: changing the
+// modulus to 1000001, using 1000000 as the divisor while keeping the numerator, and
+// changing only the divisor printed in the text. All three break the one property the
+// line exists for — that a reader can divide the two printed integers and get the
+// printed x.
+func TestSamplingCardArithmeticReproducesX(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	d, ok := a.sampleDraw(a.Trace.Probabilities(a.Temp))
+	if !ok {
+		t.Fatal("no draw")
+	}
+
+	const modulus = 1000003
+	numerator := d.seed % modulus
+	hand := float64(numerator) / float64(modulus)
+	if got, want := fmt.Sprintf("%.6f", hand), fmt.Sprintf("%.6f", d.x); got != want {
+		t.Fatalf("x is printed as %.6f, but the division the card shows gives %s",
+			d.x, got)
+	}
+
+	// And the card must actually print those two integers, so the reader has them.
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	want := fmt.Sprintf("= %d ÷ %d = %.6f", numerator, modulus, hand)
+	found := false
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the card does not print %q", want)
+	}
+}
+
+// TestSamplingCardDividesByTheSameModulusItNames catches the narrower mistake: the
+// numerator taken modulo one number and divided by another.
+func TestSamplingCardDividesByTheSameModulusItNames(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	d, ok := a.sampleDraw(a.Trace.Probabilities(a.Temp))
+	if !ok {
+		t.Fatal("no draw")
+	}
+	// Recover the modulus from the printed x: seed mod M = numerator, and
+	// numerator / M = x, so M = numerator / x.
+	numerator := d.seed % 1000003
+	if d.x == 0 {
+		t.Skip("x is zero, so the modulus cannot be recovered from it")
+	}
+	implied := float64(numerator) / d.x
+	if math.Abs(implied-1000003) > 1 {
+		t.Fatalf("x = %.6f with numerator %d implies a modulus of %.0f, not 1000003",
+			d.x, numerator, implied)
+	}
+}
