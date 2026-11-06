@@ -993,19 +993,25 @@ func (a *App) inspectorToken(c *ui.Context, tr *model.Trace) {
 // usually dominates, which is the lesson: alpha is a distribution, but the
 // output is close to "the few values it points at".
 func weightedWorkings(c *ui.Context, q, dim int, p weightedParts) {
+	// Four decimals, matching the remainder and the total on the next line. At
+	// three, each term was rounded by up to 5e-4 and three of them plus the
+	// remainder put the reader's sum in the wrong fourth decimal on every
+	// dimension measured (worst gap 9.8e-4) — the line is here to be re-added, so
+	// the pieces and the total have to be at the same precision.
 	var terms []string
 	for _, tm := range p.Top {
-		terms = append(terms, fmt.Sprintf("k%d %+.3f", tm.Key, tm.Val))
+		terms = append(terms, fmt.Sprintf("k%d %+.4f", tm.Key, tm.Val))
 	}
 	lines := []string{
 		fmt.Sprintf("Out[%d][d%d] = Σ α·V 的三项最大贡献：%s", q, dim, strings.Join(terms, "  ")),
 	}
 	if p.Rest != 0 {
-		lines = append(lines, fmt.Sprintf("+ 其余 %d 项 %+.4f = %+.4f", q+1-len(p.Top), p.Rest, p.Out))
+		lines = append(lines, fmt.Sprintf("+ 其余 %d 项 %+.4f ≈ %+.4f", q+1-len(p.Top), p.Rest, p.Out))
 	} else {
-		lines = append(lines, fmt.Sprintf("= %+.4f", p.Out))
+		lines = append(lines, fmt.Sprintf("≈ %+.4f", p.Out))
 	}
 	workingsLines(c, lines)
+	mutedText(c, "各项按模型的 float32 精度算，这里四舍五入到四位小数，所以自己相加时末位可能差一两个单位。")
 	share := 0.0
 	if p.AbsTotal > 0 {
 		var top float64

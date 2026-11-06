@@ -229,3 +229,60 @@ func TestPrintedLNActuallyMatchesTheTrace(t *testing.T) {
 		}
 	}
 }
+
+// TestPrintedWeightedSumStaysClose checks the Σα·V line stays within the precision
+// it prints.
+//
+// The line lists the three largest terms, the remainder, and the total. At three
+// decimals for the terms — one less than the remainder and the total — each term
+// was rounded by up to 5e-4, and the reader's sum landed in the wrong fourth
+// decimal on all 24 dimensions of the row measured, worst gap 9.8e-4. The line
+// exists to be re-added, so the pieces are now printed at the same precision as
+// the total, which brings the worst gap to 7.9e-5.
+func TestPrintedWeightedSumStaysClose(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	h := a.layer().Heads[a.Head]
+	q := a.SelToken
+
+	round := func(v float64, dp int) float64 {
+		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
+		return out
+	}
+
+	worst := 0.0
+	for dim := 0; dim < a.Trace.Config.DHead(); dim++ {
+		p := computeWeighted(h.Attn[q], h.V, q, dim, len(a.Trace.Tokens))
+		if !p.OK {
+			t.Fatalf("dim %d: computeWeighted declined", dim)
+		}
+		sum := 0.0
+		for _, tm := range p.Top {
+			sum += round(tm.Val, 4)
+		}
+		sum += round(p.Rest, 4)
+		if d := math.Abs(sum - p.Out); d > worst {
+			worst = d
+		}
+	}
+	if worst > 2e-4 {
+		t.Fatalf("adding the printed pieces moves the total by %.2e, more than a "+
+			"last-digit rounding", worst)
+	}
+	t.Logf("worst gap between the printed terms and the printed total: %.2e", worst)
+}
+
+// TestPrintedWeightedSumMatchesTheTrace keeps the printed total equal to the
+// model's output.
+func TestPrintedWeightedSumMatchesTheTrace(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	h := a.layer().Heads[a.Head]
+	q := a.SelToken
+	for dim := 0; dim < a.Trace.Config.DHead(); dim++ {
+		p := computeWeighted(h.Attn[q], h.V, q, dim, len(a.Trace.Tokens))
+		if got, want := p.Out, float64(h.Out[q][dim]); math.Abs(got-want) > 1e-5 {
+			t.Fatalf("dim %d: the panel would print %.6f, the trace holds %.6f", dim, got, want)
+		}
+	}
+}
