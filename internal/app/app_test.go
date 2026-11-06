@@ -1666,3 +1666,88 @@ func TestPinLabelFitsTheInspector(t *testing.T) {
 		t.Fatalf("the pinned header is %.0f wide, the card offers %.0f", total, float32(available))
 	}
 }
+
+// TestEmbedAdditionAddsUp checks the stage-2 line reproduces the input vector:
+// the two printed terms sum to the printed result, and that result is what the
+// trace holds, for every dimension. The model builds Input with addInto, so the
+// sum is exact in float32 and a reader adding the printed values gets the third
+// one back.
+func TestEmbedAdditionAddsUp(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	i := a.SelToken
+
+	// The trace itself must add up first.
+	for d := range tr.Embed[i] {
+		e, p, x := tr.Embed[i][d], tr.Pos[i][d], tr.Input[i][d]
+		if e+p != x {
+			t.Fatalf("d%d: %v + %v = %v, but Input holds %v", d, e, p, e+p, x)
+		}
+	}
+
+	// Then the line the stage prints has to quote those same terms, not some
+	// other two vectors that happen to add up: reading the rendered text is the
+	// only way to catch a printed line that uses the wrong field.
+	a.Step = 1
+	a.HoverDimIn = -1
+	tester := ui.NewTester(a.View, 1500, 940)
+	tester.Frame()
+	line := ""
+	for _, s := range tester.Texts() {
+		if strings.HasPrefix(s, "d0：E[") {
+			line = s
+		}
+	}
+	if line == "" {
+		t.Fatal("the stage prints no addition line")
+	}
+	want := fmt.Sprintf("d0：E[%d][0] = %+.4f · P[%d] = %+.4f",
+		tr.Tokens[i].ID, tr.Embed[i][0], i, tr.Pos[i][0])
+	if line != want {
+		t.Fatalf("printed line is\n  %q\nwant\n  %q", line, want)
+	}
+}
+
+// TestEmbedLineFollowsTheHoveredDimension checks the printed dimension tracks
+// the vector strips' shared hover.
+func TestEmbedLineFollowsTheHoveredDimension(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 1
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	line := func() string {
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "d") && strings.Contains(s, "：E[") {
+				return s
+			}
+		}
+		return ""
+	}
+	first := line()
+	if first == "" {
+		t.Fatal("no embedding addition line")
+	}
+	a.HoverDimIn = 47
+	tr.Frame()
+	second := line()
+	if second == "" {
+		t.Fatal("the line disappeared when the dimension changed")
+	}
+	if first == second {
+		t.Fatal("hovering another dimension printed the same line")
+	}
+	if !strings.HasPrefix(second, "d47") {
+		t.Fatalf("hovering d47 printed %q", second)
+	}
+}
+
+// TestSignedFormatsNegativeTermsForReading guards the parentheses: "+0.5674 +
+// -0.6724" invites a second look, "+0.5674 + (-0.6724)" does not.
+func TestSignedFormatsNegativeTermsForReading(t *testing.T) {
+	if got := signed(-0.6724); got != "(-0.6724)" {
+		t.Fatalf("signed(-0.6724) = %q", got)
+	}
+	if got := signed(0.5674); got != "+0.5674" {
+		t.Fatalf("signed(0.5674) = %q", got)
+	}
+}

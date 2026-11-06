@@ -265,6 +265,23 @@ func (a *App) stageEmbed(c *ui.Context) {
 		vectorStrip(c, tr.Pos[i], 20, &a.HoverDimIn)
 		ui.Text(c, "x = embedding + position").FontSize(fontMicro).TextColor(colAccent2)
 		vectorStrip(c, tr.Input[i], 24, &a.HoverDimIn)
+		// One dimension of that addition, with this token's numbers. Hovering a
+		// strip above changes which dimension. The sum is exact in float32, so a
+		// reader adding the two printed values gets the third one back.
+		dim := 0
+		if a.HoverDimIn >= 0 && a.HoverDimIn < len(tr.Embed[i]) {
+			dim = a.HoverDimIn
+		}
+		e, pos, x := tr.Embed[i][dim], tr.Pos[i][dim], tr.Input[i][dim]
+		ui.Column(c).Gap(2).Children(func() {
+			ui.Text(c, fmt.Sprintf("d%d：E[%d][%d] = %+.4f · P[%d] = %+.4f",
+				dim, tr.Tokens[i].ID, dim, e, i, pos)).
+				FontSize(fontMicro).TextColor(colFaint)
+			// Parenthesise a negative so the line reads unambiguously: without
+			// it "+0.5674 + -0.6724" invites a second look.
+			ui.Text(c, fmt.Sprintf("%s + %s = %+.4f", signed(e), signed(pos), x)).
+				FontSize(fontMicro).TextColor(colAccent2)
+		})
 	})
 
 	card(c, func() {
@@ -278,6 +295,15 @@ func (a *App) stageEmbed(c *ui.Context) {
 			})
 		}
 	})
+}
+
+// signed formats v with its sign, wrapping a negative in parentheses so a sum
+// reads as "+0.5674 + (-0.6724)" rather than the easily misread "+0.5674 + -0.6724".
+func signed(v float32) string {
+	if v < 0 {
+		return fmt.Sprintf("(%+.4f)", v)
+	}
+	return fmt.Sprintf("%+.4f", v)
 }
 
 func (a *App) stageScores(c *ui.Context) {
