@@ -2558,3 +2558,101 @@ func TestHeadEntropyBarsFollowTheHeadSwitch(t *testing.T) {
 		t.Fatal("head 3 is not marked after switching")
 	}
 }
+
+// TestWeightedWorkingsReproduceTheTrace checks the printed Σα·V closes on the
+// head output the trace recorded, for a few cells and dimensions.
+func TestWeightedWorkingsReproduceTheTrace(t *testing.T) {
+	a := newTestApp(t)
+	l := a.layer()
+	h := l.Heads[a.Head]
+	n := len(a.Trace.Tokens)
+	dh := a.Trace.Config.DHead()
+	for _, cell := range []struct{ q, dim int }{
+		{n - 1, 0}, {n - 1, 1}, {n - 1, dh - 1}, {10, 3}, {0, 0},
+	} {
+		p := computeWeighted(h.Attn[cell.q], h.V, cell.q, cell.dim, n)
+		if !p.OK {
+			t.Fatalf("cell %d,%d: no parts", cell.q, cell.dim)
+		}
+		if want := float64(h.Out[cell.q][cell.dim]); math.Abs(p.Out-want) > 1e-5 {
+			t.Fatalf("cell %d,%d: Σα·V = %.6f, Out holds %.6f", cell.q, cell.dim, p.Out, want)
+		}
+		// The shown terms plus the remainder must close the sum exactly.
+		var shown float64
+		for _, tm := range p.Top {
+			shown += tm.Val
+		}
+		if math.Abs(shown+p.Rest-p.Out) > 1e-5 {
+			t.Fatalf("cell %d,%d: terms %v + rest %v != %v", cell.q, cell.dim, shown, p.Rest, p.Out)
+		}
+	}
+}
+
+// TestWeightedTermsAreTheLargestByMagnitude guards the selection, on a cell where
+// sorting by signed value would give different terms.
+func TestWeightedTermsAreTheLargestByMagnitude(t *testing.T) {
+	a := newTestApp(t)
+	h := a.layer().Heads[a.Head]
+	n := len(a.Trace.Tokens)
+	const q = 10
+	var found bool
+	for dim := 0; dim < a.Trace.Config.DHead() && !found; dim++ {
+		p := computeWeighted(h.Attn[q], h.V, q, dim, n)
+		shown := map[int]bool{}
+		for _, tm := range p.Top {
+			shown[tm.Key] = true
+		}
+		smallest := math.Inf(1)
+		for _, tm := range p.Top {
+			if v := math.Abs(tm.Val); v < smallest {
+				smallest = v
+			}
+		}
+		for k := 0; k <= q; k++ {
+			if shown[k] {
+				continue
+			}
+			if v := math.Abs(float64(h.Attn[q][k]) * float64(h.V[k][dim])); v > smallest {
+				t.Fatalf("dim %d: k%d (|%.4f|) is larger than a shown term (|%.4f|)", dim, k, v, smallest)
+			}
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("no dimension checked")
+	}
+}
+
+// TestWeightedWorkingsAppearOnStage checks the block reaches the screen and
+// follows the head-output strip's hover.
+func TestWeightedWorkingsAppearOnStage(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	found := false
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, "Out[") && strings.Contains(s, "Σ α·V") {
+			if !strings.Contains(s, "[d0]") {
+				t.Fatalf("default line does not name d0: %q", s)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no weighted-sum working on stage 4")
+	}
+
+	// Hovering the head-output strip moves it to that dimension.
+	a.HoverDimHeadOut = 7
+	tr.Frame()
+	found = false
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, "Out[") && strings.Contains(s, "[d7]") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the working did not follow the hovered dimension")
+	}
+}

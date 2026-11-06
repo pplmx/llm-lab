@@ -487,6 +487,16 @@ func (a *App) stageSoftmax(c *ui.Context) {
 		vectorStrip(c, l.HeadProj[a.Head][i], 18, &a.HoverDimProj)
 		ui.Text(c, "全部头相加 = 本层注意力输出").FontSize(fontMicro).TextColor(colAccent2)
 		vectorStrip(c, l.AttnProj[i], 18, &a.HoverDimProj)
+		// How α turns into the head output, one dimension at a time. Without
+		// this the stage shows a weight and a resulting vector with nothing
+		// connecting them.
+		dim := 0
+		if a.HoverDimHeadOut >= 0 && a.HoverDimHeadOut < tr.Config.DHead() {
+			dim = a.HoverDimHeadOut
+		}
+		if p := computeWeighted(h.Attn[i], h.V, i, dim, len(tr.Tokens)); p.OK {
+			weightedWorkings(c, i, dim, p)
+		}
 	})
 }
 

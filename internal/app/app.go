@@ -1070,6 +1070,68 @@ func utf8Payload(b byte) byte {
 	}
 }
 
+// weightedTerm is one α·V product contributing to a head output dimension.
+type weightedTerm struct {
+	Key int
+	Val float64
+}
+
+// weightedParts is the arithmetic behind one dimension of a head's output: the
+// largest contributions, the exact remainder, and the total.
+type weightedParts struct {
+	Top  []weightedTerm
+	Rest float64
+	Out  float64
+	// AbsTotal is Σ|α·V| over the visible keys, the honest denominator for
+	// "how much of this sum do the shown terms carry".
+	AbsTotal float64
+	OK       bool
+}
+
+// computeWeighted derives Out[q][dim] = Σ_k α[q][k]·V[k][dim] and reports its
+// largest terms by absolute value plus the exact remainder, the way the FFN
+// stage does for its own sum.
+func computeWeighted(attn []float32, v [][]float32, q, dim, n int) weightedParts {
+	if q < 0 || dim < 0 || q >= n || len(attn) < n {
+		return weightedParts{}
+	}
+	terms := make([]weightedTerm, q+1)
+	for k := 0; k <= q; k++ {
+		if k >= len(v) || dim >= len(v[k]) {
+			return weightedParts{}
+		}
+		terms[k] = weightedTerm{Key: k, Val: float64(attn[k]) * float64(v[k][dim])}
+	}
+	// Row 0 has a single key, so "the largest three" has to shrink to fit
+	// rather than refusing to describe a real row.
+	top := 3
+	if len(terms) < top {
+		top = len(terms)
+	}
+	for x := 0; x < top; x++ {
+		best := x
+		for y := x + 1; y < len(terms); y++ {
+			if math.Abs(terms[y].Val) > math.Abs(terms[best].Val) {
+				best = y
+			}
+		}
+		terms[x], terms[best] = terms[best], terms[x]
+	}
+	p := weightedParts{Top: terms[:top], OK: true}
+	var total, absTotal float64
+	for _, tm := range terms {
+		total += tm.Val
+		absTotal += math.Abs(tm.Val)
+	}
+	p.Out = total
+	p.AbsTotal = absTotal
+	p.Rest = total
+	for _, tm := range p.Top {
+		p.Rest -= tm.Val
+	}
+	return p
+}
+
 // residualStep is one addition in the residual chain, at one dimension.
 type residualStep struct {
 	// Label names the term: "进入" for the block input, or the sublayer that
@@ -1077,6 +1139,36 @@ type residualStep struct {
 	Label string
 	Term  float64
 	Sum   float64
+}
+
+// weightedWorkings prints how one dimension of a head's output is assembled
+// from the attention weights and the value vectors. On this model a single key
+// usually dominates, which is the lesson: alpha is a distribution, but the
+// output is close to "the few values it points at".
+func weightedWorkings(c *ui.Context, q, dim int, p weightedParts) {
+	var terms []string
+	for _, tm := range p.Top {
+		terms = append(terms, fmt.Sprintf("k%d %+.3f", tm.Key, tm.Val))
+	}
+	lines := []string{
+		fmt.Sprintf("Out[%d][d%d] = Σ α·V 的三项最大贡献：%s", q, dim, strings.Join(terms, "  ")),
+	}
+	if p.Rest != 0 {
+		lines = append(lines, fmt.Sprintf("+ 其余 %d 项 %+.4f = %+.4f", q+1-len(p.Top), p.Rest, p.Out))
+	} else {
+		lines = append(lines, fmt.Sprintf("= %+.4f", p.Out))
+	}
+	workingsLines(c, lines)
+	share := 0.0
+	if p.AbsTotal > 0 {
+		var top float64
+		for _, tm := range p.Top {
+			top += math.Abs(tm.Val)
+		}
+		share = 100 * top / p.AbsTotal
+	}
+	ui.Text(c, fmt.Sprintf("三项占绝对值总量的 %.0f%%——α 是分布，输出却往往只由少数几个 key 决定。", share)).
+		FontSize(fontMicro).TextColor(colFaint)
 }
 
 // residualChain returns the additions that build one dimension of the residual
