@@ -87,15 +87,23 @@ just check    # gofmt 检查 + go vet + go test（CI 同款）
 
 ## 七个阶段与代码的对应关系
 
-| 界面阶段 | 公式 | 代码 |
-| --- | --- | --- |
-| 1 分词 | `id = byte(prompt)` | `internal/model/tokenizer.go` |
-| 2 嵌入 | `x = E[id] + P[t]` | `gpt.go` 的 `Forward` 开头 |
-| 3 Q/K/V 与分数 | `score = q·k / √d_head`，`s ≤ t` | `Forward` 的注意力循环 |
-| 4 Softmax 与加权 | `α = softmax(score)`，`out = Σ α·v` | 同上 |
-| 5 残差 / LN | `x ← x + Attn(LN₁(x))`；`x ← x + FFN(LN₂(x))` | `tensor.go: layerNorm` |
-| 6 FFN | `W₂ · GELU(W₁ · LN(x))` | `tensor.go: gelu` |
-| 7 输出与采样 | `p = softmax(logits / T)` | `weights.go: Probabilities` |
+每一行写成「界面读的是哪个字段 → 由哪个函数算出 → 写回哪个字段」，字段都在 `model.Trace` 里，界面只是渲染它们。左列可以直接对照界面上的数字。
+
+| 界面阶段 | 公式 | 读 | 函数 | 写回 |
+| --- | --- | --- | --- | --- |
+| 1 分词 | `id = byte(prompt)` | 提示词字符串 | `tokenizer.go: Tokenize` → `Truncate` | `Trace.Tokens`（每个 UTF-8 字节一个） |
+| 2 嵌入 | `x = E[id] + P[t]` | `Weights.TokEmbed`、`PosEmbed` | `Forward` 开头的 `copy` + `addInto` | `Trace.Embed` / `Trace.Pos` / `Trace.Input` |
+| 3 Q/K/V 与分数 | `score = q·k / √d_head`，`s ≤ t` | `LayerTrace.Norm1` | `matMulRows`（三个投影）+ `dot`，掩码处写 `-Inf` | `HeadTrace.Q/K/V`、`HeadTrace.Scores` |
+| 4 Softmax 与加权 | `α = softmax(score)`，`out = Σ α·v` | `HeadTrace.Scores` | `tensor.go: softmaxCausal`，再逐行加权 `V` | `HeadTrace.Attn`、`HeadTrace.Out` |
+| 5 残差 / LN | `x ← x + Attn(LN₁(x))`；`x ← x + FFN(LN₂(x))` | `LayerTrace.In`、`AttnProj`、`FFNOut` | `tensor.go: layerNorm` + `addInto` | `Norm1`、`AfterAttn`、`Norm2`、`AfterFFN` |
+| 6 FFN | `W₂ · GELU(W₁ · LN(x))` | `LayerTrace.Norm2` | `matMulRows` → `tensor.go: gelu` → `matMulRows` | `Hidden`（d_ff 宽）、`FFNOut` |
+| 7 输出与采样 | `p = softmax(logits / T)` | `LayerTrace.AfterFFN` 的最后一行 | `layerNorm` → 与 `TokEmbed` 点积（权重绑定） | `FinalNorm`、`Logits`；`weights.go: Probabilities` 再按温度做 softmax |
+
+三处容易看漏的细节：
+
+- **头是分开算的**：`HeadProj[h]` 是 `Out_h · Wo[h*d_head:(h+1)*d_head]`，`AttnProj` 就是各头之和，所以第 4 步卡片里「本头贡献」和「全部头相加」是两个不同的量。
+- **`-Inf` 是掩码，不是数值**：`Scores` 右上角是 `negInf`，`softmaxCausal` 直接在 `i+1` 处截断，从不真的对它做指数。
+- **`Logits` 只有一行**：`Trace.Logits` 只保存最后一个位置的词表分布（`Ctx` 宽 → `Vocab` 宽），所以第 7 步看的是「最后一个 token 之后的那个字」。
 
 每次 `Forward` 会把每个中间张量录进 `model.Trace`（`gpt.go`），界面只读这份缓存——所以拖动滑块、切换层/头都不需要重算整个网络。
 
