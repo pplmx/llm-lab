@@ -552,23 +552,30 @@ func computeLN(x, g, b []float32, dim int) lnParts {
 	if dim < 0 || dim >= len(x) || dim >= len(g) || dim >= len(b) {
 		return lnParts{}
 	}
-	var sum float64
+	// Recompute in float32, exactly as model.layerNorm does. The printed line asks
+	// the reader to substitute μ, σ and γ into "(x − μ) × 1/√(σ²+ε) × γ + β" and
+	// check the result; doing the statistics and the multiply in float64 gives a
+	// value that differs from the shown output in the eighth digit (5.6e-8 here),
+	// so the hand calculation would appear wrong. Same chain as the model means the
+	// same answer the reader gets.
+	var sum float32
 	for _, v := range x {
-		sum += float64(v)
+		sum += v
 	}
-	mean := sum / float64(len(x))
-	var varsum float64
+	mean32 := sum / float32(len(x))
+	var varsum float32
 	for _, v := range x {
-		d := float64(v) - mean
+		d := v - mean32
 		varsum += d * d
 	}
-	variance := varsum / float64(len(x))
-	invStd := 1 / math.Sqrt(variance+lnEps)
+	variance := varsum / float32(len(x))
+	invStd32 := float32(1 / math.Sqrt(float64(variance+lnEps)))
+	out32 := (x[dim]-mean32)*invStd32*g[dim] + b[dim]
 	return lnParts{
-		mean: mean, invStd: invStd,
+		mean: float64(mean32), invStd: float64(invStd32),
 		gamma: float64(g[dim]), beta: float64(b[dim]),
 		x:   float64(x[dim]),
-		out: (float64(x[dim])-mean)*invStd*float64(g[dim]) + float64(b[dim]),
+		out: float64(out32),
 		ok:  true,
 	}
 }

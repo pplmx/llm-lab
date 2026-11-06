@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -168,5 +169,63 @@ func TestPrintedSoftmaxLineRecomputes(t *testing.T) {
 	if math.Abs(float64(p.num/p.denom)-float64(h.Attn[q][k])) > 1e-5 {
 		t.Fatalf("the recomputed α is %.6f, the trace holds %.6f",
 			p.num/p.denom, h.Attn[q][k])
+	}
+}
+
+// TestPrintedLNLineStaysClose checks the LayerNorm line a reader is asked to verify
+// by hand stays within the precision it advertises.
+//
+// The line prints μ, σ, 1/√(σ²+ε), γ and β, then the result. With γ and β at three
+// decimals the round-off was 3e-4, and 90 of 96 dimensions disagreed with the
+// printed result in the fourth decimal — a reader redoing the arithmetic would
+// find the line wrong. Five decimals for γ/β cut that; the block marks the result
+// "≈" and says the last digits may move, because rounding five factors cannot
+// close exactly.
+func TestPrintedLNLineStaysClose(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	l := a.layer()
+	w := a.W.Layers[a.Layer]
+	row := l.AfterAttn[a.SelToken]
+
+	round := func(v float64, dp int) float64 {
+		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
+		return out
+	}
+
+	worst := 0.0
+	for dim := 0; dim < len(row); dim++ {
+		p := computeLN(row, w.LN2G, w.LN2B, dim)
+		if !p.ok {
+			t.Fatalf("dim %d: computeLN declined", dim)
+		}
+		// Substitute exactly what the panel prints.
+		hand := (round(p.x, 4)-round(p.mean, 4))*round(p.invStd, 4)*
+			round(p.gamma, 5) + round(p.beta, 5)
+		if d := math.Abs(hand - p.out); d > worst {
+			worst = d
+		}
+	}
+	if worst > 5e-4 {
+		t.Fatalf("rounding to the printed decimals moves the result by %.2e, which "+
+			"changes the fourth decimal the panel shows", worst)
+	}
+	t.Logf("worst gap between the printed line and its own arithmetic: %.2e", worst)
+}
+
+// TestPrintedLNActuallyMatchesTheTrace is the other half: whatever the line shows
+// must be the model's value, not a float64 re-derivation of it.
+func TestPrintedLNActuallyMatchesTheTrace(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	l := a.layer()
+	w := a.W.Layers[a.Layer]
+	row := l.AfterAttn[a.SelToken]
+
+	for dim := 0; dim < len(row); dim++ {
+		p := computeLN(row, w.LN2G, w.LN2B, dim)
+		if got, want := p.out, float64(l.Norm2[a.SelToken][dim]); math.Abs(got-want) > 1e-6 {
+			t.Fatalf("dim %d: the panel would print %.9f, the trace holds %.9f", dim, got, want)
+		}
 	}
 }
