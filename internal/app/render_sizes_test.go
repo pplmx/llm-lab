@@ -33,6 +33,14 @@ func TestRenderSizes(t *testing.T) {
 		}
 	}
 
+	// The LayerNorm histograms: the one card whose two charts share an axis, and
+	// the stage-4 frame at 1920 is the only size that shows it above the fold.
+	a.Step = 4
+	a.SelToken = 10
+	writeSnapshot(t, dir, "size-1920x1080-step5-layernorm.png", ui.Render(a.View, 1920, 1080, 1))
+	a.Step = 0
+	a.SelToken = len(a.Trace.Tokens) - 1
+
 	// The layer comparison row: only layer 1 has a previous layer to differ
 	// from, and the default snapshots above all sit on layer 0, so this state
 	// would otherwise be covered by no frame at all.

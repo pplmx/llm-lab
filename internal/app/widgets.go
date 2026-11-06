@@ -569,10 +569,24 @@ type barRow struct {
 // histogram paints the distribution of a vector's values, before and after a
 // normalization.
 func histogram(c *ui.Context, values []float32, bins int, color ui.Color) {
+	histogramRange(c, values, bins, color, 0, 0)
+}
+
+// histogramRange draws a histogram on a caller-supplied axis. Passing lo == hi == 0
+// means "use the data's own range", which is what a single chart wants.
+//
+// Two charts compared side by side need a shared axis: LayerNorm's before and
+// after pictures each scaled to their own extremes, so a row whose values shrank
+// from a span of 10.8 to one of 6.1 still filled both charts edge to edge and
+// looked identical. The numbers printed underneath disagreed with the shapes.
+func histogramRange(c *ui.Context, values []float32, bins int, color ui.Color, axisLo, axisHi float32) {
 	if len(values) == 0 || bins <= 0 {
 		return
 	}
-	lo, hi := minMaxFloat(values)
+	lo, hi := axisLo, axisHi
+	if hi <= lo {
+		lo, hi = minMaxFloat(values)
+	}
 	if hi-lo < 1e-6 {
 		hi = lo + 1
 	}

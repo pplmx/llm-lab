@@ -591,10 +591,22 @@ func (a *App) stageResidual(c *ui.Context) {
 		mb, sb := meanStd(before)
 		ma, sa := meanStd(after)
 		sectionTitle(c, "LayerNorm", fmt.Sprintf("μ %.3f → %.3f · σ %.3f → %.3f", mb, ma, sb, sa))
+		// Both charts share one axis. Scaled separately they looked alike even
+		// when LayerNorm had narrowed the row by half, and a reader comparing
+		// the two pictures — which is the whole point of stacking them — was
+		// comparing two different x-ranges.
+		axLo, axHi := minMaxFloat(before)
+		aLo, aHi := minMaxFloat(after)
+		if aLo < axLo {
+			axLo = aLo
+		}
+		if aHi > axHi {
+			axHi = aHi
+		}
 		ui.Text(c, "归一化前").FontSize(fontMicro).TextColor(colFaint)
-		histogram(c, before, 32, colWarm)
+		histogramRange(c, before, 32, colWarm, axLo, axHi)
 		ui.Text(c, "归一化后").FontSize(fontMicro).TextColor(colAccent2)
-		histogram(c, after, 32, colAccent2)
+		histogramRange(c, after, 32, colAccent2, axLo, axHi)
 		mutedText(c, "LayerNorm 先减均值、除标准差，再乘可学习的 γ、加 β；直方图展示最终的 γ/β 输出，所以方差不必恰好为 1。"+
 			"这里的 γ、β 是训练出来的，不是 1 和 0——下面那行算式里的数值就是它们在这个维度上的真实取值。")
 		// The same treatment the attention stage's cell card got: instead of

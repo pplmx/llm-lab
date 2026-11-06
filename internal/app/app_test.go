@@ -3726,3 +3726,79 @@ func TestVectorStripLabelsItsEnds(t *testing.T) {
 			"right edge", a.W.Config.DModel-1, end, cardRight)
 	}
 }
+
+// TestLayerNormHistogramsShareOneAxis is the defect this round fixed. The two
+// charts were each scaled to their own extremes, so a row whose values shrank from
+// a span of 10.8 to 6.1 still filled both charts edge to edge and the pictures
+// looked the same — while the numbers printed underneath disagreed with the
+// shapes. Stacked charts to compare are the whole point of that card.
+func TestLayerNormHistogramsShareOneAxis(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	a.SelToken = 10
+	l := a.layer()
+	before := l.AfterAttn[10]
+	after := l.Norm2[10]
+
+	bl, bh := minMaxFloat(before)
+	al, ah := minMaxFloat(after)
+	// The case only means something if the ranges actually differ.
+	if bl == al && bh == ah {
+		t.Skip("this token's two rows happen to share a range")
+	}
+
+	// Both charts must be drawn on the union of the two ranges, so the label
+	// under each one is the same pair of numbers.
+	axLo, axHi := bl, bh
+	if al < axLo {
+		axLo = al
+	}
+	if ah > axHi {
+		axHi = ah
+	}
+
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	// Scroll the LayerNorm card into view.
+	tr.Move(600, 500)
+	tr.Frame()
+	for i := 0; i < 6; i++ {
+		tr.Wheel(600, 500, 0, 300)
+		tr.Advance(2e9)
+	}
+	tr.Frame()
+
+	want := fmt.Sprintf("%+.2f", axLo)
+	wantHi := fmt.Sprintf("%+.2f", axHi)
+	seen := 0
+	for _, s := range tr.Texts() {
+		if s == want || s == wantHi {
+			seen++
+		}
+	}
+	// One left label and one right label per chart, two charts.
+	if seen < 4 {
+		t.Fatalf("expected both charts to print the shared axis %s..%s (four labels), saw %d",
+			want, wantHi, seen)
+	}
+	// And the second chart's own extremes must no longer be printed as its axis:
+	// that is what a separately-scaled chart would show.
+	for _, own := range []string{fmt.Sprintf("%+.2f", al), fmt.Sprintf("%+.2f", ah)} {
+		if own == want || own == wantHi {
+			continue // coincides with the shared bound; nothing to tell apart
+		}
+		if containsText(tr, own) {
+			t.Fatalf("the second chart still prints its own bound %s, so the two charts "+
+				"do not share an axis", own)
+		}
+	}
+}
+
+func containsText(tr *ui.Tester, s string) bool {
+	for _, x := range tr.Texts() {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
