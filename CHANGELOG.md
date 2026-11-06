@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `-weights` 加载前校验模型形状、最终 LayerNorm 长度与 byte vocab，畸形权重不再在 `Forward` 崩溃
+- `Tokenize` 对无效 UTF-8 保持原始字节，`Token.Start` 改为文档承诺的 rune 偏移
+- 截断提示词后按绝对位置保留选中 token；切换阶段重置主滚动、停止自动播放并清理 hover
+- 检查器改为可滚动，1180×720 下 hover 卡片不再被窗口裁掉
+- 修正 Top-12 尾部概率显示、LayerNorm 文案与侧栏编号
+
+### Changed
+
+- 前向把 `AttnProj` 改为逐头投影求和并移除 `matMulRows` 的零值分支：每层少算一次 d×d 投影，64 token 提示词每次前向少 130 次分配
+- `tools/train.py` 默认步数改回 600，并拒绝非正的 steps/batch/repeats 与 NaN 输出
+
 ## [0.1.0] - 2026-11-06
 
 首个可用版本：一个纯 Go 实现的 Transformer 教学工具，模型与界面在同一个二进制里。

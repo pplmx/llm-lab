@@ -99,12 +99,12 @@ just check    # gofmt 检查 + go vet + go test（CI 同款）
 vocab 256 · d_model 96 · 2 层 · 4 头 · d_ff 384 · ctx 64
 ```
 
-权重由 `tools/train.py` 用 PyTorch（CPU，约 45 秒）在 60 句关于 Transformer 的英文句子训练 600 步得到，导出为 `internal/model/weights.json` 并 `go:embed` 进二进制。
+权重由 `tools/train.py` 用 PyTorch（CPU，约 45 秒）在 61 句关于 Transformer 的英文句子训练 600 步得到，导出为 `internal/model/weights.json` 并 `go:embed` 进二进制。
 
 ```bash
 python3 tools/train.py                 # 复现权重
 python3 tools/train.py --steps 2000    # 更收敛、分布更尖
-go run . -weights /path/to/other.json  # 换一份权重
+go run . -weights /path/to/other.json  # 换一份权重（需为 vocab 256 的 byte-level 同架构）
 ```
 
 模型输出的是「像语料但不是语料」的英文，这一点是刻意的：这是一个观察数值流动的工具，不是一个能聊天的模型。
@@ -116,7 +116,7 @@ go run . -weights /path/to/other.json  # 换一份权重
 - softmax 每行和为 1、因果掩码让上三角严格为 0、LayerNorm 输出零均值单位方差
 - 同一输入两次前向结果逐位一致
 - tokenizer 中英文往返一致；截断不会切在多字节字符中间
-- **逐张量与 PyTorch 对齐**：`tools/parity.py` 把同一份 `weights.json` 在 PyTorch 里跑一遍，导出 46 token 提示词的全部中间结果（embedding、每层 Norm1、每个头的 Q/K/V、score、attn、头输出、AttnProj、Norm2、GELU 前后、FFN 输出、最终 Norm、logits），Go 侧 `TestParityEveryTensor` 逐项比对，所有张量最大误差 1.4e-5，logits 1.5e-5。这比只比最终 logits 严格得多：头切片顺序、拼接布局、GELU 变体、LayerNorm 的 eps 出错都会被抓到
+- **逐张量与 PyTorch 对齐**：`tools/parity.py` 把同一份 `weights.json` 在 PyTorch 里跑一遍，导出 46 token 提示词的全部中间结果（embedding、每层 Norm1、每个头的 Q/K/V、score、attn、头输出、AttnProj、Norm2、GELU 前后、FFN 输出、最终 Norm、logits），Go 侧 `TestParityEveryTensor` 逐项比对，所有张量最大误差 1.6e-5，logits 1.7e-5。这比只比最终 logits 严格得多：头切片顺序、拼接布局、GELU 变体、LayerNorm 的 eps 出错都会被抓到
 - 单头贡献之和严格等于该层的注意力输出（`TestHeadProjSumsToAttnProj`），界面上「本头贡献 Δ_h」不是拿总和冒充的
 - 用 `ui.Tester` 模拟真实点击，验证阶段切换
 
