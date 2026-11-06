@@ -855,6 +855,47 @@ func computeSoftmaxParts(h model.HeadTrace, q, k int) softmaxParts {
 	return p
 }
 
+// lnParts is the arithmetic behind one LayerNorm output entry: the row mean,
+// the inverse standard deviation that scales it, and the per-dimension γ and β
+// the model learned.
+type lnParts struct {
+	mean, invStd, gamma, beta, x, out float64
+	ok                                bool
+}
+
+// lnEps mirrors the constant inside model.layerNorm. It is duplicated rather
+// than exported because this is a presentation detail of the lab, not a knob:
+// if the model ever changes it, TestLNWorkingsAddUp fails and both move.
+const lnEps = 1e-5
+
+// computeLN derives one output entry of layerNorm(x) from the input row and the
+// learned γ/β, the same way model.layerNorm does it. The inspector prints these
+// numbers, so a reader can reproduce the value the histogram is built from.
+func computeLN(x, g, b []float32, dim int) lnParts {
+	if dim < 0 || dim >= len(x) || dim >= len(g) || dim >= len(b) {
+		return lnParts{}
+	}
+	var sum float64
+	for _, v := range x {
+		sum += float64(v)
+	}
+	mean := sum / float64(len(x))
+	var varsum float64
+	for _, v := range x {
+		d := float64(v) - mean
+		varsum += d * d
+	}
+	variance := varsum / float64(len(x))
+	invStd := 1 / math.Sqrt(variance+lnEps)
+	return lnParts{
+		mean: mean, invStd: invStd,
+		gamma: float64(g[dim]), beta: float64(b[dim]),
+		x:   float64(x[dim]),
+		out: (float64(x[dim])-mean)*invStd*float64(g[dim]) + float64(b[dim]),
+		ok:  true,
+	}
+}
+
 // softmaxWorkings shows how the quoted weight was computed, with this cell's own
 // numbers, so a reader can check the arithmetic by hand instead of taking
 // "0.0096" on trust. The subtractions and the sum are the real ones: rewriting

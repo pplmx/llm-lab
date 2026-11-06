@@ -426,7 +426,20 @@ func (a *App) stageResidual(c *ui.Context) {
 		histogram(c, before, 32, colWarm)
 		ui.Text(c, "归一化后").FontSize(fontMicro).TextColor(colAccent2)
 		histogram(c, after, 32, colAccent2)
-		mutedText(c, "LayerNorm 先减均值、除标准差，再乘可学习的 γ、加 β；直方图展示最终的 γ/β 输出，所以方差不必恰好为 1。")
+		mutedText(c, "LayerNorm 先减均值、除标准差，再乘可学习的 γ、加 β；直方图展示最终的 γ/β 输出，所以方差不必恰好为 1。"+
+			"这里的 γ、β 是训练出来的，不是 1 和 0——下面那行算式里的数值就是它们在这个维度上的真实取值。")
+		// The same treatment the attention stage's cell card got: instead of
+		// showing a number and leaving it to be trusted, print the arithmetic
+		// that produced one entry of this row. γ and β are shown because they
+		// are learned and not 1/0 here, which the previous text implied.
+		dim := 0
+		if a.HoverDimIn >= 0 && a.HoverDimIn < len(before) {
+			dim = a.HoverDimIn
+		}
+		w := a.W.Layers[a.Layer]
+		if p := computeLN(before, w.LN2G, w.LN2B, dim); p.ok {
+			lnWorkings(c, dim, p)
+		}
 		// The two numbers that make the point: γ/β leave the variance a little
 		// off 1, but the LENGTH of a normalized row is pinned near √d_model no
 		// matter how large the stream feeding it has grown.
@@ -459,6 +472,19 @@ func residualNormMeans(tr *model.Trace) (in, out float64) {
 		out += float64(norm(last.AfterFFN[i]))
 	}
 	return in / float64(n), out / float64(n)
+}
+
+// lnWorkings prints how one entry of the normalized row was computed. Hovering
+// a vector strip above changes dim, so the reader can walk the row and watch
+// the same formula produce each value.
+func lnWorkings(c *ui.Context, dim int, p lnParts) {
+	ui.Column(c).Gap(2).Children(func() {
+		ui.Text(c, fmt.Sprintf("d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f", dim, p.mean, 1/p.invStd, p.invStd)).
+			FontSize(fontMicro).TextColor(colFaint)
+		ui.Text(c, fmt.Sprintf("(%.4f − %.4f) × %.4f × γ %.3f + β %.3f = %.4f",
+			p.x, p.mean, p.invStd, p.gamma, p.beta, p.out)).
+			FontSize(fontMicro).TextColor(colAccent2)
+	})
 }
 
 // lnNormRange returns the smallest and largest L2 norm of every LayerNorm output
@@ -881,7 +907,8 @@ func (a *App) inspectorResidual(c *ui.Context) {
 		ma, sa := meanStd(l.Norm2[i])
 		kv(c, "均值", fmt.Sprintf("%+.3f → %+.3f", mb, ma))
 		kv(c, "标准差", fmt.Sprintf("%.3f → %.3f", sb, sa))
-		mutedText(c, "归一化后再乘 γ、加 β，所以最终方差不必恰好为 1。")
+		mutedText(c, "归一化后再乘 γ、加 β，所以最终方差不必恰好为 1。"+
+			"γ、β 是训练出来的，不是 1 和 0；第 5 步的算式会把这个维度上的真实取值和结果一起写出来。")
 	})
 }
 

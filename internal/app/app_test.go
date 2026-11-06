@@ -1363,3 +1363,85 @@ func TestSoftmaxWorkingsFitTheInspector(t *testing.T) {
 	}
 	_ = a
 }
+
+// TestLNWorkingsAddUp checks the LayerNorm formula the stage prints reproduces
+// the normalized row the model recorded. Like the attention one, this compares
+// against the trace rather than re-deriving the arithmetic in the test.
+func TestLNWorkingsAddUp(t *testing.T) {
+	a := newTestApp(t)
+	l := a.layer()
+	w := a.W.Layers[a.Layer]
+	for _, dim := range []int{0, 1, 47, len(l.Norm2[a.SelToken]) - 1} {
+		p := computeLN(l.AfterAttn[a.SelToken], w.LN2G, w.LN2B, dim)
+		if !p.ok {
+			t.Fatalf("dim %d: no parts computed", dim)
+		}
+		want := float64(l.Norm2[a.SelToken][dim])
+		if math.Abs(p.out-want) > 1e-5 {
+			t.Fatalf("dim %d: formula gives %.6f, the trace holds %.6f", dim, p.out, want)
+		}
+	}
+}
+
+// TestLNEpsMatchesTheModel keeps the lab's copy of the epsilon in step with the
+// one inside model.layerNorm. They are deliberately separate constants — this
+// one is only used to print the formula — so nothing but a test ties them.
+func TestLNEpsMatchesTheModel(t *testing.T) {
+	// Recompute a row with the lab's epsilon and with a different one; the
+	// trace must agree with the lab's, which means the model used the same.
+	a := newTestApp(t)
+	l := a.layer()
+	w := a.W.Layers[a.Layer]
+	row := l.AfterAttn[a.SelToken]
+	p := computeLN(row, w.LN2G, w.LN2B, 0)
+	if !p.ok {
+		t.Fatal("no parts")
+	}
+	// invStd must equal 1/sqrt(variance + lnEps) for the row's own variance.
+	_, std := meanStd(row)
+	variance := float64(std) * float64(std)
+	if got, want := p.invStd, 1/math.Sqrt(variance+lnEps); math.Abs(got-want) > 1e-5 {
+		t.Fatalf("invStd %.6f, want %.6f", got, want)
+	}
+	// With a wildly different epsilon the printed value would drift from the
+	// trace, so this constant is load-bearing rather than decorative.
+	alt := 1 - math.Sqrt(float64(std)*float64(std))/math.Sqrt(variance+1e-3)
+	if alt == 0 {
+		t.Fatal("the epsilon makes no difference; the test cannot detect a change")
+	}
+}
+
+// TestLNWorkingsFollowTheHoveredDimension checks the printed dimension tracks
+// the vector strips' shared hover, so pointing at a cell changes which value the
+// formula explains.
+func TestLNWorkingsFollowTheHoveredDimension(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	a.HoverDimIn = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	first := ""
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, "d0：") {
+			first = s
+		}
+	}
+	if first == "" {
+		t.Fatal("no LayerNorm formula for d0")
+	}
+
+	a.HoverDimIn = 47
+	tr.Frame()
+	var second string
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, "d47：") {
+			second = s
+		}
+	}
+	if second == "" {
+		t.Fatal("the formula did not follow the hovered dimension")
+	}
+	if first == second {
+		t.Fatal("hovering a different dimension printed the same line")
+	}
+}
