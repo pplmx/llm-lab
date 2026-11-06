@@ -2939,3 +2939,155 @@ func TestTruncatedCardStatesBothByteCounts(t *testing.T) {
 		}
 	}
 }
+
+// TestSelectionFollowsTheTokenThroughTruncation pins the behaviour of the
+// selection-shift arithmetic in recompute. It had a comment but no test, so the
+// claim "the old token's absolute position is still meaningful" was only ever
+// asserted by whoever wrote it.
+//
+// The scenario that exercises it: a prompt at the context ceiling, extended a
+// few bytes at a time. The selected character keeps its absolute position in the
+// prompt, so its index in the window has to fall by exactly as many bytes as
+// truncation dropped.
+func TestSelectionFollowsTheTokenThroughTruncation(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = strings.Repeat("abcdefghij", 6) // 60 bytes, under ctx 64
+	a.recompute()
+	a.SelToken = 0 // 'a', the first character
+	ctx := a.W.Config.Ctx
+
+	// The invariant: once the window is sliding, the selection index moves by
+	// the NEGATIVE of the change in dropped bytes, because the character keeps
+	// its absolute position while the window's start advances. (Not by the
+	// cumulative drop — that was my first guess and it is wrong.)
+	prevSel := a.SelToken
+	prevDropped := 0
+	for i := 0; i < 4; i++ {
+		a.Prompt += "XYZ" // three bytes each round
+		a.recompute()
+		n := len(a.Trace.Tokens)
+		if n > ctx {
+			t.Fatalf("round %d: %d tokens exceeds ctx %d", i, n, ctx)
+		}
+		if a.SelToken < 0 || a.SelToken >= n {
+			t.Fatalf("round %d: selection %d out of range for %d tokens", i, a.SelToken, n)
+		}
+		dropped := len(a.Prompt) - n
+		deltaDropped := dropped - prevDropped
+		switch {
+		case deltaDropped == 0:
+			// Nothing new was cut, so the same index still names the same token.
+			if a.SelToken != prevSel {
+				t.Fatalf("round %d: selection moved %d -> %d with nothing dropped", i, prevSel, a.SelToken)
+			}
+		case prevSel-deltaDropped < 0:
+			// The selected byte itself has just fallen out of the window. The
+			// only sensible landing place is the newest token.
+			if a.SelToken != n-1 {
+				t.Fatalf("round %d: the selected token was cut, so the selection should "+
+					"land on the last token %d, got %d", i, n-1, a.SelToken)
+			}
+		default:
+			if want := prevSel - deltaDropped; a.SelToken != want {
+				t.Fatalf("round %d (dropped %d more): selection %d, want %d",
+					i, deltaDropped, a.SelToken, want)
+			}
+		}
+		prevSel, prevDropped = a.SelToken, dropped
+	}
+}
+
+// TestSelectionWithinTheWindowDoesNotMove checks the case where the prompt grows
+// but nothing is dropped: the index must stay put rather than be nudged.
+func TestSelectionWithinTheWindowDoesNotMove(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "hello"
+	a.recompute()
+	a.SelToken = 2
+	a.Prompt = "hello!"
+	a.recompute()
+	if a.SelToken != 2 {
+		t.Fatalf("selection moved from 2 to %d while nothing was truncated", a.SelToken)
+	}
+	if got := a.Trace.Tokens[a.SelToken].Text; got != "l" {
+		t.Fatalf("selection is on %q, want l", got)
+	}
+}
+
+// TestSelectionResetsOnReplacement checks the deliberate fallback: a prompt that
+// is replaced rather than extended has no token at the same index, so the
+// selection goes to the end instead of pointing at an unrelated character.
+func TestSelectionResetsOnReplacement(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "abc"
+	a.recompute()
+	a.SelToken = 1
+	a.Prompt = "xyz"
+	a.recompute()
+	if a.SelToken != len(a.Trace.Tokens)-1 {
+		t.Fatalf("selection %d, want the last token %d", a.SelToken, len(a.Trace.Tokens)-1)
+	}
+}
+
+// TestSelectionAfterSamplingAtTheCeiling checks the other path into truncation:
+// sampling appends one byte to a full window. The reader did not move anything,
+// so landing on the new last token is the only sensible outcome.
+func TestSelectionAfterSamplingAtTheCeiling(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = strings.Repeat("a", a.W.Config.Ctx)
+	a.recompute()
+	a.SelToken = 0
+	a.sampleNext()
+	if n := len(a.Trace.Tokens); n != a.W.Config.Ctx {
+		t.Fatalf("%d tokens after sampling, want the window still full", n)
+	}
+	if a.SelToken != len(a.Trace.Tokens)-1 {
+		t.Fatalf("selection %d, want the last token", a.SelToken)
+	}
+}
+
+// TestSelectionShiftCountsBothSidesOfTheEdit is the case that distinguishes the
+// shift formula from a naive one. Extending an already-truncated prompt has
+// truncation on BOTH sides of the edit: the previous window had already dropped
+// bytes, and the new one drops more. A formula that ignored the earlier drop,
+// or that ignored the new one, lands on a different index here — whereas on a
+// prompt that only just reaches the ceiling both shortcuts agree, which is why
+// the obvious test for this did not catch either.
+func TestSelectionShiftCountsBothSidesOfTheEdit(t *testing.T) {
+	a := newTestApp(t)
+	ctx := a.W.Config.Ctx
+
+	// 100 bytes: already 36 over the window when the edit begins.
+	a.Prompt = strings.Repeat("a", 100)
+	a.recompute()
+	if got := len(a.Trace.Tokens); got != ctx {
+		t.Fatalf("%d tokens, want the window full at %d", got, ctx)
+	}
+	a.SelToken = 50
+	prevSel := a.SelToken
+
+	a.Prompt += "bbb" // three more bytes, all dropped
+	a.recompute()
+	if got := len(a.Trace.Tokens); got != ctx {
+		t.Fatalf("%d tokens after the edit, want %d", got, ctx)
+	}
+	// The character at index 50 sat at absolute byte 36+50=86 before the edit
+	// and at 39+50=89 after it, so it stays at index 50 relative to the window
+	// start... but the window start moved from 36 to 39, so its index is 47.
+	if want := prevSel - 3; a.SelToken != want {
+		t.Fatalf("selection %d, want %d (the window start advanced by the 3 bytes added)",
+			a.SelToken, want)
+	}
+
+	// And a replacement still resets, even from a truncated state.
+	b := newTestApp(t)
+	b.Prompt = strings.Repeat("a", 100)
+	b.recompute()
+	b.SelToken = 50
+	b.Prompt = "xyz"
+	b.recompute()
+	if b.SelToken != len(b.Trace.Tokens)-1 {
+		t.Fatalf("replacement left the selection at %d, want the last token %d",
+			b.SelToken, len(b.Trace.Tokens)-1)
+	}
+}
