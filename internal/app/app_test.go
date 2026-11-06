@@ -5561,3 +5561,60 @@ func TestFFNInspectorReadsTheSelectedLayer(t *testing.T) {
 		}
 	}
 }
+
+// TestInspectorTokenNumberMatchesTheRail pins the inspector header's numbering.
+//
+// Mutation testing replaced `a.SelToken` with `a.SelToken+1` in the header and every
+// test passed. Both the header and the rail's chip labels are zero-based — selecting
+// token 10 shows "token #10 / 35" beside a chip labelled "token 10" — so an off-by-one
+// on either side would leave the panel naming a different token than the strip the
+// reader just clicked.
+func TestInspectorTokenNumberMatchesTheRail(t *testing.T) {
+	for _, sel := range []int{0, 10, 35} {
+		a := newTestApp(t)
+		a.Step = 0
+		a.SelToken = sel
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+
+		wantHeader := fmt.Sprintf("token #%d / %d", sel, len(a.Trace.Tokens)-1)
+		wantChip := fmt.Sprintf("token %d", sel)
+
+		var header, chip bool
+		for _, s := range tr.Texts() {
+			if s == wantHeader {
+				header = true
+			}
+			if s == wantChip {
+				chip = true
+			}
+		}
+		if !header {
+			t.Fatalf("selecting %d: no header %q", sel, wantHeader)
+		}
+		if !chip {
+			t.Fatalf("selecting %d: no rail chip %q", sel, wantChip)
+		}
+
+		// And the two must agree: a header for the next token must not be present.
+		wrong := fmt.Sprintf("token #%d / %d", sel+1, len(a.Trace.Tokens)-1)
+		for _, s := range tr.Texts() {
+			if s == wrong && sel+1 <= len(a.Trace.Tokens)-1 {
+				t.Fatalf("selecting %d also renders the header for %d: %q", sel, sel+1, wrong)
+			}
+		}
+	}
+}
+
+// TestTokenRailChipLabelsAreZeroBased records the convention the header test leans
+// on, so a later change to either side is visible here rather than as a mismatch
+// nobody checks.
+func TestTokenRailChipLabelsAreZeroBased(t *testing.T) {
+	a := newTestApp(t)
+	a.SelToken = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("token 0") {
+		t.Fatal("the first token's chip is not labelled \"token 0\"")
+	}
+}
