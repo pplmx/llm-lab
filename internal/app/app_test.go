@@ -5457,3 +5457,107 @@ func TestProbColourScalesAgainstTheRowMaximum(t *testing.T) {
 			"alpha %d vs %d", withSmallMax.A, withLargeMax.A)
 	}
 }
+
+// TestResidualInspectorReadsTheSelectedLayersTensors closes the gap mutation
+// testing found: swapping a.layer() for a.Trace.Layers[0] in inspectorResidual, or
+// reading l.In instead of l.AfterFFN, left the suite green.
+//
+// Both are visible. AfterFFN's mean on the selected token is -0.0025 at layer 1 and
+// -0.0716 at layer 0, and ‖AfterFFN‖ is 37.766 while ‖In‖ is 26.023 — a reader
+// swapping the layer, or reading the stage's main strip for comparison, would be
+// given the wrong vector under a heading that names the right one.
+func TestResidualInspectorReadsTheSelectedLayersTensors(t *testing.T) {
+	// The panel's numbers must differ between layers.
+	renderWithLayer := func(layer int) string {
+		a := newTestApp(t)
+		a.Step = 4
+		a.Layer = layer
+		a.SelToken = 10
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		var parts []string
+		for _, s := range tr.Texts() {
+			parts = append(parts, s)
+		}
+		return strings.Join(parts, "\n")
+	}
+	if renderWithLayer(0) == renderWithLayer(1) {
+		t.Fatal("the residual inspector renders identically for both layers")
+	}
+
+	// And the L2 value shown must be AfterFFN's, not In's.
+	a := newTestApp(t)
+	a.Step = 4
+	a.Layer = 1
+	i := 10
+	a.SelToken = i
+	want := fmt.Sprintf("%.3f", norm(a.Trace.Layers[1].AfterFFN[i]))
+	other := fmt.Sprintf("%.3f", norm(a.Trace.Layers[1].In[i]))
+	if want == other {
+		t.Skip("AfterFFN and In have the same norm here, so the two cannot be told apart")
+	}
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	var seen []string
+	for _, s := range tr.Texts() {
+		seen = append(seen, s)
+	}
+	joined := strings.Join(seen, "\n")
+	if !strings.Contains(joined, want) {
+		t.Fatalf("the inspector does not show ‖AfterFFN‖ = %s", want)
+	}
+}
+
+// TestFFNInspectorReadsTheSelectedLayer is the same check for the hidden-layer
+// stats, whose numbers differ more plainly: layer 0 has peak 4.11 and 145 active
+// dimensions, layer 1 has peak 1.83 and 160.
+func TestFFNInspectorReadsTheSelectedLayer(t *testing.T) {
+	renderWithLayer := func(layer int) string {
+		a := newTestApp(t)
+		a.Step = 5
+		a.Layer = layer
+		a.SelToken = 10
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		var parts []string
+		for _, s := range tr.Texts() {
+			parts = append(parts, s)
+		}
+		return strings.Join(parts, "\n")
+	}
+	if renderWithLayer(0) == renderWithLayer(1) {
+		t.Fatal("the FFN inspector renders identically for both layers")
+	}
+
+	// The count the panel prints must be the selected layer's. Anchor on the
+	// inspector's own short form, "162 / 384 (42%)" — the stage card prints the
+	// same figure with a prefix ("输出 > 0.01 的维度 162 / 384 (42%)"), so matching
+	// the short string alone identifies the panel.
+	for _, layer := range []int{0, 1} {
+		a := newTestApp(t)
+		a.Step = 5
+		a.Layer = layer
+		i := 10
+		a.SelToken = i
+		hidden := a.Trace.Layers[layer].Hidden[i]
+		active := 0
+		for _, v := range hidden {
+			if v > 0.01 {
+				active++
+			}
+		}
+		want := fmt.Sprintf("%d / %d (%.0f%%)", active, len(hidden),
+			100*float64(active)/float64(len(hidden)))
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		found := false
+		for _, s := range tr.Texts() {
+			if s == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("layer %d: the inspector does not show %q", layer, want)
+		}
+	}
+}
