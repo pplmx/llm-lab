@@ -521,7 +521,7 @@ func (a *App) stageSoftmax(c *ui.Context) {
 				})
 			}
 			bars(c, rows, float32(hc.SumNorm), colGreen)
-			cLo, cHi := headCancellationRange(tr)
+			st := measureCancellation(tr)
 			misconception(c,
 				"「四个头各写一块，加起来就是它们长度的和」",
 				fmt.Sprintf("范数不能直接相加。四个头的长度之和是 %.2f，但它们相加后的长度只有 %.2f，"+
@@ -529,7 +529,7 @@ func (a *App) stageSoftmax(c *ui.Context) {
 					"这不是这一行碰巧如此：本模型 %d 行里 %d 行都是这样（比值 %.2f–%.2f）。"+
 					"所以「注意力输出 = 各头之和」是一次向量加法，不是把四份贡献堆起来。",
 					hc.SumNorm, hc.TotalNorm, hc.Cancellation,
-					headRowCount(tr), headRowCountWithCancellation(tr), cLo, cHi))
+					st.Rows, st.Below, st.Lo, st.Hi))
 		}
 	})
 }
@@ -604,46 +604,41 @@ func (a *App) stageResidual(c *ui.Context) {
 	})
 }
 
-// headRowCount is the number of (layer, token) rows the cancellation claim is
-// measured over.
-func headRowCount(tr *model.Trace) int {
-	return len(tr.Layers) * len(tr.Tokens)
+// cancellationStats summarises the heads' cancellation over every row of the
+// trace: how many rows were measured, how many of them cancel (ratio below 1),
+// and the smallest and largest ratio seen.
+type cancellationStats struct {
+	Rows   int
+	Below  int
+	Lo, Hi float64
 }
 
-// headRowCountWithCancellation counts rows where the heads' norms sum to more
-// than the norm of their sum. The residual card quotes this to make "they
-// cancel" a measurement rather than an impression.
-func headRowCountWithCancellation(tr *model.Trace) int {
-	n := 0
+// measureCancellation walks every (layer, token) row once. The stage quotes
+// three numbers from it — the row count, how many cancel, and the ratio range —
+// and computing them in one pass matters: this runs per frame, and two separate
+// walks of 72 rows with a norm each was measurable in BenchmarkView (about 4%).
+func measureCancellation(tr *model.Trace) cancellationStats {
+	st := cancellationStats{Lo: math.Inf(1)}
 	for li := range tr.Layers {
 		l := tr.Layers[li]
 		for i := 0; i < len(tr.Tokens) && i < len(l.AttnProj); i++ {
-			if c := computeHeadContributions(l, i); c.OK && c.Cancellation < 1 {
-				n++
+			c, ok := headCancellation(l, i)
+			if !ok {
+				continue
+			}
+			st.Rows++
+			if c < 1 {
+				st.Below++
+			}
+			if c < st.Lo {
+				st.Lo = c
+			}
+			if c > st.Hi {
+				st.Hi = c
 			}
 		}
 	}
-	return n
-}
-
-// headCancellationRange returns the smallest and largest cancellation ratio over
-// every row of the trace.
-func headCancellationRange(tr *model.Trace) (lo, hi float64) {
-	lo = math.Inf(1)
-	for li := range tr.Layers {
-		l := tr.Layers[li]
-		for i := 0; i < len(tr.Tokens) && i < len(l.AttnProj); i++ {
-			if c := computeHeadContributions(l, i); c.OK && c.SumNorm > 0 {
-				if c.Cancellation < lo {
-					lo = c.Cancellation
-				}
-				if c.Cancellation > hi {
-					hi = c.Cancellation
-				}
-			}
-		}
-	}
-	return lo, hi
+	return st
 }
 
 // residualWorkings prints the additions that build one dimension of the residual

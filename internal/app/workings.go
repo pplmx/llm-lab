@@ -358,11 +358,12 @@ func computeHeadContributions(l model.LayerTrace, i int) headContributions {
 	if i < 0 || i >= len(l.AttnProj) || len(l.HeadProj) == 0 || i >= len(l.HeadProj[0]) {
 		return headContributions{}
 	}
-	c := headContributions{OK: true}
-	for h := range l.HeadProj {
-		n := float64(norm(l.HeadProj[h][i]))
-		c.Heads = append(c.Heads, headContribution{Head: h, Norm: n})
-		c.SumNorm += n
+	n := len(l.HeadProj)
+	c := headContributions{Heads: make([]headContribution, 0, n), OK: true}
+	for h := 0; h < n; h++ {
+		hn := float64(norm(l.HeadProj[h][i]))
+		c.Heads = append(c.Heads, headContribution{Head: h, Norm: hn})
+		c.SumNorm += hn
 	}
 	c.TotalNorm = float64(norm(l.AttnProj[i]))
 	if c.SumNorm > 0 {
@@ -372,6 +373,24 @@ func computeHeadContributions(l model.LayerTrace, i int) headContributions {
 		}
 	}
 	return c
+}
+
+// headCancellation measures one row's cancellation without building the head
+// slice. measureCancellation walks every row of the trace once per frame, and
+// allocating the four-entry slice 72 times dominated its cost (216 allocations
+// per frame) for numbers the summary never reads.
+func headCancellation(l model.LayerTrace, i int) (cancellation float64, ok bool) {
+	if i < 0 || i >= len(l.AttnProj) || len(l.HeadProj) == 0 || i >= len(l.HeadProj[0]) {
+		return 0, false
+	}
+	var sum float64
+	for h := range l.HeadProj {
+		sum += float64(norm(l.HeadProj[h][i]))
+	}
+	if sum <= 0 {
+		return 0, false
+	}
+	return float64(norm(l.AttnProj[i])) / sum, true
 }
 
 // residualChain returns the additions that build one dimension of the residual

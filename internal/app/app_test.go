@@ -2708,16 +2708,15 @@ func TestHeadContributionsMatchTheTrace(t *testing.T) {
 func TestHeadsCancelEverywhere(t *testing.T) {
 	a := newTestApp(t)
 	tr := a.Trace
-	total := headRowCount(tr)
-	withCancellation := headRowCountWithCancellation(tr)
-	if total == 0 {
+	st := measureCancellation(tr)
+	if st.Rows == 0 {
 		t.Fatal("no rows measured")
 	}
-	if withCancellation != total {
+	if st.Below != st.Rows {
 		t.Fatalf("only %d of %d rows cancel (ratio < 1); the callout claims all of them",
-			withCancellation, total)
+			st.Below, st.Rows)
 	}
-	lo, hi := headCancellationRange(tr)
+	lo, hi := st.Lo, st.Hi
 	if !(lo < 1 && hi < 1) {
 		t.Fatalf("cancellation range %.3f-%.3f is not entirely below 1", lo, hi)
 	}
@@ -2725,7 +2724,7 @@ func TestHeadsCancelEverywhere(t *testing.T) {
 	if hi-lo < 0.05 {
 		t.Fatalf("cancellation range %.3f-%.3f is too narrow to quote", lo, hi)
 	}
-	t.Logf("%d/%d rows cancel; ratio range %.2f-%.2f", withCancellation, total, lo, hi)
+	t.Logf("%d/%d rows cancel; ratio range %.2f-%.2f", st.Below, st.Rows, lo, hi)
 }
 
 // TestHeadContributionBarsAppear checks the bars reach the stage and follow the
