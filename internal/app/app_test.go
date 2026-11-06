@@ -2751,3 +2751,51 @@ func TestHeadContributionBarsAppear(t *testing.T) {
 		}
 	}
 }
+
+// TestReadmeStageRangesMatchTheControls keeps the README's control table honest.
+// The table stated the head control's range as "第 3–5 步" while the code has
+// 2..3 (steps 3–4), and that kind of drift is invisible: the document still
+// reads fine, it is just wrong. This checks the three ranges against the
+// constants the controls are built from.
+func TestReadmeStageRangesMatchTheControls(t *testing.T) {
+	// Tests run with the package directory as the working directory.
+	readme, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	text := string(readme)
+
+	// The stage ranges are declared as constants so the controls and this test
+	// read the same source.
+	check := func(label string, from, to int) {
+		t.Helper()
+		want := fmt.Sprintf("第 %d–%d 步", from+1, to+1)
+		// Find the row that starts with the label and require the range in it.
+		for _, line := range strings.Split(text, "\n") {
+			if !strings.HasPrefix(line, "| "+label) {
+				continue
+			}
+			if !strings.Contains(line, want) {
+				t.Fatalf("README row %q should say %q; it says:\n  %s", label, want, line)
+			}
+			return
+		}
+		t.Fatalf("README has no row for %q", label)
+	}
+	check("层分段控件", layerFrom, layerTo)
+	check("头分段控件", headFrom, headTo)
+
+	// The temperature row is phrased with the stage number rather than a range.
+	tempRow := ""
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "| 温度滑块") {
+			tempRow = line
+		}
+	}
+	if tempRow == "" {
+		t.Fatal("README has no 温度滑块 row")
+	}
+	if want := fmt.Sprintf("第 %d 步", tempFrom+1); !strings.Contains(tempRow, want) {
+		t.Fatalf("README temperature row should say %q; it says:\n  %s", want, tempRow)
+	}
+}

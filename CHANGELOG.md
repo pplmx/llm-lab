@@ -34,6 +34,11 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Fixed
+
+- README 的交互表修正三处与代码不符的描述：头分段控件的可用范围写成了「第 3–5 步」，代码是第 3–4 步；层与头被拆成两行（原文一行含两个不同范围，另一行重复了同一件事）；`Shift`+方向键的说明与拆分行重复
+- 新增 `TestReadmeStageRangesMatchTheControls`：把 README 里的阶段范围与 `layerFrom/layerTo`、`headFrom/headTo`、`tempFrom` 常量对账，文档再写错会让测试失败
+
 ### Added
 
 - 第 4 步显示出每个头写进残差流的长度 `‖HeadProj[h]‖`（四行条形图，当前头高亮），并指出一个可测的事实：**各头范数之和远大于它们相加后的范数**
