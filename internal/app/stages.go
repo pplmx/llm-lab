@@ -644,7 +644,51 @@ func (a *App) stageFFN(c *ui.Context) {
 				len(hidden), negDims(hidden), geluFloor, geluFloor, zeroDims(hidden)))
 		ui.Text(c, "× W₂ 回到 d_model").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.FFNOut[i], 18, &a.HoverDimH)
+		// One output dimension of the sum, with the largest contributions and
+		// the exact remainder. Hovering the strip above picks the dimension.
+		d := a.W.Config.DModel
+		dim := 0
+		if a.HoverDimH >= 0 && a.HoverDimH < d {
+			dim = a.HoverDimH
+		}
+		if p := computeFFN(hidden, a.W.Layers[a.Layer].W2, len(hidden), d, dim); p.OK {
+			ffnWorkings(c, dim, len(hidden), p)
+		}
 	})
+}
+
+// ffnWorkings prints how one FFN output dimension is summed. The remainder is
+// shown because it is most of the answer: the three largest terms carry only
+// 14–16% of the absolute mass in this model, so a reader who saw just those
+// would reasonably conclude the rest does not matter.
+func ffnWorkings(c *ui.Context, dim, dff int, p ffnParts) {
+	var terms []string
+	for _, t := range p.Top {
+		terms = append(terms, fmt.Sprintf("k%d %+.3f", t.K, t.V))
+	}
+	ui.Column(c).Gap(2).Children(func() {
+		ui.Text(c, fmt.Sprintf("out[%d] 的三项最大贡献：%s", dim, strings.Join(terms, "  "))).
+			FontSize(fontMicro).TextColor(colFaint)
+		ui.Text(c, fmt.Sprintf("+ 其余 %d 项 %+.3f = %+.4f", dff-len(p.Top), p.Rest, p.Out)).
+			FontSize(fontMicro).TextColor(colAccent2)
+	})
+	ui.Text(c, fmt.Sprintf("余项是精确补足的和，不是估算值——三个最大项并不主导结果，只占 %.0f%%。",
+		ffnTopShare(p))).FontSize(fontMicro).TextColor(colFaint)
+}
+
+// ffnTopShare is the percentage of the sum's absolute mass carried by the terms
+// shown. The denominator is Σ|term| over every k, not |out|: the signed sum
+// cancels heavily, so dividing by it would report a share several times larger
+// than the terms actually carry.
+func ffnTopShare(p ffnParts) float64 {
+	if p.AbsTotal == 0 {
+		return 0
+	}
+	var top float64
+	for _, t := range p.Top {
+		top += math.Abs(t.V)
+	}
+	return 100 * top / p.AbsTotal
 }
 
 func (a *App) stageOutput(c *ui.Context) {

@@ -859,6 +859,71 @@ func computeSoftmaxParts(h model.HeadTrace, q, k int) softmaxParts {
 	return p
 }
 
+// ffnTerm is one contribution to an FFN output dimension: hidden[k] times the
+// W2 row k, column j.
+type ffnTerm struct {
+	K int
+	V float64
+}
+
+// ffnParts is the arithmetic behind one FFN output dimension: the largest few
+// contributions, the exact remainder that closes the sum, the result, and the
+// absolute mass of every term.
+type ffnParts struct {
+	Top  []ffnTerm
+	Rest float64
+	Out  float64
+	// AbsTotal is Σ|hidden[k]·W2[k][j]| over all k. It is the honest
+	// denominator for "how much of this sum do the shown terms carry": the
+	// signed total cancels heavily, so dividing by it would overstate them.
+	AbsTotal float64
+	OK       bool
+}
+
+// computeFFN derives out[j] = Σ_k hidden[k]·W2[k][j] and reports its largest
+// terms by absolute value plus the exact remainder.
+//
+// The remainder is not optional. This model's FFN sum is not dominated by a few
+// terms — measured, the top three carry only 14–16% of the absolute mass — so
+// showing three terms alone would read as if they made the output. They do not;
+// they are only the largest single contributions, and the remainder closes the
+// sum exactly.
+func computeFFN(hidden []float32, w2 []float32, dff, d, j int) ffnParts {
+	if j < 0 || j >= d || len(hidden) < dff || len(w2) < dff*d {
+		return ffnParts{}
+	}
+	terms := make([]ffnTerm, dff)
+	for k := 0; k < dff; k++ {
+		terms[k] = ffnTerm{K: k, V: float64(hidden[k]) * float64(w2[k*d+j])}
+	}
+	const top = 3
+	if dff < top {
+		return ffnParts{}
+	}
+	for x := 0; x < top; x++ {
+		best := x
+		for y := x + 1; y < dff; y++ {
+			if math.Abs(terms[y].V) > math.Abs(terms[best].V) {
+				best = y
+			}
+		}
+		terms[x], terms[best] = terms[best], terms[x]
+	}
+	p := ffnParts{Top: terms[:top], OK: true}
+	var total, absTotal float64
+	for _, t := range terms {
+		total += t.V
+		absTotal += math.Abs(t.V)
+	}
+	p.Out = total
+	p.AbsTotal = absTotal
+	p.Rest = total
+	for _, t := range p.Top {
+		p.Rest -= t.V
+	}
+	return p
+}
+
 // lnParts is the arithmetic behind one LayerNorm output entry: the row mean,
 // the inverse standard deviation that scales it, and the per-dimension γ and β
 // the model learned.

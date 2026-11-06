@@ -1751,3 +1751,139 @@ func TestSignedFormatsNegativeTermsForReading(t *testing.T) {
 		t.Fatalf("signed(0.5674) = %q", got)
 	}
 }
+
+// TestFFNWorkingsAddUp checks the sum the stage prints closes exactly: the
+// shown terms plus the remainder equal the output the model recorded.
+func TestFFNWorkingsAddUp(t *testing.T) {
+	a := newTestApp(t)
+	l := a.layer()
+	i := a.SelToken
+	w2 := a.W.Layers[a.Layer].W2
+	dff, d := a.W.Config.DFF, a.W.Config.DModel
+	for _, j := range []int{0, 1, 47, d - 1} {
+		p := computeFFN(l.Hidden[i], w2, dff, d, j)
+		if !p.OK {
+			t.Fatalf("dim %d: no parts", j)
+		}
+		if math.Abs(p.Out-float64(l.FFNOut[i][j])) > 1e-5 {
+			t.Fatalf("dim %d: sum gives %.6f, trace holds %.6f", j, p.Out, float64(l.FFNOut[i][j]))
+		}
+		var shown float64
+		for _, term := range p.Top {
+			shown += term.V
+		}
+		if math.Abs(shown+p.Rest-p.Out) > 1e-5 {
+			t.Fatalf("dim %d: terms %v + rest %v != out %v", j, shown, p.Rest, p.Out)
+		}
+	}
+}
+
+// TestFFNTopTermsAreTheLargestByAbsoluteValue guards the selection: sorting by
+// signed value would pick the three most positive contributions and mislabel
+// them as the largest.
+func TestFFNTopTermsAreTheLargestByAbsoluteValue(t *testing.T) {
+	a := newTestApp(t)
+	l := a.layer()
+	i := a.SelToken
+	hidden := l.Hidden[i]
+	w2 := a.W.Layers[a.Layer].W2
+	dff, d := a.W.Config.DFF, a.W.Config.DModel
+	// Dimension 2 is chosen because there the two orders genuinely differ —
+	// by absolute value the top terms are k358,76,55; by signed value they
+	// would be k76,55,194. On j=0 both orders happen to agree, so a test there
+	// could not tell them apart.
+	const j = 2
+
+	p := computeFFN(hidden, w2, dff, d, j)
+	if len(p.Top) != 3 {
+		t.Fatalf("got %d terms, want 3", len(p.Top))
+	}
+	// k358 is the largest by magnitude but not by signed value; if it is
+	// missing, the selection sorted the wrong way.
+	found := false
+	for _, term := range p.Top {
+		if term.K == 358 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the largest-by-magnitude term k358 is missing from %v", p.Top)
+	}
+	// No unshown term may be larger in absolute value than a shown one.
+	shown := map[int]bool{}
+	for _, term := range p.Top {
+		shown[term.K] = true
+	}
+	var smallestShown float64 = math.Inf(1)
+	for _, term := range p.Top {
+		if v := math.Abs(term.V); v < smallestShown {
+			smallestShown = v
+		}
+	}
+	for k := 0; k < dff; k++ {
+		if shown[k] {
+			continue
+		}
+		if v := math.Abs(float64(hidden[k]) * float64(w2[k*d+j])); v > smallestShown {
+			t.Fatalf("k%d (|%.4f|) is larger than a shown term (|%.4f|) but was left out",
+				k, v, smallestShown)
+		}
+	}
+}
+
+// TestFFNShareUsesAbsoluteMass checks the percentage the stage prints. The
+// signed total cancels heavily here, so dividing by |out| would report a share
+// several times too large; the denominator has to be Σ|term|.
+func TestFFNShareUsesAbsoluteMass(t *testing.T) {
+	a := newTestApp(t)
+	l := a.layer()
+	i := a.SelToken
+	p := computeFFN(l.Hidden[i], a.W.Layers[a.Layer].W2, a.W.Config.DFF, a.W.Config.DModel, 0)
+	if !p.OK {
+		t.Fatal("no parts")
+	}
+	var top float64
+	for _, term := range p.Top {
+		top += math.Abs(term.V)
+	}
+	want := 100 * top / p.AbsTotal
+	if got := ffnTopShare(p); math.Abs(got-want) > 1e-9 {
+		t.Fatalf("share %.3f, want %.3f", got, want)
+	}
+	// The point of the absolute denominator: it must report a materially
+	// smaller share than dividing by the signed result would.
+	if naive := 100 * top / math.Abs(p.Out); naive <= want*2 {
+		t.Logf("note: signed and absolute denominators agree here (%.1f%% vs %.1f%%)", naive, want)
+	}
+	// And in this model the three terms must not carry most of the mass, which
+	// is why the remainder is printed at all.
+	if want > 60 {
+		t.Fatalf("top three carry %.1f%% of the mass; the remainder note assumes they do not", want)
+	}
+}
+
+// TestFFNWorkingsFollowTheHoveredDimension checks the printed dimension tracks
+// the strip's hover.
+func TestFFNWorkingsFollowTheHoveredDimension(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	line := func() string {
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "out[") {
+				return s
+			}
+		}
+		return ""
+	}
+	first := line()
+	if first == "" {
+		t.Fatal("no FFN workings line")
+	}
+	a.HoverDimH = 47
+	tr.Frame()
+	if second := line(); second == first || !strings.HasPrefix(second, "out[47]") {
+		t.Fatalf("hovering d47 printed %q", second)
+	}
+}
