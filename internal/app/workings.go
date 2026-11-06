@@ -18,6 +18,7 @@ package app
 
 import (
 	"math"
+	"sort"
 	"unicode/utf8"
 
 	"llmlab/internal/model"
@@ -559,4 +560,38 @@ func computeLN(x, g, b []float32, dim int) lnParts {
 		out: (float64(x[dim])-mean)*invStd*float64(g[dim]) + float64(b[dim]),
 		ok:  true,
 	}
+}
+
+// activationConcentration reports how lopsided a GELU row is: the share of the
+// total absolute activation held by the largest tenth of the dimensions, and how
+// many dimensions that tenth is.
+//
+// This is what "稀疏" should mean for GELU. A count of values above a threshold
+// does not measure it: on this model none of the 384 activations is anywhere near
+// zero, so "38% are above 0.01" describes the cut, not the distribution. What is
+// actually true is that half the mass sits in a tenth of the dimensions.
+func activationConcentration(x []float32) (share float64, topN int) {
+	if len(x) == 0 {
+		return 0, 0
+	}
+	abs := make([]float64, len(x))
+	var total float64
+	for i, v := range x {
+		a := math.Abs(float64(v))
+		abs[i] = a
+		total += a
+	}
+	if total == 0 {
+		return 0, 0
+	}
+	sort.Sort(sort.Reverse(sort.Float64Slice(abs)))
+	topN = len(abs) / 10
+	if topN < 1 {
+		topN = 1
+	}
+	var top float64
+	for i := 0; i < topN; i++ {
+		top += abs[i]
+	}
+	return top / total, topN
 }

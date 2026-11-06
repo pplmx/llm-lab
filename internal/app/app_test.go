@@ -4176,3 +4176,73 @@ func TestOutputEntropyShareMovesWithTemperature(t *testing.T) {
 			shares[0.5])
 	}
 }
+
+// TestFFNCardQuantifiesSparsity checks the FFN card measures concentration rather
+// than counting values above an arbitrary threshold.
+//
+// "稀疏" is a claim about how the mass is distributed. The card used to support
+// it only with "输出 > 0.01 的维度 145 / 384 (38%)", which describes the cut: on
+// this model none of the 384 activations is near zero, so a reader could not tell
+// whether 38% meant sparse or just "38% happen to exceed 0.01". The largest tenth
+// carries about half the mass, and that is the number that makes the word mean
+// something.
+func TestFFNCardQuantifiesSparsity(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	h := a.layer().Hidden[a.SelToken]
+	share, topN := activationConcentration(h)
+
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	want := fmt.Sprintf("最大的 %d / %d 个维度承担 %.0f%%", topN, len(h), share*100)
+	found := false
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the FFN card does not state the concentration %q", want)
+	}
+
+	// The measurement itself: a tenth of the dimensions holding half the mass is
+	// what the word "sparse" is being used to mean here.
+	if share < 0.2 {
+		t.Fatalf("the top tenth carries only %.0f%% of the mass, so '稀疏' would be "+
+			"the wrong word", share*100)
+	}
+}
+
+// TestActivationConcentrationIsAValidShare keeps the helper honest: it returns a
+// fraction of a total, so it must stay within [0, 1] and scale with the input.
+func TestActivationConcentrationIsAValidShare(t *testing.T) {
+	// A single spike: the top tenth should carry essentially everything.
+	spike := make([]float32, 100)
+	spike[0] = 100
+	share, topN := activationConcentration(spike)
+	if topN != 10 {
+		t.Fatalf("topN = %d for 100 values, want 10", topN)
+	}
+	if share < 0.99 {
+		t.Fatalf("one spike of 100 among zeros gives a share of %.3f, want ~1", share)
+	}
+
+	// Uniform: the top tenth carries about a tenth.
+	flat := make([]float32, 100)
+	for i := range flat {
+		flat[i] = 1
+	}
+	share, _ = activationConcentration(flat)
+	if share < 0.08 || share > 0.12 {
+		t.Fatalf("a uniform row gives a share of %.3f, want about 0.10", share)
+	}
+
+	// All zero has no share to report, and must not divide by zero.
+	zero := make([]float32, 10)
+	if share, _ := activationConcentration(zero); share != 0 {
+		t.Fatalf("an all-zero row reports a share of %.3f", share)
+	}
+	if share, n := activationConcentration(nil); share != 0 || n != 0 {
+		t.Fatalf("an empty row reports (%v, %d)", share, n)
+	}
+}

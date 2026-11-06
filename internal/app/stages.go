@@ -853,8 +853,18 @@ func (a *App) stageFFN(c *ui.Context) {
 				len(hidden), ofAll*100, ofBlocks*100))
 		ui.Text(c, "W₁·LN(x) 后过 GELU").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, hidden, 22, &a.HoverDimH)
+		// "稀疏" is a claim about concentration, and a count of values above an
+		// arbitrary 0.01 cut does not support it: measured on this model, none of
+		// the 384 activations is near zero, so the "> 0.01" figure reads as 38%
+		// sparse while the real structure is that the largest tenth carries half
+		// the mass. Report the concentration instead, and keep the threshold
+		// count beside it as what it is.
+		share, topN := activationConcentration(hidden)
 		ui.Row(c).Gap(16).Wrap().Children(func() {
-			ui.Text(c, fmt.Sprintf("输出 > 0.01 的维度 %d / %d (%.0f%%)", active, len(hidden), 100*float64(active)/float64(len(hidden)))).FontSize(fontSmall).TextColor(colMuted)
+			ui.Text(c, fmt.Sprintf("最大的 %d / %d 个维度承担 %.0f%% 的激活绝对值",
+				topN, len(hidden), share*100)).FontSize(fontSmall).TextColor(colMuted)
+			ui.Text(c, fmt.Sprintf("输出 > 0.01 的维度 %d / %d (%.0f%%)",
+				active, len(hidden), 100*float64(active)/float64(len(hidden)))).FontSize(fontSmall).TextColor(colFaint)
 			_, hi := minMaxFloat(hidden)
 			ui.Text(c, fmt.Sprintf("峰值 %+.2f", hi)).FontSize(fontSmall).TextColor(colFaint)
 		})
