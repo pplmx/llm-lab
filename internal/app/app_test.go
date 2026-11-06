@@ -5182,3 +5182,75 @@ func TestSamplingRefusesAnEmptyPrompt(t *testing.T) {
 		t.Fatalf("status = %q, want a prompt for the reader", a.Status)
 	}
 }
+
+// TestResidualStageLabelsWhatTheSublayerActuallyReads covers a mislabel that hid
+// the pre-norm structure the stage is meant to teach.
+//
+// The strip caption said "进入注意力子层 x" and drew LayerTrace.In. But the model
+// computes Norm1 = layerNorm(In) and then Q/K/V from Norm1 — so the attention
+// sublayer never reads x. The two vectors are not close in size either (‖In‖ 13.12
+// vs ‖Norm1‖ 11.19 on the default prompt), so a reader following the chain would
+// conclude the sublayer consumes the unnormalised stream, which is the one thing
+// pre-norm does not do. Norm1 was in the trace and was never drawn anywhere.
+func TestResidualStageLabelsWhatTheSublayerActuallyReads(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	l := a.layer()
+	i := a.SelToken
+
+	// The premise: In and Norm1 are different vectors, so the distinction matters.
+	inNorm, lnNorm := norm(l.In[i]), norm(l.Norm1[i])
+	if inNorm == lnNorm {
+		t.Skip("In and Norm1 have equal norms on this prompt, so the labels are " +
+			"indistinguishable here")
+	}
+
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	var joined strings.Builder
+	for _, s := range tr.Texts() {
+		joined.WriteString(s)
+		joined.WriteString("\n")
+	}
+	text := joined.String()
+
+	// The old label must be gone: it claimed x enters the sublayer.
+	if strings.Contains(text, "进入注意力子层 x") {
+		t.Fatal("the stage still says x enters the attention sublayer; the " +
+			"sublayer reads LN(x)")
+	}
+	// The corrected labels and norm1's own strip must be present.
+	for _, want := range []string{"残差流 x", "子层实际读到的输入"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the stage does not state %q", want)
+		}
+	}
+	// Both strips are drawn, so both norms appear.
+	for _, want := range []string{
+		fmt.Sprintf("‖v‖ %.2f", inNorm),
+		fmt.Sprintf("‖v‖ %.2f", lnNorm),
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the stage does not draw a strip with %q; both x and LN(x) "+
+				"should be shown", want)
+		}
+	}
+}
+
+// TestFFNStageLabelsItsInputCorrectly is the same check for stage 6, whose caption
+// already said "W₁·LN(x)" — that one matches Hidden = Norm2 · W1.
+func TestFFNStageLabelsItsInputCorrectly(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	found := false
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "LN(x)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the FFN stage no longer states that its input is LN(x)")
+	}
+}

@@ -591,8 +591,15 @@ func (a *App) stageResidual(c *ui.Context) {
 
 	card(c, func() {
 		sectionTitle(c, "残差流", fmt.Sprintf("层 %d · 两次加法，信息都绕过了子层", a.Layer))
-		ui.Text(c, "进入注意力子层 x").FontSize(fontMicro).TextColor(colFaint)
+		// The three strips below are the residual chain, and it is easy to label
+		// them as if the sublayers consumed x directly. They do not: each sublayer
+		// reads a normalised copy (pre-norm), which is what makes the residual
+		// stream itself stay unnormalised and grow. Naming the normalised row
+		// makes that visible at the point where the reader is looking at both.
+		ui.Text(c, "残差流 x（进入本层，未归一化）").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.In[i], 16, &a.HoverDimIn)
+		ui.Text(c, "LN(x) — 子层实际读到的输入").FontSize(fontMicro).TextColor(colWarm)
+		vectorStrip(c, l.Norm1[i], 16, &a.HoverDimIn)
 		ui.Text(c, "注意力子层输出 Δ_attn").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.AttnProj[i], 16, &a.HoverDimIn)
 		ui.Text(c, "x + Δ_attn").FontSize(fontMicro).TextColor(colAccent2)
