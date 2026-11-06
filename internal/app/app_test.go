@@ -1887,3 +1887,140 @@ func TestFFNWorkingsFollowTheHoveredDimension(t *testing.T) {
 		t.Fatalf("hovering d47 printed %q", second)
 	}
 }
+
+// TestScoreWorkingsReproduceTheTrace checks the printed dot product is the
+// trace's, bit for bit. computeScore accumulates in float32 like model.dot, so
+// a reader checking the arithmetic gets the number the heatmap colours rather
+// than a near match.
+func TestScoreWorkingsReproduceTheTrace(t *testing.T) {
+	a := newTestApp(t)
+	l := a.layer()
+	h := l.Heads[a.Head]
+	dHead := a.Trace.Config.DHead()
+	for _, cell := range [][2]int{{35, 17}, {20, 5}, {10, 3}, {0, 0}} {
+		q, k := cell[0], cell[1]
+		p := computeScore(h.Q[q], h.K[k], dHead, h.Scores[q][k])
+		if !p.OK {
+			t.Fatalf("cell %d,%d: no parts", q, k)
+		}
+		// Recompute the dot product in float32, in the same order model.dot
+		// uses, and require the printed one to match it EXACTLY. A tolerance
+		// here would let a float64 accumulator through, and that mismatch is
+		// the whole reason computeScore accumulates in float32.
+		var want float32
+		for d := 0; d < dHead; d++ {
+			want += h.Q[q][d] * h.K[k][d]
+		}
+		if got := float32(p.Dot); got != want {
+			t.Fatalf("cell %d,%d: printed dot %v, float32 sum %v (differ by %v)",
+				q, k, got, want, float32(math.Abs(float64(got-want))))
+		}
+		// And the trace's score must be that same product times the scale.
+		if got, want := float32(p.Dot)*float32(1/math.Sqrt(float64(dHead))), h.Scores[q][k]; got != want {
+			t.Fatalf("cell %d,%d: dot*scale = %v, trace score %v", q, k, got, want)
+		}
+	}
+}
+
+// TestScoreWorkingsSumCloses checks the shown terms plus the remainder equal the
+// dot product, so the printed breakdown is a decomposition and not a decoration.
+func TestScoreWorkingsSumCloses(t *testing.T) {
+	a := newTestApp(t)
+	h := a.layer().Heads[a.Head]
+	dHead := a.Trace.Config.DHead()
+	p := computeScore(h.Q[35], h.K[17], dHead, h.Scores[35][17])
+	var shown float64
+	for _, term := range p.Top {
+		shown += term.V
+	}
+	if math.Abs(shown+p.Rest-p.Dot) > 1e-4 {
+		t.Fatalf("terms %v + rest %v != dot %v", shown, p.Rest, p.Dot)
+	}
+}
+
+// TestScoreRemainderIsWorthPrinting is the reason the card shows a remainder
+// instead of just the three largest terms. Unlike the FFN sum, how concentrated
+// a dot product is depends entirely on the cell: measured across this head the
+// top three carry between 58% and 99% of the absolute mass. At the dense end
+// they would look like the whole story, so the remainder has to be printed.
+func TestScoreRemainderIsWorthPrinting(t *testing.T) {
+	a := newTestApp(t)
+	h := a.layer().Heads[a.Head]
+	dHead := a.Trace.Config.DHead()
+
+	var lo, hi float64 = math.Inf(1), 0
+	for _, cell := range [][2]int{{35, 17}, {35, 34}, {20, 5}, {10, 3}, {0, 0}} {
+		p := computeScore(h.Q[cell[0]], h.K[cell[1]], dHead, h.Scores[cell[0]][cell[1]])
+		var top float64
+		for _, term := range p.Top {
+			top += math.Abs(term.V)
+		}
+		share := top / (top + math.Abs(p.Rest))
+		if share < lo {
+			lo = share
+		}
+		if share > hi {
+			hi = share
+		}
+		// Every cell the card can be asked about must close exactly.
+		var shown float64
+		for _, term := range p.Top {
+			shown += term.V
+		}
+		if math.Abs(shown+p.Rest-p.Dot) > 1e-4 {
+			t.Fatalf("cell %v: terms + rest != dot", cell)
+		}
+		// And the terms must be the largest BY MAGNITUDE: a signed sort still
+		// closes the sum, so closure alone cannot detect it.
+		shownDims := map[int]bool{}
+		for _, term := range p.Top {
+			shownDims[term.D] = true
+		}
+		smallestShown := math.Inf(1)
+		for _, term := range p.Top {
+			if v := math.Abs(term.V); v < smallestShown {
+				smallestShown = v
+			}
+		}
+		for d := 0; d < dHead; d++ {
+			if shownDims[d] {
+				continue
+			}
+			if v := math.Abs(float64(h.Q[cell[0]][d]) * float64(h.K[cell[1]][d])); v > smallestShown {
+				t.Fatalf("cell %v: product d%d (|%.4f|) is larger than a shown one (|%.4f|)",
+					cell, d, v, smallestShown)
+			}
+		}
+	}
+	// If some cell were dominated by three terms, the remainder note would be
+	// noise there; the finding above says at least one is not.
+	if lo > 0.9 {
+		t.Fatalf("every sampled cell is dominated by three terms (min share %.0f%%); "+
+			"the remainder note would be noise", lo*100)
+	}
+	t.Logf("top-three share across sampled cells: %.0f%%–%.0f%%", lo*100, hi*100)
+}
+
+// TestScoreWorkingsAppearForACell checks the card shows the working when a cell
+// is selected and prompts for one when it is not.
+func TestScoreWorkingsAppearForACell(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("把指针移到矩阵的某个格子上") {
+		t.Fatal("with no cell selected the card does not say how to pick one")
+	}
+
+	b := newTestApp(t)
+	b.Step = 2
+	b.KeyQ, b.KeyK = 35, 17
+	tr2 := ui.NewTester(b.View, 1500, 940)
+	tr2.Frame()
+	if !tr2.HasText("的三项最大贡献") {
+		t.Fatal("no per-cell score working")
+	}
+	if !tr2.HasText("score = 点积 / √24") {
+		t.Fatal("no scaling line")
+	}
+}

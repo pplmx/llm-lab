@@ -859,6 +859,63 @@ func computeSoftmaxParts(h model.HeadTrace, q, k int) softmaxParts {
 	return p
 }
 
+// dotTerm is one contribution q[d]·k[d] to a score.
+type dotTerm struct {
+	D int
+	V float64
+}
+
+// scoreParts is the arithmetic behind one attention score: the largest few
+// products, the exact remainder, the dot product they sum to, and the scaled
+// score.
+type scoreParts struct {
+	Top  []dotTerm
+	Rest float64
+	Dot  float64
+	// Score is the trace's own value, so the printed line ends on the number
+	// the heatmap shows rather than on a recomputed near-miss.
+	Score float64
+	OK    bool
+}
+
+// computeScore derives score[q][k] from the head's q and k slices. The products
+// are accumulated in float32 order, exactly as model.dot does, so the result is
+// bit-identical to the trace rather than merely close: a reader checking the
+// arithmetic gets the same number the matrix shows.
+func computeScore(q, k []float32, dHead int, traceScore float32) scoreParts {
+	if dHead <= 0 || len(q) < dHead || len(k) < dHead {
+		return scoreParts{}
+	}
+	terms := make([]dotTerm, dHead)
+	for d := 0; d < dHead; d++ {
+		terms[d] = dotTerm{D: d, V: float64(q[d]) * float64(k[d])}
+	}
+	const top = 3
+	if dHead < top {
+		return scoreParts{}
+	}
+	for x := 0; x < top; x++ {
+		best := x
+		for y := x + 1; y < dHead; y++ {
+			if math.Abs(terms[y].V) > math.Abs(terms[best].V) {
+				best = y
+			}
+		}
+		terms[x], terms[best] = terms[best], terms[x]
+	}
+	// The dot product as the model computes it: float32 accumulation.
+	var dot32 float32
+	for d := 0; d < dHead; d++ {
+		dot32 += q[d] * k[d]
+	}
+	p := scoreParts{Top: terms[:top], Dot: float64(dot32), Score: float64(traceScore), OK: true}
+	p.Rest = p.Dot
+	for _, t := range p.Top {
+		p.Rest -= t.V
+	}
+	return p
+}
+
 // ffnTerm is one contribution to an FFN output dimension: hidden[k] times the
 // W2 row k, column j.
 type ffnTerm struct {

@@ -348,12 +348,43 @@ func (a *App) stageScores(c *ui.Context) {
 				kv(c, "可见", fmt.Sprintf("%d 个 key", i+1))
 			})
 		})
+		// One cell of the matrix, worked out: which q·k products make it up, and
+		// the scaling that follows. The cell is whatever the reader is pointing
+		// at or has pinned, so it follows the same cursor as the inspector.
+		cq, ck := a.cellCursor()
+		if cq >= 0 && ck >= 0 && cq < len(tr.Tokens) && ck < len(tr.Tokens) && ck <= cq {
+			if p := computeScore(h.Q[cq], h.K[ck], tr.Config.DHead(), h.Scores[cq][ck]); p.OK {
+				scoreWorkings(c, cq, ck, tr.Config.DHead(), p)
+			}
+		} else {
+			mutedText(c, "把指针移到矩阵的某个格子上（或点一下固定它），这里会写出这一格的分数是怎么算出来的。")
+		}
 		misconception(c,
 			"「负分就是把这个 key 屏蔽掉了」",
 			fmt.Sprintf("分数的绝对值不重要，只有同一行内的大小关系重要。把这一行 %d 个分数"+
 				"统统减去 5，哪怕全部变成负数，softmax 之后的权重一模一样。"+
 				"真正让 key 彻底出局的只有右上角的因果掩码，那里是 -Inf，softmax 之后才是 0。",
 				i+1))
+	})
+}
+
+// scoreWorkings prints how one score is computed: the largest contributions to
+// q·k, the exact remainder that closes the dot product, and the division by
+// √d_head. The dot product is accumulated in float32 like model.dot, so the
+// number on the last line is the one the heatmap colours, not a near match.
+func scoreWorkings(c *ui.Context, q, k, dHead int, p scoreParts) {
+	var terms []string
+	for _, t := range p.Top {
+		terms = append(terms, fmt.Sprintf("d%d %+.3f", t.D, t.V))
+	}
+	scale := 1 / math.Sqrt(float64(dHead))
+	ui.Column(c).Gap(2).Children(func() {
+		ui.Text(c, fmt.Sprintf("q%d · k%d 的三项最大贡献：%s", q, k, strings.Join(terms, "  "))).
+			FontSize(fontMicro).TextColor(colFaint)
+		ui.Text(c, fmt.Sprintf("+ 其余 %d 维 %+.4f = 点积 %.4f", dHead-len(p.Top), p.Rest, p.Dot)).
+			FontSize(fontMicro).TextColor(colFaint)
+		ui.Text(c, fmt.Sprintf("score = 点积 / √%d = %.4f × %.4f = %+.4f", dHead, p.Dot, scale, p.Score)).
+			FontSize(fontMicro).TextColor(colAccent2)
 	})
 }
 
