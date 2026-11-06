@@ -95,7 +95,8 @@ clean:
 
 # 列出已有产物及体积
 artifacts:
-    @du -sh build/*/* 2>/dev/null | sort -k2 || echo "build/ 为空，先运行 just build"
+    @files="$(du -sh build/*/* 2>/dev/null | sort -k2)"; \
+        if [ -n "$files" ]; then echo "$files"; else echo "build/ 为空，先运行 just build"; fi
 
 _build target:
     @echo "→ 构建平台：{{target}}"

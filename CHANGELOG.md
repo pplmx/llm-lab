@@ -36,6 +36,18 @@
 
 ### Fixed
 
+- `just artifacts` 在没有构建产物时**静默退出**，什么都没打印
+  - 原写法 `du -sh build/*/* 2>/dev/null | sort -k2 || echo "..."`：`du` 的错误被 `/dev/null` 吃掉，`sort` 对空输入仍返回 0，所以 `||` 的兜底永远不触发
+  - 读者无法区分「还没构建」和「命令坏了」
+  - 现在会用 `if` 检查输出是否为空，两种情况都给出明确回应
+
+### Added
+
+- 检查文档里的命令能否真的执行：`just artifacts`、`just doctor`、`just build windows/amd64` 全部实测通过（后者 1.3 秒，产出 12.1 MB 的 exe）；`tools/parity.py` 需要 PyTorch，CONTRIBUTING 已声明这个前置条件
+- 测试 `TestArtifactsRecipeSaysWhenThereIsNothing`
+
+### Fixed
+
 - `RENDER_DIR` 这个环境变量**从未出现在任何文档里**，而且指向不存在的目录时测试直接失败
   - 读者照文档跑 `RENDER=1 go test ...` 只会得到 `/tmp` 下的截图，每跑一次覆盖一次，无法做前后对比
   - 若自己猜到 `RENDER_DIR`，传入新路径会得到 `open /tmp/after/x.png: no such file or directory`——看起来像测试坏了，其实是目录不存在
