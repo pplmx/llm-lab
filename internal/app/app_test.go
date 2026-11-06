@@ -5317,3 +5317,143 @@ func TestSeedChangesWithEveryCharacter(t *testing.T) {
 		seen[s] = p
 	}
 }
+
+// TestInspectorNumbersComeFromTheSelectedLayerAndHead closes a gap mutation
+// testing found: swapping `a.layer()` for `a.Trace.Layers[0]`, or `a.Head` for 0,
+// inside the inspector left every test green.
+//
+// The values are visibly different (layer 0 vs 1 scores differ by up to 5.88 on the
+// default prompt; head 0 vs 2 attention by up to 0.445), so a reader switching the
+// control would be shown another layer's or head's numbers under the heading that
+// claims the selected one.
+//
+// Reads the rendered text rather than recomputing: the point is what reaches the
+// panel.
+func TestInspectorNumbersComeFromTheSelectedLayerAndHead(t *testing.T) {
+	// Stage 3 (index 2) lists the top-5 scores for the selected query.
+	render := func(layer, head int) string {
+		a := newTestApp(t)
+		a.Step = 2
+		a.Layer = layer
+		a.Head = head
+		a.SelToken = 10
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		var parts []string
+		for _, s := range tr.Texts() {
+			parts = append(parts, s)
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	base := render(0, 0)
+	if other := render(1, 0); other == base {
+		t.Fatal("changing the layer does not change the frame, so the inspector " +
+			"cannot be showing the selected layer")
+	}
+	if other := render(0, 2); other == base {
+		t.Fatal("changing the head does not change the frame, so the inspector " +
+			"cannot be showing the selected head")
+	}
+
+	// And the specific numbers must follow the control: the top score shown at
+	// layer 1 head 2 must equal that head's own value, not layer 0's.
+	a := newTestApp(t)
+	a.Step = 2
+	a.Layer = 1
+	a.Head = 2
+	q := 10
+	a.SelToken = q
+	l := a.Trace.Layers[1].Heads[2]
+	var maxAbs float32
+	best := -1
+	for j := 0; j <= q; j++ {
+		if av := float32(math.Abs(float64(l.Scores[q][j]))); av > maxAbs {
+			maxAbs = av
+			best = j
+		}
+	}
+	if best < 0 {
+		t.Fatal("no scores in the row")
+	}
+	want := fmt.Sprintf("%+.2f", l.Scores[q][best])
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	found := false
+	for _, s := range tr.Texts() {
+		if s == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("layer 1 head 2's largest |score| on row %d is %s, but that value "+
+			"does not appear in the panel", q, want)
+	}
+}
+
+// TestScoreColourSeparatesSigns pins the diverging ramp: positive and negative
+// scores must not paint the same colour.
+//
+// Mutation testing swapped the sign branch for `_ = v` and every test still passed,
+// even though the legend tells the reader warm is positive and blue is negative.
+func TestScoreColourSeparatesSigns(t *testing.T) {
+	pos := scoreColor(+1, 2)
+	neg := scoreColor(-1, 2)
+	if pos == neg {
+		t.Fatalf("+1 and -1 score to the same colour %v", pos)
+	}
+	// And a larger magnitude must be more opaque than a smaller one.
+	small := scoreColor(0.2, 2)
+	if small.A >= pos.A {
+		t.Fatalf("a smaller score is not more transparent: |0.2| alpha %d vs |1| "+
+			"alpha %d", small.A, pos.A)
+	}
+}
+
+// TestHeatColourRisesWithWeight pins the attention ramp's shape.
+//
+// It uses sqrt, so a weight at 1/4 of the row maximum is already half as opaque;
+// linear would make the dense low end of the matrix nearly invisible. Mutation
+// testing replaced the sqrt with a plain multiply and nothing failed.
+func TestHeatColourRisesWithWeight(t *testing.T) {
+	lo, hi := heatColor(0.02), heatColor(0.08)
+	if lo.A >= hi.A {
+		t.Fatalf("a heavier weight does not paint more opaque: 0.02 alpha %d vs 0.08 "+
+			"alpha %d", lo.A, hi.A)
+	}
+	// sqrt(0.25) = 0.5, so a quarter of a saturated cell should be about halfway.
+	quarter := heatColor(0.25)
+	half := heatColor(0.5)
+	if quarter.A >= half.A {
+		t.Fatalf("the ramp is not monotonic at the midpoint: 0.25 alpha %d vs 0.5 "+
+			"alpha %d", quarter.A, half.A)
+	}
+	// The ramp must be the sqrt curve, not a straight line. At w = 0.25 sqrt gives
+	// 0.5 while linear gives 0.25, so the alpha there has to sit near the sqrt
+	// value: a tolerance wide enough for float32 and premultiplication, narrow
+	// enough to reject the linear version.
+	alphaAtQuarter := float64(quarter.A) / 255
+	sqrtValue := 0.12 + 0.88*math.Sqrt(0.25) // 0.56
+	linearValue := 0.12 + 0.88*0.25          // 0.34
+	if math.Abs(alphaAtQuarter-sqrtValue) > math.Abs(alphaAtQuarter-linearValue) {
+		t.Fatalf("the ramp at w=0.25 has alpha %.3f, closer to the linear %.3f than "+
+			"to the sqrt %.3f — the sqrt lift is gone",
+			alphaAtQuarter, linearValue, sqrtValue)
+	}
+}
+
+// TestProbColourScalesAgainstTheRowMaximum pins that probColor normalises by the
+// value it is given rather than a fixed constant.
+func TestProbColourScalesAgainstTheRowMaximum(t *testing.T) {
+	// The same probability must paint differently depending on the maximum.
+	withSmallMax := probColor(0.10, 0.20)
+	withLargeMax := probColor(0.10, 0.90)
+	if withSmallMax == withLargeMax {
+		t.Fatalf("probColor ignores its max argument: %v for both 0.20 and 0.90",
+			withSmallMax)
+	}
+	if withSmallMax.A <= withLargeMax.A {
+		t.Fatalf("0.10 out of 0.20 should be lighter than 0.10 out of 0.90, got "+
+			"alpha %d vs %d", withSmallMax.A, withLargeMax.A)
+	}
+}
