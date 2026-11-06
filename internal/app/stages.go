@@ -543,7 +543,7 @@ func (a *App) stageSoftmax(c *ui.Context) {
 				})
 			}
 			bars(c, rows, float32(hc.SumNorm), colGreen)
-			st := measureCancellation(tr)
+			st := a.cancellation()
 			misconception(c,
 				"「四个头各写一块，加起来就是它们长度的和」",
 				fmt.Sprintf("范数不能直接相加。四个头的长度之和是 %.2f，但它们相加后的长度只有 %.2f，"+

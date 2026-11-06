@@ -3614,3 +3614,70 @@ func TestStageSwitchResetsTheMainScroll(t *testing.T) {
 		t.Fatalf("selectStep left a preset scroll at %.0f", b.Scroll.Y)
 	}
 }
+
+// TestCancellationSummaryFollowsTheTrace checks the cached cancellation summary
+// is refreshed when the trace is rebuilt. The cache exists because the walk ran
+// on every frame for numbers that only change when the prompt does; a stale
+// summary would quote one prompt's statistics beside another's heatmap.
+func TestCancellationSummaryFollowsTheTrace(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	long := a.cancellation()
+	if long.Rows != len(a.Trace.Layers)*len(a.Trace.Tokens) {
+		t.Fatalf("rows=%d for %d layers x %d tokens",
+			long.Rows, len(a.Trace.Layers), len(a.Trace.Tokens))
+	}
+	if long.Below != long.Rows {
+		t.Fatalf("%d of %d rows cancel; the callout claims all of them", long.Below, long.Rows)
+	}
+
+	// A much shorter prompt has far fewer rows.
+	a.Prompt = "short"
+	a.recompute()
+	short := a.cancellation()
+	if short.Rows >= long.Rows {
+		t.Fatalf("after shrinking the prompt, rows=%d (was %d)", short.Rows, long.Rows)
+	}
+	if short.Rows != len(a.Trace.Layers)*len(a.Trace.Tokens) {
+		t.Fatalf("stale summary: rows=%d for %d layers x %d tokens",
+			short.Rows, len(a.Trace.Layers), len(a.Trace.Tokens))
+	}
+
+	// An empty prompt has nothing to measure.
+	a.Prompt = ""
+	a.recompute()
+	if empty := a.cancellation(); empty.Rows != 0 {
+		t.Fatalf("empty prompt measured %d rows", empty.Rows)
+	}
+}
+
+// TestCancellationIsCachedNotRecomputed checks the cache is actually used: the
+// stage must not walk the trace again on every frame.
+func TestCancellationIsCachedNotRecomputed(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	first := a.cancellation()
+	if first.Rows == 0 {
+		t.Fatal("the initial summary was empty")
+	}
+
+	// The stage must render from the cached value, not walk the trace again:
+	// a poisoned cache that still matches the current trace has to survive a
+	// render, or every frame is paying for the walk.
+	a.cancelStats = cancellationStats{Rows: 12345, Below: 1, Lo: 0.5, Hi: 0.6}
+	a.cancelStatsFor = a.Trace
+	if got := a.cancellation(); got.Rows != 12345 {
+		t.Fatalf("the summary was recomputed (rows=%d, poisoned value was 12345)", got.Rows)
+	}
+
+	// A new trace invalidates it, so no frame can quote the old prompt's numbers.
+	a.Prompt = "short"
+	a.recompute()
+	if got := a.cancellation(); got.Rows == 12345 {
+		t.Fatal("the poisoned value survived recompute")
+	}
+	if got := a.cancellation(); got.Rows != len(a.Trace.Layers)*len(a.Trace.Tokens) {
+		t.Fatalf("rows=%d for the new trace (%d layers x %d tokens)",
+			got.Rows, len(a.Trace.Layers), len(a.Trace.Tokens))
+	}
+}

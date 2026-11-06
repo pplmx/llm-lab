@@ -88,6 +88,15 @@ type App struct {
 	LastSample string
 	Status     string
 
+	// cancelStats is the per-trace cancellation summary the attention stage
+	// quotes. It depends only on the trace, so it is computed when the trace is
+	// rebuilt rather than on every frame: the walk is 29us, which is small
+	// against a 12.6ms frame but was pure repetition at 60fps.
+	cancelStats cancellationStats
+	// cancelStatsFor records which trace cancelStats describes, so a stale
+	// summary can never be quoted after recompute forgets to refresh it.
+	cancelStatsFor *model.Trace
+
 	Playing bool
 	NextAt  time.Time
 
@@ -180,6 +189,9 @@ func (a *App) recompute() {
 	// The pointer's hover belongs to the old layout; the pinned cell does not.
 	a.clearPointer()
 	a.clampPinnedCell()
+	// Refresh the per-trace summary alongside the trace it describes.
+	a.cancelStats = measureCancellation(a.Trace)
+	a.cancelStatsFor = a.Trace
 	a.Status = fmt.Sprintf("%d tokens · %d 层 × %d 头 · 前向完成", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
 	if len(a.Prompt) > a.W.Config.Ctx {
 		a.Status = fmt.Sprintf("已截断到最近 %d 个 token · %d 层 × %d 头", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
@@ -338,6 +350,20 @@ func (a *App) clearPointer() {
 	a.HoverDimV, a.HoverDimH = -1, -1
 	a.HoverDimOut = -1
 	a.HoverDimHeadOut, a.HoverDimProj = -1, -1
+}
+
+// cancellation returns the cached summary for the current trace, computing it
+// if the cache is missing or describes a different trace. The fallback keeps a
+// caller that renders before recompute from quoting zeroes.
+func (a *App) cancellation() cancellationStats {
+	if a.Trace == nil {
+		return cancellationStats{}
+	}
+	if a.cancelStatsFor != a.Trace {
+		a.cancelStats = measureCancellation(a.Trace)
+		a.cancelStatsFor = a.Trace
+	}
+	return a.cancelStats
 }
 
 // stageFade is how a stage switch animates: both panels that describe the stage
