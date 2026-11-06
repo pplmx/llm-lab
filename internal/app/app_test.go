@@ -3681,3 +3681,48 @@ func TestCancellationIsCachedNotRecomputed(t *testing.T) {
 			got.Rows, len(a.Trace.Layers), len(a.Trace.Tokens))
 	}
 }
+
+// TestVectorStripLabelsItsEnds checks each strip states which dimensions it
+// spans, and that the markers sit under the strip's actual edges.
+//
+// Without them a strip is an unlabelled smear: a reader cannot tell that it starts
+// at d0, how many dimensions it covers, or that hovering halfway gives roughly
+// d48. The hover readout does not help with that, because it only appears while
+// the pointer is on the strip, which is exactly when the strip's extent no longer
+// needs explaining.
+func TestVectorStripLabelsItsEnds(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 1 // the embedding stage draws three d_model-wide strips
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	var d0, dMax ui.Rect
+	var ok0, okMax bool
+	for _, s := range tr.Texts() {
+		switch s {
+		case "d0":
+			d0, ok0 = tr.Find(s)
+		case fmt.Sprintf("d%d", a.W.Config.DModel-1):
+			dMax, okMax = tr.Find(s)
+		}
+	}
+	if !ok0 || !okMax {
+		t.Fatalf("the strip's end markers are missing (d0=%v, d%d=%v)",
+			ok0, a.W.Config.DModel-1, okMax)
+	}
+
+	// The labels row spans the card; the card's content starts at the same x as
+	// the section heading, and ends one card-padding short of the panel edge.
+	heading, ok := tr.Find("token embedding")
+	if !ok {
+		t.Fatal("the first strip's caption is missing")
+	}
+	cardLeft, cardRight := heading.X, heading.X+heading.W
+	if d0.X < cardLeft-1 {
+		t.Fatalf("d0 sits %.0f left of the strip (%0.f)", cardLeft-d0.X, cardLeft)
+	}
+	if end := dMax.X + dMax.W; end < cardRight-2 || end > cardRight+2 {
+		t.Fatalf("d%d ends at %.0f but the strip ends at %.0f; the label should mark the "+
+			"right edge", a.W.Config.DModel-1, end, cardRight)
+	}
+}

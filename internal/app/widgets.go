@@ -43,11 +43,22 @@ func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 			*hover = len(v) - 1
 		}
 	}
-	ui.Row(c).Gap(8).Children(func() {
-		ui.Text(c, label).FontSize(fontMicro).TextColor(colFaint)
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		// The two ends of the row. Without them the strip is an unlabelled
+		// smear: a reader cannot tell which dimension is leftmost, how many
+		// there are, or that hovering halfway gives roughly d48 — the readout
+		// only appears while the pointer is on the strip, which is exactly when
+		// it is not needed to explain the strip's extent.
+		ui.Text(c, "d0").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
+		ui.Text(c, label).FontSize(fontMicro).TextColor(colFaint).Shrink(0)
 		if onStrip && *hover >= 0 && *hover < len(v) {
-			ui.Text(c, fmt.Sprintf("d%d = %+.4f", *hover, v[*hover])).FontSize(fontMicro).TextColor(colAccent2)
+			ui.Text(c, fmt.Sprintf("d%d = %+.4f", *hover, v[*hover])).FontSize(fontMicro).TextColor(colAccent2).Shrink(0)
 		}
+		// The right-hand end marker is pushed to the far edge so it sits under
+		// the strip's right edge; without the spacer it followed the readout and
+		// landed a fifth of the way across a 96-dimension row.
+		ui.Box(c).Grow(1)
+		ui.Text(c, fmt.Sprintf("d%d", len(v)-1)).FontSize(fontMicro).TextColor(colFaint).Shrink(0)
 	})
 }
 
