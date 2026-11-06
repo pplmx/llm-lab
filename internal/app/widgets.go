@@ -620,6 +620,15 @@ func histogramRange(c *ui.Context, values []float32, bins int, color ui.Color, a
 					W: w - 1, H: h,
 				}, color.Alpha(0.85), 1)
 			}
+			// Where zero sits on this axis. The FFN histogram is the case that
+			// needs it: its range runs -0.17 to +4.11, so zero lands 4% along and
+			// the negative region — the thing the callout asks the reader to look
+			// at — is a sliver with nothing saying where it ends. Drawn after the
+			// bars so it stays visible over them.
+			if lo < 0 && hi > 0 {
+				x := r.X + (0-lo)/(hi-lo)*r.W
+				p.Fill(ui.Rect{X: x, Y: r.Y, W: 1, H: r.H}, colText.Alpha(0.45), 0)
+			}
 		})
 	ui.Row(c).FillWidth().Gap(0).Children(func() {
 		ui.Text(c, fmt.Sprintf("%+.2f", lo)).FontSize(fontMicro).TextColor(colFaint).Width(40)

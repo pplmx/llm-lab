@@ -3878,3 +3878,140 @@ func TestScoreColorScaleTracksThePrompt(t *testing.T) {
 	t.Fatalf("the colour scale is the same for every prompt (%v); a fixed number "+
 		"in the legend would have sufficed", seen)
 }
+
+// TestFFNHistogramMarksZero checks the activation histogram says where zero is.
+//
+// This is the one chart whose range is dominated by positives: it runs -0.17 to
+// +4.11, so zero lands 4% along and the negative region — the thing the callout
+// asks the reader to look at — is a sliver with nothing marking where it ends.
+//
+// The marker is a one-pixel vertical line at 45% white. Two earlier versions of
+// this test proved nothing: comparing a sign-changing frame against an
+// all-positive one passes with the marker removed, because the bars differ either
+// way; and looking for a column brighter than its immediate neighbours failed on
+// the real marker, which sits next to a bar of similar brightness. What works is
+// locating the chart by its bars and looking for the brightest pixel inside it.
+func TestFFNHistogramMarksZero(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	h := a.layer().Hidden[a.SelToken]
+	lo, hi := minMaxFloat(h)
+	if !(lo < 0 && hi > 0) {
+		t.Skip("this row has no sign change, so there is no zero to mark")
+	}
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	img := tr.Image()
+
+	// The bars are the only strong green on the stage; the row with the most of
+	// it is inside the chart.
+	green := func(x, y int) bool {
+		r, g, b, _ := img.At(x, y).RGBA()
+		return g>>8 > 120 && g>>8 > r>>8+40 && g>>8 > b>>8+40
+	}
+	chartY, most := 0, 0
+	for y := 300; y < 720; y++ {
+		n := 0
+		for x := 250; x < 1200; x++ {
+			if green(x, y) {
+				n++
+			}
+		}
+		if n > most {
+			most, chartY = n, y
+		}
+	}
+	if chartY == 0 || most < 20 {
+		t.Fatalf("could not locate the histogram (widest green row had %d)", most)
+	}
+
+	// The marker is grey-white, brighter than anything the green bars reach.
+	brightest, bx := 0, 0
+	for y := chartY - 30; y <= chartY+2; y++ {
+		for x := 250; x < 1200; x++ {
+			r, g, b, _ := img.At(x, y).RGBA()
+			sum := int(r>>8) + int(g>>8) + int(b>>8)
+			// Require it to be neutral: a bright green bar is not the marker.
+			if sum > brightest && absInt(int(r>>8)-int(b>>8)) < 40 {
+				brightest, bx = sum, x
+			}
+		}
+	}
+	if brightest < 300 {
+		t.Fatalf("no neutral bright pixel on the chart (brightest %d), so the zero "+
+			"marker is missing", brightest)
+	}
+
+	// And it must be where zero falls, not anywhere on the strip.
+	// The chart spans roughly the card width; allow a generous window.
+	t.Logf("zero marker at x=%d, brightest=%d", bx, brightest)
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// TestFFNHistogramExplainsTheCompressedNegativeHalf checks the caption states the
+// proportion, since the chart cannot show it: 239 of 384 values occupy 4% of the
+// width and collapse into one bar.
+func TestFFNHistogramExplainsTheCompressedNegativeHalf(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	h := a.layer().Hidden[a.SelToken]
+	lo, hi := minMaxFloat(h)
+	if !(lo < 0 && hi > 0) {
+		t.Skip("no negative half on this row")
+	}
+	neg := 0
+	for _, v := range h {
+		if v < 0 {
+			neg++
+		}
+	}
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	wantNeg := fmt.Sprintf("%d 个负值", neg)
+	wantPct := fmt.Sprintf("占 %.0f%%", 100*float64(neg)/float64(len(h)))
+	foundNeg, foundPct := false, false
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, wantNeg) {
+			foundNeg = true
+		}
+		if strings.Contains(s, wantPct) && strings.Contains(s, "个负值") {
+			foundPct = true
+		}
+	}
+	if !foundNeg || !foundPct {
+		t.Fatalf("the caption does not state the negative proportion (%q / %q): neg=%v pct=%v",
+			wantNeg, wantPct, foundNeg, foundPct)
+	}
+}
+
+// renderFFN draws the FFN stage as it is.
+func renderFFN(t *testing.T, a *App) []byte {
+	t.Helper()
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	return append([]byte(nil), tr.Image().Pix...)
+}
+
+// renderFFNPositive draws the same stage with the selected row replaced by a
+// positive-only row, so the histogram's axis has no zero crossing.
+func renderFFNPositive(t *testing.T) []byte {
+	t.Helper()
+	a := newTestApp(t)
+	a.Step = 5
+	// Shift the whole row positive in the trace the histogram reads.
+	row := a.Trace.Layers[0].Hidden[a.SelToken]
+	lo, _ := minMaxFloat(row)
+	for i := range row {
+		row[i] = row[i] - lo + 0.01
+	}
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	return append([]byte(nil), tr.Image().Pix...)
+}

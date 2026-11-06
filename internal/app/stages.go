@@ -859,7 +859,26 @@ func (a *App) stageFFN(c *ui.Context) {
 			ui.Text(c, fmt.Sprintf("峰值 %+.2f", hi)).FontSize(fontSmall).TextColor(colFaint)
 		})
 		histogram(c, hidden, 36, colGreen)
-		mutedText(c, "GELU 不是 ReLU：负值不会被截成 0，只是被平滑压向 0，所以分布右侧拖出一条长尾，这就是「稀疏但连续」。")
+		// The negative region holds most of the values in a sliver of the axis
+		// width, so the histogram cannot show its shape there — it is one bar.
+		// Stating the proportion is more honest than letting a reader conclude
+		// from a single tall column that nothing is there.
+		hLo, hHi := minMaxFloat(hidden)
+		if hLo < 0 && hHi > hLo {
+			neg := 0
+			for _, v := range hidden {
+				if v < 0 {
+					neg++
+				}
+			}
+			mutedText(c, fmt.Sprintf("GELU 不是 ReLU：负值不会被截成 0，只是被平滑压向 0，所以分布右侧拖出一条长尾，这就是「稀疏但连续」。"+
+				"竖线标出 0 的位置：%d 个负值（占 %.0f%%）全挤在 0 左边、只占 %.1f%% 的轴宽，这一侧的直方图因此只剩一根柱子——"+
+				"它们的具体分布看上面的色带，不要从这张图判断。",
+				neg, 100*float64(neg)/float64(len(hidden)),
+				100*(0-float64(hLo))/(float64(hHi)-float64(hLo))))
+		} else {
+			mutedText(c, "GELU 不是 ReLU：负值不会被截成 0，只是被平滑压向 0，所以分布右侧拖出一条长尾，这就是「稀疏但连续」。")
+		}
 		misconception(c,
 			"「GELU 只是 ReLU 的平滑版，输出照样非负」",
 			fmt.Sprintf("%d 个维度里就有 %d 个是负数——GELU 有真实的负输出，最小值 %.3f（在 x ≈ -0.75 处）；"+
