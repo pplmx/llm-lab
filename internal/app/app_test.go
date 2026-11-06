@@ -1284,3 +1284,82 @@ func TestStageTransitionReadsThePreference(t *testing.T) {
 		t.Fatalf("ReduceMotion set but stageTransition returned %+v", off)
 	}
 }
+
+// TestSoftmaxWorkingsAddUp checks the inspector's worked formula reproduces the
+// weight it sits under. A reader should be able to rewrite those two lines and
+// get the quoted number back, so the assertion is on the arithmetic rather than
+// on the text.
+func TestSoftmaxWorkingsAddUp(t *testing.T) {
+	a := newTestApp(t)
+	h := a.layer().Heads[a.Head]
+	for _, cell := range []struct{ q, k int }{
+		{len(a.Trace.Tokens) - 1, 0},
+		{len(a.Trace.Tokens) - 1, len(a.Trace.Tokens) / 2},
+		{10, 3},
+		{0, 0},
+	} {
+		q, k := cell.q, cell.k
+		// The numbers printed come from computeSoftmaxParts, so this checks that
+		// function against the trace rather than re-deriving the formula here.
+		p := computeSoftmaxParts(h, q, k)
+		if !p.ok {
+			t.Fatalf("cell %d,%d: no parts computed", q, k)
+		}
+		if want := float64(h.Attn[q][k]); math.Abs(p.weight-want) > 1e-6 {
+			t.Fatalf("cell %d,%d: computeSoftmaxParts gives %.6f, the trace holds %.6f",
+				q, k, p.weight, want)
+		}
+		// And what the card prints must round-trip to the weight line above it.
+		if printed, recomputed := fmt.Sprintf("%.4f", h.Attn[q][k]), fmt.Sprintf("%.4f", p.weight); printed != recomputed {
+			t.Fatalf("cell %d,%d: card prints %s, the formula prints %s", q, k, printed, recomputed)
+		}
+	}
+}
+
+// TestSoftmaxWorkingsShownForLiveCells checks the formula appears when a cell is
+// selected and stays away from masked ones, where there is nothing to compute.
+func TestSoftmaxWorkingsShownForLiveCells(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.KeyQ, a.KeyK = 20, 5
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("分母 = Σ exp(score") {
+		t.Fatal("no worked formula under the weight")
+	}
+	if !tr.HasText("α = exp(") {
+		t.Fatal("no final line for the quotient")
+	}
+
+	// A masked cell has no softmax entry; the card should say so and not print
+	// a formula that would divide by a denominator it never joined.
+	b := newTestApp(t)
+	b.Step = 3
+	b.KeyQ, b.KeyK = 5, 20 // key after query: masked
+	tr2 := ui.NewTester(b.View, 1500, 940)
+	tr2.Frame()
+	if !tr2.HasText("被因果掩码遮住") {
+		t.Fatal("a masked cell is not reported as masked")
+	}
+	if tr2.HasText("分母 = Σ exp(score") {
+		t.Fatal("a masked cell shows a softmax formula")
+	}
+}
+
+// TestSoftmaxWorkingsFitTheInspector keeps the two lines inside the panel at
+// the narrowest window, where the inspector is 330 DIPs minus its paddings.
+func TestSoftmaxWorkingsFitTheInspector(t *testing.T) {
+	a := newTestApp(t)
+	// The widest realistic line: two minus signs and a two-digit denominator.
+	line := "α = exp(-4.5163 − −5.3791) ÷ 12.2241 = 0.0096"
+	var w float32
+	view := func(c *ui.Context) {
+		w, _ = c.MeasureText(0, ui.Span{Text: line, Size: fontMicro})
+	}
+	ui.Render(view, 400, 100, 1)
+	const available = 330 - 2*14 - 2*14
+	if w > available {
+		t.Fatalf("the widest formula line is %.0f wide, the inspector offers %.0f", w, float32(available))
+	}
+	_ = a
+}

@@ -820,6 +820,63 @@ func (a *App) inspectorToken(c *ui.Context, tr *model.Trace) {
 	})
 }
 
+// softmaxParts is the arithmetic behind one attention weight, as the inspector
+// prints it: the row maximum subtracted for stability, the denominator summed
+// over the visible keys, the cell's numerator, and their quotient.
+type softmaxParts struct {
+	rowMax, denom, num, weight float64
+	ok                         bool
+}
+
+// computeSoftmaxParts derives softmaxParts for cell (q, k) from the scores the
+// model actually holds. It is the only place that arithmetic lives, so the
+// inspector cannot print a formula that differs from what it computed, and a
+// test can check the printed numbers against the trace without re-deriving them.
+func computeSoftmaxParts(h model.HeadTrace, q, k int) softmaxParts {
+	n := q + 1
+	if q < 0 || k < 0 || k > q || q >= len(h.Scores) || n > len(h.Scores[q]) {
+		return softmaxParts{}
+	}
+	p := softmaxParts{rowMax: math.Inf(-1)}
+	for j := 0; j < n; j++ {
+		if s := float64(h.Scores[q][j]); s > p.rowMax {
+			p.rowMax = s
+		}
+	}
+	if math.IsInf(p.rowMax, -1) {
+		return softmaxParts{}
+	}
+	for j := 0; j < n; j++ {
+		p.denom += math.Exp(float64(h.Scores[q][j]) - p.rowMax)
+	}
+	p.num = math.Exp(float64(h.Scores[q][k]) - p.rowMax)
+	p.weight = p.num / p.denom
+	p.ok = true
+	return p
+}
+
+// softmaxWorkings shows how the quoted weight was computed, with this cell's own
+// numbers, so a reader can check the arithmetic by hand instead of taking
+// "0.0096" on trust. The subtractions and the sum are the real ones: rewriting
+// the printed line gives the printed weight back.
+func (a *App) softmaxWorkings(c *ui.Context, h model.HeadTrace, q, k int) {
+	p := computeSoftmaxParts(h, q, k)
+	if !p.ok {
+		return
+	}
+	rowMax, denom, num := p.rowMax, p.denom, p.num
+	// Two lines: the row maximum is subtracted first (that is why the exponent
+	// is negative even when the score is not), then the numerator over the
+	// denominator. The result printed here is the weight line above.
+	ui.Column(c).Gap(2).Children(func() {
+		ui.Text(c, fmt.Sprintf("分母 = Σ exp(score − %+.4f) = %.4f", rowMax, denom)).
+			FontSize(fontMicro).TextColor(colFaint)
+		ui.Text(c, fmt.Sprintf("α = exp(%+.4f − %+.4f) ÷ %.4f = %.4f",
+			h.Scores[q][k], rowMax, denom, num/denom)).
+			FontSize(fontMicro).TextColor(colAccent2)
+	})
+}
+
 func (a *App) inspectorHoverCell(c *ui.Context) {
 	tr := a.Trace
 	l := a.layer()
@@ -842,9 +899,11 @@ func (a *App) inspectorHoverCell(c *ui.Context) {
 		if math.IsInf(float64(score), -1) {
 			kv(c, "分数", "−∞（被因果掩码遮住）")
 			kv(c, "权重", "0")
+			mutedText(c, "掩码位置不进 softmax：分母只对第 0 到第 "+fmt.Sprint(q)+" 列求和。")
 		} else {
 			kv(c, "分数", fmt.Sprintf("%+.4f", score))
 			kv(c, "权重", fmt.Sprintf("%.4f", h.Attn[q][k]))
+			a.softmaxWorkings(c, h, q, k)
 		}
 	})
 }
