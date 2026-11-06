@@ -860,6 +860,15 @@ func (a *App) inspector(c *ui.Context) {
 		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
 			ui.Text(c, "检查器").FontSize(fontBody).Bold().TextColor(colMuted)
 			ui.Text(c, lessons[a.Step].name).FontSize(fontMicro).TextColor(colFaint)
+			// The stage area now names the layer in its card headings; the
+			// inspector reads the same tensors and has the same problem, more so
+			// because the top bar's controls are what select them and the panel
+			// is on the far side of the window. State the scope once here rather
+			// than repeating it in every card below.
+			if scope := a.inspectorScope(); scope != "" {
+				ui.Box(c).Grow(1)
+				ui.Text(c, scope).FontSize(fontMicro).TextColor(colAccent2).Shrink(0)
+			}
 		})
 		ui.Box(c).FillWidth().Height(1).Background(colBorder)
 
@@ -1116,4 +1125,17 @@ func topBars(rows []barRow, n int) []barRow {
 	out := sorted[:n]
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Index < out[j].Index })
 	return out
+}
+
+// inspectorScope names the layer and head the inspector's numbers belong to, for
+// the stages whose figures depend on those controls. It returns "" on stages that
+// read neither, where a scope line would be noise.
+func (a *App) inspectorScope() string {
+	switch {
+	case inStages(a.Step, layerFrom, layerTo) && inStages(a.Step, headFrom, headTo):
+		return fmt.Sprintf("层 %d · 头 %d", a.Layer, a.Head)
+	case inStages(a.Step, layerFrom, layerTo):
+		return fmt.Sprintf("层 %d", a.Layer)
+	}
+	return ""
 }
