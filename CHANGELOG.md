@@ -43,6 +43,9 @@
 
 ### Added
 
+- `TestNoUnusedFunctionsInModel`：把上一轮的死代码守卫扩展到 `internal/model`
+  - model 包放的是算术本身，一个重构后残留的辅助函数看起来就像「这个张量是怎么算的」的定义，读者无从分辨它已不再被调用
+  - 已核对：model 包的 10 个导出函数全部有使用，未导出函数也全部被引用，**没有发现新的死代码**
 - `TestNoUnusedFunctionsInApp`：AST 找出包内未导出的函数与方法，去掉注释后在全部源码里做标识符边界匹配，没有任何引用就失败
   - 这条检测本身验证过：临时插入 `deadFishProbe()` 立刻报错
 
