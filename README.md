@@ -103,7 +103,7 @@ just check    # gofmt 检查 + go vet + go test（CI 同款）
 
 - **头是分开算的**：`HeadProj[h]` 是 `Out_h · Wo[h*d_head:(h+1)*d_head]`，`AttnProj` 就是各头之和，所以第 4 步卡片里「本头贡献」和「全部头相加」是两个不同的量。
 - **`-Inf` 是掩码，不是数值**：`Scores` 右上角是 `negInf`，`softmaxCausal` 直接在 `i+1` 处截断，从不真的对它做指数。
-- **`Logits` 只有一行**：`Trace.Logits` 只保存最后一个位置的词表分布（`Ctx` 宽 → `Vocab` 宽），所以第 7 步看的是「最后一个 token 之后的那个字」。
+- **`Logits` 只有一行**：`FinalNorm` 是 `T × d_model`，但 `Trace.Logits` 只保存**最后一个位置**的那一行，宽度是词表大小（本模型 96 → 256），所以第 7 步看的是「最后一个 token 之后的那个字」。
 
 每次 `Forward` 会把每个中间张量录进 `model.Trace`（`gpt.go`），界面只读这份缓存——所以拖动滑块、切换层/头都不需要重算整个网络。
 

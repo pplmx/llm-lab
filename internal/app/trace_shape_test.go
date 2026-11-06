@@ -87,11 +87,18 @@ func TestTraceShapesMatchTheStageTable(t *testing.T) {
 		t.Fatalf("Hidden is %dx%d, want %dx%d", len(l.Hidden), len(l.Hidden[0]), n, c.DFF)
 	}
 
-	// Stage 7: FinalNorm is T x d_model and Logits is a single vocab-wide row.
+	// Stage 7: FinalNorm is T x d_model — one row per position — while Logits
+	// is a single row of vocab width, the last position only. The README got
+	// this backwards once, describing FinalNorm as ctx wide; DModel and Ctx are
+	// different numbers in this model, which is what makes that testable.
 	if len(tr.FinalNorm) != n || len(tr.FinalNorm[0]) != c.DModel {
-		t.Fatalf("FinalNorm is %dx%d", len(tr.FinalNorm), len(tr.FinalNorm[0]))
+		t.Fatalf("FinalNorm is %dx%d, want T x d_model (%dx%d)",
+			len(tr.FinalNorm), len(tr.FinalNorm[0]), n, c.DModel)
 	}
 	if len(tr.Logits) != c.Vocab {
 		t.Fatalf("Logits is %d wide, want vocab %d", len(tr.Logits), c.Vocab)
+	}
+	if c.DModel == c.Ctx && c.DModel == c.Vocab {
+		t.Fatal("d_model, ctx and vocab are equal, so this test cannot tell them apart")
 	}
 }
