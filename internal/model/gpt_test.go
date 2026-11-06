@@ -319,3 +319,31 @@ func TestGeluMatchesErf(t *testing.T) {
 		t.Fatalf("gelu(NaN) = %v, want NaN", got)
 	}
 }
+
+// TestExpNegMatchesExp pins the softmax table to math.Exp over the range the
+// causal softmax uses, and checks the clamped tails.
+func TestExpNegMatchesExp(t *testing.T) {
+	var worst float64
+	for i := -1600; i <= 0; i++ {
+		x := float32(i) / 100
+		want := math.Exp(float64(x))
+		if want <= 1e-6 {
+			continue
+		}
+		if d := math.Abs(float64(expNeg(x))-want) / want; d > worst {
+			worst = d
+		}
+	}
+	if worst > 1e-5 {
+		t.Fatalf("expNeg max rel error %.3e, want <= 1e-5", worst)
+	}
+	if got := expNeg(-20); got != 0 {
+		t.Fatalf("expNeg(-20) = %v, want 0", got)
+	}
+	if got := expNeg(0); got != 1 {
+		t.Fatalf("expNeg(0) = %v, want 1", got)
+	}
+	if got := expNeg(float32(math.NaN())); !math.IsNaN(float64(got)) {
+		t.Fatalf("expNeg(NaN) = %v, want NaN", got)
+	}
+}

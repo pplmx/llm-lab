@@ -79,40 +79,6 @@ func matMulRows(x [][]float32, w []float32, b []float32, outDim int) [][]float32
 	return out
 }
 
-// matMulRowsRange computes rows [start, end) of out.
-func matMulRowsRange(out, x [][]float32, w []float32, outDim, start, end int) {
-	inDim := len(x[0])
-	// Four rows share one pass over w: each weight row is loaded once for
-	// four accumulators instead of once per row. The wide FFN matrices
-	// (96×384) do not fit in L1, so this cuts the dominant memory traffic.
-	i := start
-	for ; i+4 <= end; i += 4 {
-		x0, x1, x2, x3 := x[i], x[i+1], x[i+2], x[i+3]
-		r0, r1, r2, r3 := out[i], out[i+1], out[i+2], out[i+3]
-		for k := 0; k < inDim; k++ {
-			wk := w[k*outDim : (k+1)*outDim]
-			v0, v1, v2, v3 := x0[k], x1[k], x2[k], x3[k]
-			for j, wv := range wk {
-				r0[j] += v0 * wv
-				r1[j] += v1 * wv
-				r2[j] += v2 * wv
-				r3[j] += v3 * wv
-			}
-		}
-	}
-	for ; i < end; i++ {
-		xi := x[i]
-		row := out[i]
-		for k := 0; k < inDim; k++ {
-			v := xi[k]
-			wk := w[k*outDim : (k+1)*outDim]
-			for j, wv := range wk {
-				row[j] += v * wv
-			}
-		}
-	}
-}
-
 // layerNorm normalizes each row to zero mean and unit variance, then scales
 // and shifts it with g and b.
 func layerNorm(x [][]float32, g, b []float32) [][]float32 {
@@ -194,6 +160,43 @@ func dot(a, b []float32) float32 {
 	return s
 }
 
+// The softmax table samples e^x on [-16, 0]. Below -16 the value is under
+// 1.2e-7 and rounds to zero; above 0 it is clamped to one. Linear
+// interpolation is accurate to 2.4e-6 relative, and the lookup is about eight
+// times faster than math.Exp, which otherwise dominates the attention softmax.
+const (
+	expN  = 4096
+	expLo = -16
+	expHi = 0
+	expSc = float32(expN) / float32(expHi-expLo)
+)
+
+var expTable = func() [expN + 1]float32 {
+	var t [expN + 1]float32
+	step := float64(expHi-expLo) / expN
+	for i := range t {
+		t[i] = float32(math.Exp(float64(expLo) + step*float64(i)))
+	}
+	return t
+}()
+
+// expNeg returns e^x for x <= 0.
+func expNeg(x float32) float32 {
+	if x != x { // NaN
+		return x
+	}
+	if x <= expLo {
+		return 0
+	}
+	if x >= expHi {
+		return 1
+	}
+	f := (x - expLo) * expSc
+	i := int(f)
+	frac := f - float32(i)
+	return expTable[i] + frac*(expTable[i+1]-expTable[i])
+}
+
 // softmaxInPlace normalizes scores to a distribution, skipping -Inf entries.
 func softmaxInPlace(scores []float32) {
 	max := float32(math.Inf(-1))
@@ -232,7 +235,7 @@ func softmaxCausal(dst, scores []float32, n int) {
 	}
 	var sum float32
 	for i := 0; i < n; i++ {
-		e := float32(math.Exp(float64(scores[i] - max)))
+		e := expNeg(scores[i] - max)
 		dst[i] = e
 		sum += e
 	}
