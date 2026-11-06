@@ -4748,3 +4748,69 @@ func TestLNParamsHelperReadsTheWeights(t *testing.T) {
 		t.Fatal("nil weights report learned parameters")
 	}
 }
+
+// TestDroppedByteCountIsTheRealPrefixLength checks the card's "丢弃前 N 字节"
+// against where the kept slice actually starts in the original prompt.
+//
+// The existing tests pin N for one prompt (207 for 30 repeated hanzi) and check
+// that truncation does not cut a character. Neither would catch an off-by-a-few
+// when the truncation point lands inside a multi-byte character and Truncate
+// steps forward to the next boundary — the case where the displayed N and the
+// real drop differ most easily.
+func TestDroppedByteCountIsTheRealPrefixLength(t *testing.T) {
+	ctx := model.DefaultConfig.Ctx
+	cases := []string{
+		strings.Repeat("注意力", 30),         // aligned: 207 % 3 == 0
+		"ab" + strings.Repeat("注意力", 30),  // misaligned by 2
+		"abc" + strings.Repeat("注意力", 30), // misaligned by 0 mod 3 but shifted
+		strings.Repeat("a", ctx+36),       // pure ASCII
+		"x" + strings.Repeat("字", 40),     // one ASCII then hanzi
+	}
+	for _, prompt := range cases {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		tr := a.Trace
+		if len(tr.Tokens) == 0 {
+			t.Fatalf("prompt %q produced no tokens", prompt[:min(8, len(prompt))])
+		}
+		// Where does the kept slice begin in the original byte string? The
+		// tokeniser maps one token per byte, so the kept suffix length is the
+		// token count and the prefix is everything before it.
+		realDropped := len(prompt) - len(tr.Tokens)
+		if realDropped <= 0 {
+			continue // not truncated
+		}
+		if !strings.HasSuffix(prompt, tr.Text) {
+			t.Fatalf("kept text is not a suffix of the prompt")
+		}
+		if got := len(prompt) - len(tr.Text); got != realDropped {
+			t.Fatalf("kept text is %d bytes but %d tokens were kept", len(tr.Text), len(tr.Tokens))
+		}
+
+		a.Step = 0
+		uiTr := ui.NewTester(a.View, 1500, 940)
+		uiTr.Frame()
+		want := fmt.Sprintf("丢弃前 %d 字节", realDropped)
+		found := false
+		for _, s := range uiTr.Texts() {
+			if strings.Contains(s, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("prompt of %d bytes: the card does not state %q", len(prompt), want)
+		}
+		// And the stated original length must be the prompt's real length.
+		wantOrig := fmt.Sprintf("原文 %d", len(prompt))
+		found = false
+		for _, s := range uiTr.Texts() {
+			if strings.Contains(s, wantOrig) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("prompt of %d bytes: the card does not state %q", len(prompt), wantOrig)
+		}
+	}
+}
