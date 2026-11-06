@@ -964,15 +964,20 @@ func (a *App) stageFFN(c *ui.Context) {
 // 14–16% of the absolute mass in this model, so a reader who saw just those
 // would reasonably conclude the rest does not matter.
 func ffnWorkings(c *ui.Context, dim, dff int, p ffnParts) {
+	// Four decimals, like the total: at three the terms and the remainder each
+	// carried up to 5e-4 and the reader's sum missed the printed result on 88 of
+	// 96 dimensions (worst 1.5e-3). Four pieces of a sum being re-added have to
+	// share one precision.
 	var terms []string
 	for _, t := range p.Top {
-		terms = append(terms, fmt.Sprintf("k%d %+.3f", t.K, t.V))
+		terms = append(terms, fmt.Sprintf("k%d %+.4f", t.K, t.V))
 	}
 	workingsLines(c, []string{
 		fmt.Sprintf("out[%d] 的三项最大贡献：%s", dim, strings.Join(terms, "  ")),
-		fmt.Sprintf("+ 其余 %d 项 %+.3f = %+.4f", dff-len(p.Top), p.Rest, p.Out),
+		fmt.Sprintf("+ 其余 %d 项 %+.4f ≈ %+.4f", dff-len(p.Top), p.Rest, p.Out),
 	})
-	ui.Text(c, fmt.Sprintf("余项是精确补足的和，不是估算值——三个最大项并不主导结果，只占 %.0f%%。",
+	ui.Text(c, fmt.Sprintf("余项是精确补足的和，不是估算值——三个最大项并不主导结果，只占 %.0f%%。"+
+		"各行按四位小数显示，自己相加时末位可能差一两个单位。",
 		ffnTopShare(p))).FontSize(fontMicro).TextColor(colFaint)
 }
 

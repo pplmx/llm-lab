@@ -286,3 +286,216 @@ func TestPrintedWeightedSumMatchesTheTrace(t *testing.T) {
 		}
 	}
 }
+
+// TestPrintedFFNSumStaysClose checks the FFN line stays within the precision it
+// prints.
+//
+// The line lists the three largest contributions, the exact remainder, and the
+// output. With the terms and the remainder at three decimals and the total at
+// four, the reader's sum missed the printed result on 88 of 96 dimensions, worst
+// 1.5e-3 — the widest of the arithmetic mismatches found so far. All four pieces
+// now share four decimals, which brings it to 1.5e-4 with the remaining
+// disagreements in the last digit only.
+func TestPrintedFFNSumStaysClose(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	l := a.layer()
+	w2 := a.W.Layers[a.Layer].W2
+	dff, d := a.W.Config.DFF, a.W.Config.DModel
+
+	round := func(v float64, dp int) float64 {
+		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
+		return out
+	}
+
+	worst := 0.0
+	for j := 0; j < d; j++ {
+		p := computeFFN(l.Hidden[a.SelToken], w2, dff, d, j)
+		if !p.OK {
+			t.Fatalf("dim %d: computeFFN declined", j)
+		}
+		sum := 0.0
+		for _, tm := range p.Top {
+			sum += round(tm.V, 4)
+		}
+		sum += round(p.Rest, 4)
+		if gap := math.Abs(sum - p.Out); gap > worst {
+			worst = gap
+		}
+	}
+	if worst > 3e-4 {
+		t.Fatalf("adding the printed pieces moves the output by %.2e, more than a "+
+			"last-digit rounding", worst)
+	}
+	t.Logf("worst gap between the printed terms and the printed output: %.2e", worst)
+}
+
+// TestPrintedFFNSumMatchesTheTrace keeps the printed output equal to the model's.
+func TestPrintedFFNSumMatchesTheTrace(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	l := a.layer()
+	w2 := a.W.Layers[a.Layer].W2
+	dff, d := a.W.Config.DFF, a.W.Config.DModel
+	for j := 0; j < d; j++ {
+		p := computeFFN(l.Hidden[a.SelToken], w2, dff, d, j)
+		if got, want := p.Out, float64(l.FFNOut[a.SelToken][j]); math.Abs(got-want) > 1e-5 {
+			t.Fatalf("dim %d: the panel would print %.6f, the trace holds %.6f", j, got, want)
+		}
+	}
+}
+
+// TestPrintedResidualChainCloses checks the residual chain's lines add up.
+//
+// Unlike the three blocks fixed this and the two previous rounds, this one already
+// printed every term and every running total at four decimals, so the reader's
+// running sum stays within a last-digit rounding (worst 1.2e-4 across 96
+// dimensions). The test records that, so a future change to the printout cannot
+// quietly reintroduce the mismatch the others had.
+func TestPrintedResidualChainCloses(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	l := a.layer()
+
+	round := func(v float64, dp int) float64 {
+		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
+		return out
+	}
+
+	worst := 0.0
+	for dim := 0; dim < a.Trace.Config.DModel; dim++ {
+		steps, ok := residualChain(*l, a.SelToken, dim)
+		if !ok {
+			t.Fatalf("dim %d: residualChain declined", dim)
+		}
+		// The first line prints the starting value as both term and sum.
+		running := round(steps[0].Term, 4)
+		for _, s := range steps[1:] {
+			running += round(s.Term, 4)
+			if gap := math.Abs(running - s.Sum); gap > worst {
+				worst = gap
+			}
+		}
+	}
+	if worst > 2e-4 {
+		t.Fatalf("adding the printed residual terms moves the running total by %.2e",
+			worst)
+	}
+	t.Logf("worst gap in the printed residual chain: %.2e", worst)
+}
+
+// TestEveryPrintedArithmeticBlockStaysClose is the closure check for the class of
+// defect found across rounds 81-84: a block whose numbers a reader is asked to
+// re-add, printed at precisions that do not close.
+func TestEveryPrintedArithmeticBlockStaysClose(t *testing.T) {
+	// Each entry returns the worst gap between what is printed and what a reader
+	// gets by substituting it.
+	blocks := map[string]func(*testing.T) float64{
+		"score":    worstPrintedScoreGap,
+		"softmax":  worstPrintedSoftmaxGap,
+		"weighted": worstPrintedWeightedGap,
+		"ffn":      worstPrintedFFNGap,
+		"ln":       worstPrintedLNGap,
+	}
+	for name, measure := range blocks {
+		if gap := measure(t); gap > 1e-3 {
+			t.Errorf("%s block: the printed arithmetic is off by %.2e, which changes "+
+				"a printed digit", name, gap)
+		}
+	}
+}
+
+func worstPrintedScoreGap(t *testing.T) float64 {
+	t.Helper()
+	a := newTestApp(t)
+	a.Step = 2
+	h := a.layer().Heads[a.Head]
+	q, k := a.SelToken, a.SelToken/2
+	p := computeScore(h.Q[q], h.K[k], a.Trace.Config.DHead(), h.Scores[q][k])
+	scale := float64(float32(1 / math.Sqrt(float64(a.Trace.Config.DHead()))))
+	return math.Abs(p.Dot*scale - p.Score)
+}
+
+func worstPrintedSoftmaxGap(t *testing.T) float64 {
+	t.Helper()
+	a := newTestApp(t)
+	a.Step = 3
+	h := a.layer().Heads[a.Head]
+	p := computeSoftmaxParts(h, a.SelToken, a.SelToken/2)
+	if !p.ok {
+		return 0
+	}
+	return math.Abs(float64(p.num/p.denom) - float64(h.Attn[a.SelToken][a.SelToken/2]))
+}
+
+func worstPrintedWeightedGap(t *testing.T) float64 {
+	t.Helper()
+	a := newTestApp(t)
+	a.Step = 3
+	h := a.layer().Heads[a.Head]
+	round := func(v float64) float64 {
+		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', 4, 64), 64)
+		return out
+	}
+	worst := 0.0
+	for dim := 0; dim < a.Trace.Config.DHead(); dim++ {
+		p := computeWeighted(h.Attn[a.SelToken], h.V, a.SelToken, dim, len(a.Trace.Tokens))
+		sum := 0.0
+		for _, tm := range p.Top {
+			sum += round(tm.Val)
+		}
+		sum += round(p.Rest)
+		if gap := math.Abs(sum - p.Out); gap > worst {
+			worst = gap
+		}
+	}
+	return worst
+}
+
+func worstPrintedFFNGap(t *testing.T) float64 {
+	t.Helper()
+	a := newTestApp(t)
+	a.Step = 5
+	l := a.layer()
+	w2 := a.W.Layers[a.Layer].W2
+	dff, d := a.W.Config.DFF, a.W.Config.DModel
+	round := func(v float64) float64 {
+		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', 4, 64), 64)
+		return out
+	}
+	worst := 0.0
+	for j := 0; j < d; j++ {
+		p := computeFFN(l.Hidden[a.SelToken], w2, dff, d, j)
+		sum := 0.0
+		for _, tm := range p.Top {
+			sum += round(tm.V)
+		}
+		sum += round(p.Rest)
+		if gap := math.Abs(sum - p.Out); gap > worst {
+			worst = gap
+		}
+	}
+	return worst
+}
+
+func worstPrintedLNGap(t *testing.T) float64 {
+	t.Helper()
+	a := newTestApp(t)
+	a.Step = 4
+	l := a.layer()
+	w := a.W.Layers[a.Layer]
+	round := func(v float64, dp int) float64 {
+		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
+		return out
+	}
+	worst := 0.0
+	for dim := 0; dim < a.Trace.Config.DModel; dim++ {
+		p := computeLN(l.AfterAttn[a.SelToken], w.LN2G, w.LN2B, dim)
+		hand := (round(p.x, 4)-round(p.mean, 4))*round(p.invStd, 4)*
+			round(p.gamma, 5) + round(p.beta, 5)
+		if gap := math.Abs(hand - p.out); gap > worst {
+			worst = gap
+		}
+	}
+	return worst
+}
