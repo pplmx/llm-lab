@@ -36,6 +36,18 @@
 
 ### Fixed
 
+- `RENDER_DIR` 这个环境变量**从未出现在任何文档里**，而且指向不存在的目录时测试直接失败
+  - 读者照文档跑 `RENDER=1 go test ...` 只会得到 `/tmp` 下的截图，每跑一次覆盖一次，无法做前后对比
+  - 若自己猜到 `RENDER_DIR`，传入新路径会得到 `open /tmp/after/x.png: no such file or directory`——看起来像测试坏了，其实是目录不存在
+  - 现在 `writeSnapshot` 自动创建目录，README 与 CONTRIBUTING 都写明了这个变量和用途
+  - 实测：两次渲染到两个新目录，29 张截图**逐字节相同**（这个渲染是确定性的）
+
+### Added
+
+- 测试 `TestRenderDirIsDocumentedAndWorks`：两份文档都必须提到 `RENDER_DIR`，且 `writeSnapshot` 必须能创建不存在的目录
+
+### Fixed
+
 - README 的采样说明**落后了 21 轮**：交互表写「同一句提示词永远得到同一个结果」，而界面里的同一句话早在第 66 轮就改成了「**在温度不变的前提下**」
   - 实测：默认温度抽到 id 32，`T=2.2` 时抽到别的 token——种子确实只来自提示词，但落进哪个区间取决于分布形状，而温度滑块改变分布
   - 现在 README 补上了这个前提并解释了温度的作用

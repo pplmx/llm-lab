@@ -1,6 +1,7 @@
 package app
 
 import (
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,5 +243,32 @@ func TestReadmeSamplingRowStatesItsCondition(t *testing.T) {
 	if !differs {
 		t.Skip("temperature does not change the draw on this prompt, so the " +
 			"condition cannot be demonstrated here")
+	}
+}
+
+// TestRenderDirIsDocumentedAndWorks keeps the snapshot instructions usable.
+//
+// RENDER_DIR existed in the tests but appeared in no document, and passing it a
+// path that did not exist failed with "open /tmp/after/x.png: no such file or
+// directory" — which reads as a broken test rather than a missing directory. The
+// flag's whole purpose is keeping a before and an after side by side, and the
+// obvious way to do that is a fresh path, so the writer now creates it.
+func TestRenderDirIsDocumentedAndWorks(t *testing.T) {
+	// Both docs must mention the variable, since both show the command.
+	for _, doc := range []string{"README.md", "CONTRIBUTING.md"} {
+		b, err := os.ReadFile(filepath.Join("..", "..", doc))
+		if err != nil {
+			t.Fatalf("read %s: %v", doc, err)
+		}
+		if !strings.Contains(string(b), "RENDER_DIR") {
+			t.Fatalf("%s shows the snapshot command but never mentions RENDER_DIR", doc)
+		}
+	}
+
+	// And a directory that does not exist yet must be created by the writer.
+	dir := filepath.Join(t.TempDir(), "nested", "snapshots")
+	writeSnapshot(t, dir, "probe.png", image.NewRGBA(image.Rect(0, 0, 4, 4)))
+	if _, err := os.Stat(filepath.Join(dir, "probe.png")); err != nil {
+		t.Fatalf("writeSnapshot did not create %s: %v", dir, err)
 	}
 }

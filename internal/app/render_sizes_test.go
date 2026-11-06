@@ -92,6 +92,14 @@ func TestRenderSizes(t *testing.T) {
 // writeSnapshot encodes img to dir/name, failing the test on either error.
 func writeSnapshot(t *testing.T, dir, name string, img *image.RGBA) {
 	t.Helper()
+	// Create the output directory rather than requiring it to exist. The point of
+	// RENDER_DIR is to keep a "before" and an "after" set side by side, and a
+	// fresh path is the obvious way to do that; failing with "open
+	// /tmp/after/x.png: no such file or directory" reads as a broken test rather
+	// than a missing directory.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create snapshot directory %s: %v", dir, err)
+	}
 	f, err := os.Create(dir + "/" + name)
 	if err != nil {
 		t.Fatal(err)
