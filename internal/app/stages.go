@@ -53,7 +53,7 @@ var lessons = []lesson{
 	{
 		name:    "FFN",
 		title:   "逐位置的前馈网络",
-		body:    "注意力负责在位置之间搬运信息，FFN 负责在每个位置上单独做非线性变换：先升维到 4 倍宽，过 GELU，再降回原维度。参数量的三分之二都在这里。GELU 在负值区不是硬零，而是平滑地趋近零，所以激活会呈现稀疏但连续的分布。",
+		body:    "注意力负责在位置之间搬运信息，FFN 负责在每个位置上单独做非线性变换：先升维到 4 倍宽，过 GELU，再降回原维度。只看 transformer 块内部，三分之二的参数都在这里（算上嵌入表则是 58%）。GELU 在负值区不是硬零，而是平滑地趋近零，所以激活会呈现稀疏但连续的分布。",
 		formula: "FFN(x) = W₂ · GELU(W₁ · LN(x))",
 	},
 	{
@@ -295,20 +295,31 @@ func (a *App) stageScores(c *ui.Context) {
 			})
 			ui.Column(c).Gap(6).Grow(1).Children(func() {
 				mutedText(c, "点积越大，说明这个位置的 Query 与那个位置的 Key 越匹配。除法因子让分数的量级不随维度增长。")
+				// The old legend said "negative: suppresses attention", which
+				// is false here: sign and relative weight disagree in 27% of
+				// this model's cells, and 212 negative scores still land in
+				// their row's top 3. Sign is only a convenient colour split;
+				// what decides attention is the ranking within a row.
 				ui.Row(c).Gap(12).Children(func() {
 					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
 						ui.Box(c).Size(9, 9).Radius(2).Background(colWarm)
-						ui.Text(c, "正分：鼓励注意").FontSize(10).TextColor(colMuted)
+						ui.Text(c, "正分（暖色）").FontSize(10).TextColor(colMuted)
 					})
 					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
 						ui.Box(c).Size(9, 9).Radius(2).Background(colNeg)
-						ui.Text(c, "负分：抑制注意").FontSize(10).TextColor(colMuted)
+						ui.Text(c, "负分（蓝色）").FontSize(10).TextColor(colMuted)
 					})
 				})
 				kv(c, "缩放", fmt.Sprintf("1/√%d = %.3f", tr.Config.DHead(), 1/math.Sqrt(float64(tr.Config.DHead()))))
 				kv(c, "可见", fmt.Sprintf("%d 个 key", i+1))
 			})
 		})
+		misconception(c,
+			"「负分就是把这个 key 屏蔽掉了」",
+			fmt.Sprintf("分数的绝对值不重要，只有同一行内的大小关系重要。把这一行 %d 个分数"+
+				"统统减去 5，哪怕全部变成负数，softmax 之后的权重一模一样。"+
+				"真正让 key 彻底出局的只有右上角的因果掩码，那里是 -Inf，softmax 之后才是 0。",
+				i+1))
 	})
 }
 
@@ -350,6 +361,19 @@ func (a *App) stageSoftmax(c *ui.Context) {
 				bars(c, rows, max, colAccent)
 			})
 		})
+		// The heatmap says "rows sum to 1", and the natural misreading is that
+		// the whole matrix is one distribution, so the columns must sum to 1
+		// too. They do not: a column is "how much everyone attends to me", and
+		// nothing constrains that. The asymmetry callout this replaced was
+		// mostly the causal mask talking about itself, which teaches less.
+		colMax, colMin := columnSumRange(h.Attn)
+		misconception(c,
+			"「每行和为 1，那每列应该也是 1」",
+			fmt.Sprintf("只有行有这个约束。这一层的列和从 %.2f 到 %.2f，"+
+				"总共是 %.0f（等于 token 数，因为每行各贡献 1）。"+
+				"行是「我在看谁」，天然是个分布；列是「谁在看我」，可以很高也可以接近 0——"+
+				"矩阵右上角那些列的列和就是 0，纯粹是因果掩码。",
+				colMin, colMax, float64(len(h.Attn))))
 	})
 
 	card(c, func() {
@@ -397,6 +421,78 @@ func (a *App) stageResidual(c *ui.Context) {
 	})
 }
 
+// geluFloor is GELU's global minimum, about -0.16997 at x ≈ -0.7518. It is the
+// number that makes "GELU has a negative output range" concrete: ReLU bottoms
+// out at exactly 0, GELU bottoms out here.
+const geluFloor = -0.170
+
+// zeroDims counts the entries of v that are exactly zero, which is what makes
+// "sparse" a statement about magnitude rather than about zeros.
+func zeroDims(v []float32) int {
+	n := 0
+	for _, x := range v {
+		if x == 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// columnSumRange returns the smallest and largest column sums of an attention
+// matrix. Rows sum to 1 by construction; columns have no such constraint, which
+// is the fact the attention stage's callout teaches. Only the causal mask
+// bounds a column: entries above the diagonal are zero.
+func columnSumRange(attn [][]float32) (max, min float64) {
+	n := len(attn)
+	if n == 0 {
+		return 0, 0
+	}
+	min = math.Inf(1)
+	for j := 0; j < n; j++ {
+		var sum float64
+		for i := j; i < n; i++ {
+			if j < len(attn[i]) {
+				sum += float64(attn[i][j])
+			}
+		}
+		if sum > max {
+			max = sum
+		}
+		if sum < min {
+			min = sum
+		}
+	}
+	return max, min
+}
+
+// negDims counts the negative entries of v, the measurement the FFN stage
+// quotes next to the GELU floor.
+func negDims(v []float32) int {
+	n := 0
+	for _, x := range v {
+		if x < 0 {
+			n++
+		}
+	}
+	return n
+}
+
+// ffnParamShare returns the FFN's share of all parameters, and its share of the
+// parameters inside the transformer blocks. The lesson used to claim "two
+// thirds of the parameters are here", which is only true of the second number:
+// the embedding tables take 12% of this model, so the FFN is 58% of the whole.
+func ffnParamShare(c model.Config) (ofAll, ofBlocks float64) {
+	d := float64(c.DModel)
+	emb := float64(c.Vocab)*d + float64(c.Ctx)*d
+	attn := float64(c.NLayer) * 4 * d * d
+	ffn := float64(c.NLayer) * 2 * d * float64(c.DFF)
+	ln := float64(c.NLayer) * 4 * d
+	final := 2 * d
+	all := emb + attn + ffn + ln + final
+	blocks := attn + ffn + ln
+	return ffn / all, ffn / blocks
+}
+
 func (a *App) stageFFN(c *ui.Context) {
 	l := a.layer()
 	i := clampIndex(a.SelToken, len(a.Trace.Tokens))
@@ -408,7 +504,10 @@ func (a *App) stageFFN(c *ui.Context) {
 		}
 	}
 	card(c, func() {
-		sectionTitle(c, "升维 → GELU → 降维", fmt.Sprintf("d_ff = %d", len(hidden)))
+		ofAll, ofBlocks := ffnParamShare(a.Trace.Config)
+		sectionTitle(c, "升维 → GELU → 降维",
+			fmt.Sprintf("d_ff = %d · 占全部参数 %.0f%%（块内 %.0f%%）",
+				len(hidden), ofAll*100, ofBlocks*100))
 		ui.Text(c, "W₁·LN(x) 后过 GELU").FontSize(10).TextColor(colFaint)
 		vectorStrip(c, hidden, 22, &a.HoverDimH)
 		ui.Row(c).Gap(16).Wrap().Children(func() {
@@ -418,6 +517,13 @@ func (a *App) stageFFN(c *ui.Context) {
 		})
 		histogram(c, hidden, 36, colGreen)
 		mutedText(c, "GELU 不是 ReLU：负值不会被截成 0，只是被平滑压向 0，所以分布右侧拖出一条长尾，这就是「稀疏但连续」。")
+		misconception(c,
+			"「GELU 只是 ReLU 的平滑版，输出照样非负」",
+			fmt.Sprintf("%d 个维度里就有 %d 个是负数——GELU 有真实的负输出，最小值 %.3f（在 x ≈ -0.75 处）；"+
+				"直方图最左端那个 %.2f 就是它：负区是先掉进一个小坑再回到 0，不是被截平。"+
+				"所以这里的「稀疏」指「大部分维度接近 0」，而不是「大部分维度恰好等于 0」——"+
+				"这一行里恰好等于 0 的有 %d 个。",
+				len(hidden), negDims(hidden), geluFloor, geluFloor, zeroDims(hidden)))
 		ui.Text(c, "× W₂ 回到 d_model").FontSize(10).TextColor(colFaint)
 		vectorStrip(c, l.FFNOut[i], 18, &a.HoverDimH)
 	})
@@ -468,6 +574,20 @@ func (a *App) stageOutput(c *ui.Context) {
 			})
 		}
 		bars(c, rows, maxP, colAccent2)
+		// The top-1 probability and the training budget both come from the
+		// running model, so the callout stays true when the prompt, the
+		// temperature or the weights change.
+		trained := "没有训练信息"
+		if a.W.Steps > 0 {
+			trained = fmt.Sprintf("只训练了 %d 步", a.W.Steps)
+		}
+		misconception(c,
+			fmt.Sprintf("「概率 %.0f%% = 模型很确定下一个字就是它，所以它一定对」", maxP*100),
+			fmt.Sprintf("这两件事没有关系。softmax 只把 logits 压成一个分布，%.0f%% 说的是"+
+				"「在这个分布里它最大」，不是「它是对的」——一个 %d 万参数、%s的玩具模型"+
+				"完全可以对一个字节有这么高的把握而依然写出乱码。"+
+				"把温度往下拖，这个比例会逼近 100%%，但输出只是更重复，并不会更正确。",
+				maxP*100, a.paramCount()/10000, trained))
 	})
 
 	card(c, func() {

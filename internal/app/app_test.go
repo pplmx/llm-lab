@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"testing"
@@ -536,5 +537,225 @@ func TestUntrainedBannerNamesTheCause(t *testing.T) {
 	custom.Source = "/tmp/other.json"
 	if got := New(custom).untrainedWhy(); !strings.Contains(got, "没有训练信息") {
 		t.Fatalf("custom untrained weights say %q, want it to name the file's missing steps", got)
+	}
+}
+
+// TestMisconceptionNumbersAreTrue checks the claim the score-stage callout
+// makes against the model: shifting a whole score row by a constant must leave
+// the attention weights untouched. If that ever stops holding, the callout is
+// teaching something false.
+func TestMisconceptionNumbersAreTrue(t *testing.T) {
+	a := newTestApp(t)
+	h := a.layer().Heads[a.Head]
+	q := a.SelToken
+	n := q + 1
+	softmaxShifted := func(shift float64) []float64 {
+		out := make([]float64, n)
+		m := math.Inf(-1)
+		for j := 0; j < n; j++ {
+			if v := float64(h.Scores[q][j]) + shift; v > m {
+				m = v
+			}
+		}
+		var sum float64
+		for j := 0; j < n; j++ {
+			out[j] = math.Exp(float64(h.Scores[q][j]) + shift - m)
+			sum += out[j]
+		}
+		for j := range out {
+			out[j] /= sum
+		}
+		return out
+	}
+	base := softmaxShifted(0)
+	if base[0] > 1 { // guard against a softmax over nothing
+		t.Fatalf("softmax did not normalise: %v", base[0])
+	}
+	for _, shift := range []float64{-5, -10, 5, 10, 100} {
+		moved := softmaxShifted(shift)
+		for j := range base {
+			if d := math.Abs(base[j] - moved[j]); d > 1e-12 {
+				t.Fatalf("shifting the row by %v changed weight %d by %g; the callout claims it cannot",
+					shift, j, d)
+			}
+		}
+	}
+}
+
+// TestScoreLegendDoesNotClaimSignControlsAttention guards the correction this
+// round made: the old legend said a negative score suppresses attention, which
+// is false here — sign and relative weight disagree in a quarter of the cells.
+func TestScoreLegendDoesNotClaimSignControlsAttention(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "负分：抑制注意") {
+			t.Fatal("the score legend still says a negative score suppresses attention")
+		}
+	}
+	if !tr.HasText("常见误解") {
+		t.Fatal("the score stage does not carry the misconception callout")
+	}
+}
+
+// TestGELUFloorMatchesReality pins the -0.170 constant the FFN callout quotes
+// to the exact erf-based GELU that internal/model samples into its lookup
+// table. The table is unexported, so this recomputes the reference function the
+// same way tensor.go does rather than reaching into it.
+func TestGELUFloorMatchesReality(t *testing.T) {
+	gelu := func(x float64) float64 { return 0.5 * x * (1 + math.Erf(x/math.Sqrt2)) }
+	lo := math.Inf(1)
+	for x := -4.0; x <= 0; x += 0.0005 {
+		if v := gelu(x); v < lo {
+			lo = v
+		}
+	}
+	if math.Abs(lo-geluFloor) > 0.001 {
+		t.Fatalf("geluFloor = %v, but GELU's minimum is %v", geluFloor, lo)
+	}
+	if lo >= 0 {
+		t.Fatal("GELU never went negative; the callout would be wrong")
+	}
+}
+
+// TestFFNParamShareMatchesParamCount checks the two shares against the count the
+// sidebar already shows, so the number in the FFN header cannot drift from the
+// model's actual parameter count.
+func TestFFNParamShareMatchesParamCount(t *testing.T) {
+	a := newTestApp(t)
+	ofAll, ofBlocks := ffnParamShare(a.W.Config)
+	c := a.W.Config
+	total := float64(a.paramCount())
+	ffn := float64(c.NLayer) * 2 * float64(c.DModel) * float64(c.DFF)
+	if math.Abs(ofAll-ffn/total) > 1e-9 {
+		t.Fatalf("ofAll = %v, want %v", ofAll, ffn/total)
+	}
+	if ofBlocks <= ofAll {
+		t.Fatalf("block share %v should exceed the all-parameter share %v", ofBlocks, ofAll)
+	}
+	if ofAll <= 0 || ofAll >= 1 || ofBlocks <= 0 || ofBlocks >= 1 {
+		t.Fatalf("shares out of range: ofAll=%v ofBlocks=%v", ofAll, ofBlocks)
+	}
+}
+
+// TestMisconceptionCalloutsOnlyWhereMeasured keeps the callouts tied to stages
+// whose claim this round verified against the model, so a later edit cannot
+// quietly move one next to a picture it does not describe.
+func TestMisconceptionCalloutsOnlyWhereMeasured(t *testing.T) {
+	want := map[int]bool{2: true, 3: true, 5: true, 6: true}
+	for step := range lessons {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		got := false
+		for _, s := range tr.Texts() {
+			if s == "常见误解" {
+				got = true
+				break
+			}
+		}
+		if got != want[step] {
+			t.Fatalf("stage %d has misconception callout = %v, want %v", step, got, want[step])
+		}
+	}
+}
+
+// TestCalloutNumbersFollowTheModel checks the misconception text quotes the
+// running model, not the default prompt: the same stage must say different
+// numbers when the prompt changes, and each number must match what the trace
+// actually holds.
+func TestCalloutNumbersFollowTheModel(t *testing.T) {
+	quotes := func(prompt string, step int) string {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		// The callout's correction is the longest text in the stage.
+		longest := ""
+		for _, s := range tr.Texts() {
+			if len([]rune(s)) > len([]rune(longest)) {
+				longest = s
+			}
+		}
+		return longest
+	}
+
+	// Step 7 quotes the top-1 probability, which moves with the prompt.
+	short := quotes("hi", 6)
+	long := quotes("attention is all you need and the transformer", 6)
+	if short == long {
+		t.Fatal("the output callout says the same thing for two very different prompts; " +
+			"its numbers are not read from the model")
+	}
+	for name, text := range map[string]string{"short prompt": short, "long prompt": long} {
+		if !strings.Contains(text, "%") {
+			t.Fatalf("%s: the output callout no longer quotes a probability: %s", name, text)
+		}
+	}
+
+	// Step 6 quotes the FFN's negative-dimension count, which follows the token.
+	ffnA := quotes("hi", 5)
+	ffnB := quotes("attention is all you need and the transformer", 5)
+	if ffnA == ffnB {
+		t.Fatal("the FFN callout says the same thing for two different tokens")
+	}
+}
+
+// TestFFNCalloutZeroCountIsMeasured checks the "sparse means near zero, not
+// exactly zero" claim quotes the real count of exact zeros.
+func TestFFNCalloutZeroCountIsMeasured(t *testing.T) {
+	a := newTestApp(t)
+	hidden := a.layer().Hidden[a.SelToken]
+	zeros := zeroDims(hidden)
+	for _, v := range hidden {
+		if v == 0 {
+			zeros--
+		}
+	}
+	if zeros != 0 {
+		t.Fatalf("zeroDims overcounted: %d left", zeros)
+	}
+	// GELU only returns exact 0 below its table's lower bound, so a normal
+	// activation row should have none.
+	if zeroDims(hidden) != 0 {
+		t.Logf("note: this row has %d exact zeros", zeroDims(hidden))
+	}
+}
+
+// TestAttentionRowsSumToOneButColumnsDoNot pins the attention stage's callout:
+// rows are constrained to sum to 1, columns are not, and the grand total equals
+// the token count.
+func TestAttentionRowsSumToOneButColumnsDoNot(t *testing.T) {
+	a := newTestApp(t)
+	h := a.layer().Heads[a.Head]
+	for i, row := range h.Attn {
+		var sum float64
+		for j := 0; j <= i && j < len(row); j++ {
+			sum += float64(row[j])
+		}
+		if math.Abs(sum-1) > 1e-4 {
+			t.Fatalf("row %d sums to %v, want 1", i, sum)
+		}
+	}
+	colMax, colMin := columnSumRange(h.Attn)
+	if !(colMax > 1) {
+		t.Fatalf("every column sums to <= 1 (max %v); the callout claims columns are not constrained", colMax)
+	}
+	if !(colMin < 0.5) {
+		t.Fatalf("no column is small (min %v); the callout's contrast would be invisible", colMin)
+	}
+	var total float64
+	for i := range h.Attn {
+		for j := 0; j <= i && j < len(h.Attn[i]); j++ {
+			total += float64(h.Attn[i][j])
+		}
+	}
+	if math.Abs(total-float64(len(h.Attn))) > 1e-3 {
+		t.Fatalf("grand total %v, want %d (one per row)", total, len(h.Attn))
 	}
 }

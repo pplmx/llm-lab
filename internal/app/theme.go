@@ -116,6 +116,30 @@ func mutedText(c *ui.Context, s string) ui.Element {
 	return ui.Text(c, s).FontSize(12).TextColor(colMuted).LineHeight(1.45)
 }
 
+// misconception is the callout for a reading that the picture invites but that
+// is wrong. Each one quotes the belief a reader is likely to form from what is
+// on screen, then corrects it with a number this model actually produces, so
+// the correction can be checked against the view above it rather than taken on
+// faith.
+//
+// The warm left bar is the only place in the lesson that uses colWarm for
+// structure rather than for data: it lets a reader who is not confused skip the
+// block, while a reader who is finds it in the same place on every stage.
+func misconception(c *ui.Context, belief, correction string) ui.Element {
+	return ui.Row(c).FillWidth().AlignItems(ui.Start).Gap(10).
+		Padding(9, 11).Radius(7).
+		Background(colWarm.Alpha(0.07)).Border(1, colWarm.Alpha(0.28)).
+		Children(func() {
+			ui.Column(c).Gap(4).Grow(1).Children(func() {
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, "常见误解").FontSize(10).Bold().TextColor(colWarm).Shrink(0)
+					ui.Text(c, belief).FontSize(11).TextColor(colMuted).LineHeight(1.4)
+				})
+				ui.Text(c, correction).FontSize(11).TextColor(colText).LineHeight(1.45)
+			})
+		})
+}
+
 func kv(c *ui.Context, k, v string) {
 	kvW(c, k, v, 70)
 }
