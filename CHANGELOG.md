@@ -14,9 +14,12 @@
 
 ### Changed
 
-- 前向并行化：大矩阵乘按行拆分、注意力按头拆分，最多 8 个 worker；64 token 前向 4 核约 2.5 ms、单核约 6.4 ms（此前单核约 10.5 ms）
+- 前向并行化：大矩阵乘按行拆分、注意力按头拆分，最多 8 个 worker；64 token 前向 4 核约 2.4 ms、单核约 6.2 ms（此前单核约 10.5 ms）
+- 新增实验性 SIMD 矩阵乘内核（`GOEXPERIMENT=simd`，amd64 走 AVX、arm64 走 NEON，无该实验时自动回退标量）：64 token 前向单核约 2.5 ms、4 核约 1.4 ms
+- softmax 的 `exp` 改为 4096 项查表（相对误差 ≤ 2.4e-6），比 `math.Exp` 快约 8 倍；对拍最大误差 1.7e-5、logits 1.7e-5
+- 热力图只绘制因果掩码内的格子（掩码色叠加后与卡片底色相同），64 token 时每帧填充 4096 → 2080，注意力/Softmax 阶段渲染约快 15%，截图逐像素一致
 - 每个中间张量只做一次分配（`newMatrix`），前向分配次数从 5288 降到 240（单核）/ 340（并行）
-- GELU 改为 8192 项查表（误差 ≤ 4e-7），比 `math.Erf` 快约 20 倍；对拍最大误差 1.8e-5、logits 1.5e-5
+- GELU 改为 8192 项查表（误差 ≤ 4e-7），比 `math.Erf` 快约 20 倍
 - 注意力只遍历因果掩码内的格子，softmax 不再对 -Inf 尾部做指数
 - 前向把 `AttnProj` 改为逐头投影求和并移除 `matMulRows` 的零值分支，每层少算一次 d×d 投影
 - `tools/train.py` 默认步数改回 600，并拒绝非正的 steps/batch/repeats 与 NaN 输出

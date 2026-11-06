@@ -16,6 +16,9 @@ just test         # go vet + go test
 just check        # gofmt 检查 + vet + test（CI 同款）
 just build        # 三端构建
 just fmt          # gofmt -w
+just bench        # 基准测试（前向 + 整帧渲染，多轮）
+just test-simd    # 用实验性 SIMD 跑测试（GOEXPERIMENT=simd）
+just bench-simd   # 用实验性 SIMD 跑前向基准
 ```
 
 ## 代码地图
