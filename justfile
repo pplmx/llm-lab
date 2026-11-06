@@ -76,6 +76,15 @@ test-simd:
 bench-simd:
     GOEXPERIMENT=simd go test ./internal/model -run '^$' -bench . -benchmem -count 5
 
+# 用实验性 SIMD 构建（默认三端全量；也可指定平台：just build-simd windows/amd64）
+build-simd target=all_platforms:
+    @echo "→ 构建平台（SIMD）：{{target}}"
+    GOEXPERIMENT=simd go tool mygo build -platform "{{target}}"
+
+# 用实验性 SIMD 本机运行
+run-simd:
+    GOEXPERIMENT=simd go run .
+
 # 环境自检（报 webkit 缺失可忽略，原生 UI 不需要）
 doctor:
     -go tool mygo doctor

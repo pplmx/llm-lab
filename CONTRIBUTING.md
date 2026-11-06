@@ -19,6 +19,8 @@ just fmt          # gofmt -w
 just bench        # 基准测试（前向 + 整帧渲染，多轮）
 just test-simd    # 用实验性 SIMD 跑测试（GOEXPERIMENT=simd）
 just bench-simd   # 用实验性 SIMD 跑前向基准
+just build-simd   # 用实验性 SIMD 构建（可加平台参数）
+just run-simd     # 用实验性 SIMD 本机运行
 ```
 
 ## 代码地图
