@@ -408,8 +408,12 @@ func (a *App) handleKeys(c *ui.Context) {
 	case c.Shortcut(0, ui.KeySpace):
 		a.togglePlay()
 	case c.Shortcut(0, ui.KeyEscape):
+		// Esc is the one "let go of everything" key: it stops playback and
+		// releases a pinned cell, so a reader who clicked the matrix can get
+		// back to plain hovering without hunting for the cell again.
 		a.Playing = false
 		a.NextAt = time.Time{}
+		a.KeyQ, a.KeyK = -1, -1
 	// Shift+arrows. On the two attention stages they walk the matrix, since a
 	// matrix cell is what those stages teach and was the last interaction only
 	// the mouse could reach; everywhere else they move the token selection, as
@@ -926,11 +930,12 @@ func (a *App) inspectorHoverCell(c *ui.Context) {
 		return
 	}
 	card(c, func() {
-		// Say which of the two cursors this is describing, so a reader who
-		// walked here with the keyboard knows the pointer is not steering it.
+		// Say which cursor this describes and whether it stays put: a pinned
+		// cell survives the pointer leaving, which is the difference between
+		// reading a number and trying to remember it.
 		source := "指针"
 		if a.KeyQ >= 0 && a.KeyK >= 0 {
-			source = "键盘"
+			source = "已固定 · Esc 或再点一次解除"
 		}
 		sectionTitle(c, "注意力格子", source)
 		h := l.Heads[a.Head]

@@ -1541,3 +1541,128 @@ func TestSampleNextAppendsOneByte(t *testing.T) {
 		t.Fatal("sampling did not append to the prompt")
 	}
 }
+
+// hoverSomeCell moves the pointer over the heatmap until it lands on a cell and
+// returns the cell and the coordinates that reached it. The matrix sits inside
+// the stage column, below the strip and step bar.
+func hoverSomeCell(t *testing.T, a *App, tr *ui.Tester) (q, k int, x, y float32) {
+	t.Helper()
+	for cx := float32(780); cx > 300; cx -= 6 {
+		for cy := float32(600); cy > 350; cy -= 6 {
+			tr.Move(cx, cy)
+			tr.Frame()
+			if a.HoverQ >= 0 && a.HoverK >= 0 {
+				return a.HoverQ, a.HoverK, cx, cy
+			}
+		}
+	}
+	t.Fatal("never hovered a heatmap cell")
+	return 0, 0, 0, 0
+}
+
+// TestClickPinsTheCell is the interaction the keyboard already had and the
+// mouse did not: a mouse user could not keep a cell while reaching for pen and
+// paper, because the hover pair is rewritten every frame the pointer is
+// elsewhere. Clicking now pins the cell on the same state the keyboard uses.
+func TestClickPinsTheCell(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	q, k, cx, cy := hoverSomeCell(t, a, tr)
+
+	tr.ClickAt(cx, cy)
+	tr.Frame()
+	if a.KeyQ != q || a.KeyK != k {
+		t.Fatalf("click pinned (%d,%d), want (%d,%d)", a.KeyQ, a.KeyK, q, k)
+	}
+
+	// The point of pinning: it survives the pointer leaving the matrix.
+	tr.Move(1250, 650)
+	tr.Frame()
+	if a.HoverQ >= 0 {
+		t.Fatal("the pointer was expected to leave the matrix")
+	}
+	if a.KeyQ != q || a.KeyK != k {
+		t.Fatalf("moving the pointer away erased the pin: (%d,%d)", a.KeyQ, a.KeyK)
+	}
+	// And the inspector still describes it.
+	if !tr.HasText("已固定") {
+		t.Fatal("the pinned cell is not announced in the inspector")
+	}
+}
+
+// TestClickPinnedCellUnpins checks the second click, and that Esc does the same:
+// both are ways a reader would expect to let go.
+func TestClickPinnedCellUnpins(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	_, _, cx, cy := hoverSomeCell(t, a, tr)
+	tr.ClickAt(cx, cy)
+	tr.Frame()
+	if a.KeyQ < 0 {
+		t.Fatal("first click did not pin")
+	}
+	tr.ClickAt(cx, cy)
+	tr.Frame()
+	if a.KeyQ >= 0 {
+		t.Fatalf("clicking the pinned cell again left it pinned at (%d,%d)", a.KeyQ, a.KeyK)
+	}
+
+	// Esc releases too, without touching playback state it does not own.
+	b := newTestApp(t)
+	b.Step = 3
+	b.KeyQ, b.KeyK = 20, 10
+	tr2 := ui.NewTester(b.View, 1500, 940)
+	tr2.Frame()
+	tr2.Key(0, ui.KeyEscape)
+	tr2.Frame()
+	if b.KeyQ >= 0 {
+		t.Fatal("Esc did not release the pinned cell")
+	}
+	if b.Playing {
+		t.Fatal("Esc left playback running")
+	}
+}
+
+// TestKeyboardMovesThePinnedCell checks the two cursors stay one cursor: with a
+// cell pinned, Shift+arrows walk it rather than starting over.
+func TestKeyboardMovesThePinnedCell(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.KeyQ, a.KeyK = 20, 10
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	// Shift+Left steps the key within the row; the query stays put.
+	tr.Key(ui.Shift, ui.KeyLeft)
+	tr.Frame()
+	if a.KeyQ != 20 || a.KeyK != 9 {
+		t.Fatalf("Shift+Left from (20,10) gave (%d,%d), want (20,9)", a.KeyQ, a.KeyK)
+	}
+	// Shift+Up steps the query, and lands on that row's diagonal.
+	tr.Key(ui.Shift, ui.KeyUp)
+	tr.Frame()
+	if a.KeyQ != 19 || a.KeyK != 19 {
+		t.Fatalf("Shift+Up from (20,9) gave (%d,%d), want (19,19)", a.KeyQ, a.KeyK)
+	}
+	tr.Move(1250, 650)
+	tr.Frame()
+	if a.KeyQ != 19 {
+		t.Fatal("a pointer move erased the pin")
+	}
+}
+
+// TestPinLabelFitsTheInspector keeps the longer subtitle inside the panel.
+func TestPinLabelFitsTheInspector(t *testing.T) {
+	var title, note float32
+	ui.Render(func(c *ui.Context) {
+		title, _ = c.MeasureText(0, ui.Span{Text: "注意力格子", Size: fontData})
+		note, _ = c.MeasureText(0, ui.Span{Text: "已固定 · Esc 或再点一次解除", Size: fontMicro})
+	}, 400, 100, 1)
+	const available = 330 - 2*14 - 2*14
+	if total := title + 8 + note; total > available {
+		t.Fatalf("the pinned header is %.0f wide, the card offers %.0f", total, float32(available))
+	}
+}

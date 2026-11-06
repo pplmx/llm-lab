@@ -406,6 +406,16 @@ func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 		// The click landed on the matrix, not the strip: pull the strip to the
 		// query row so the highlighted heatmap row and the rail agree.
 		a.selectToken(q, true)
+		// Pin the cell. Without this a mouse user could not keep a cell while
+		// reaching for pen and paper: the hover pair is rewritten every frame
+		// the pointer is elsewhere, so the inspector would forget the number
+		// the reader came to copy. The keyboard already had this through
+		// KeyQ/KeyK; clicking now sets the same state.
+		if a.KeyQ == q && a.KeyK == k {
+			a.KeyQ, a.KeyK = -1, -1 // clicking the pinned cell again unpins it
+		} else {
+			a.KeyQ, a.KeyK = q, k
+		}
 	}
 }
 
