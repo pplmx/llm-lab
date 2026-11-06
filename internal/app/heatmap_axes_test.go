@@ -12,16 +12,6 @@ import (
 // query reads from. The number of labels has to stay readable as the matrix
 // grows, so these check the density rather than the exact strings.
 
-// drawHeatmap renders one matrix and reports whether it fits the panel.
-func drawHeatmap(t *testing.T, step, w int) *ui.Tester {
-	t.Helper()
-	a := newTestApp(t)
-	a.Step = step
-	tr := ui.NewTester(a.View, w, 940)
-	tr.Frame()
-	return tr
-}
-
 // TestHeatmapLabelsBothAxes checks the edge labels are actually drawn, by
 // comparing the real frame against one where the widget is told to skip them.
 //

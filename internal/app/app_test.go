@@ -4006,31 +4006,6 @@ func TestFFNHistogramExplainsTheCompressedNegativeHalf(t *testing.T) {
 	}
 }
 
-// renderFFN draws the FFN stage as it is.
-func renderFFN(t *testing.T, a *App) []byte {
-	t.Helper()
-	tr := ui.NewTester(a.View, 1500, 940)
-	tr.Frame()
-	return append([]byte(nil), tr.Image().Pix...)
-}
-
-// renderFFNPositive draws the same stage with the selected row replaced by a
-// positive-only row, so the histogram's axis has no zero crossing.
-func renderFFNPositive(t *testing.T) []byte {
-	t.Helper()
-	a := newTestApp(t)
-	a.Step = 5
-	// Shift the whole row positive in the trace the histogram reads.
-	row := a.Trace.Layers[0].Hidden[a.SelToken]
-	lo, _ := minMaxFloat(row)
-	for i := range row {
-		row[i] = row[i] - lo + 0.01
-	}
-	tr := ui.NewTester(a.View, 1500, 940)
-	tr.Frame()
-	return append([]byte(nil), tr.Image().Pix...)
-}
-
 // TestDiagonalCellIsMarkedAsBothQueryAndKey covers the one cell where the query
 // and the key are the same token. railMarks returns "qk" there, and railMarkColor
 // used to fall through to colGreen — the "no mark" colour — so a token attending

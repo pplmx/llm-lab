@@ -365,11 +365,8 @@ func drawStepDot(p *ui.Painter, r ui.Rect, i, n, state, current int) {
 // ------------------------------------------------------------ heatmap
 
 // kind "attn" colors probabilities, "score" colors raw logits after scaling.
-func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
-	a.heatmapAxed(c, attn, kind, false)
-}
-
-// heatmapAxed is heatmap with position numbers along the top and left edges.
+// heatmapAxed draws the attention or score matrix with position numbers along the
+// top and left edges.
 //
 // The heading says "行 = query，列 = key", but neither edge carried a number: a
 // reader had to count cells or hover to learn which key a column belonged to,

@@ -36,6 +36,18 @@
 
 ### Fixed
 
+- 清理四处**死代码**（定义了但从未被调用）
+  - `heatmap()` 是 `heatmapAxed(..., false)` 的薄封装，两个真实调用点都直接传 `true`——它描述的是一种界面从不渲染的模式，而读者查「这个图怎么画」时最先会看到它
+  - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
+  - 净删 38 行
+
+### Added
+
+- `TestNoUnusedFunctionsInApp`：AST 找出包内未导出的函数与方法，去掉注释后在全部源码里做标识符边界匹配，没有任何引用就失败
+  - 这条检测本身验证过：临时插入 `deadFishProbe()` 立刻报错
+
+### Fixed
+
 - CI 的 `go test -race ./...` **在干净检出上会超时失败**
   - raca 检测器下 `ui.Tester.Frame()` 从 0.8ms 变成 **23.8ms（28 倍）**，而 `internal/app` 有 238 个测试反复渲染帧——单是 app 包就要 **680 秒**，超过 Go 默认的 10 分钟测试超时
   - 但**并发只存在于 `internal/model`**（矩阵乘与按头注意力用 `sync.WaitGroup` 扇出），`internal/app` 是单线程 UI 代码，对它跑 race 没有任何收益
