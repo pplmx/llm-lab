@@ -5110,3 +5110,75 @@ func TestStageJumpTooltipsAgree(t *testing.T) {
 			"already shows the name, so the tooltip should carry the title")
 	}
 }
+
+// TestRepeatedSamplingStaysConsistent covers what a reader does to a generative
+// demo: press the sample button over and over until the prompt outgrows the
+// window. Each press appends a byte and reruns the forward pass, so past ctx the
+// model keeps only the tail — the state has to stay coherent through that.
+func TestRepeatedSamplingStaysConsistent(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "The"
+	a.recompute()
+	a.Step = 6
+	ctx := a.W.Config.Ctx
+	startLen := len(a.Prompt)
+
+	for i := 0; i < ctx+20; i++ {
+		a.sampleNext()
+		// The prompt keeps every byte the reader produced; only the model's
+		// window is bounded.
+		if want := startLen + i + 1; len(a.Prompt) != want {
+			t.Fatalf("after %d samples the prompt is %d bytes, want %d",
+				i+1, len(a.Prompt), want)
+		}
+		if got := len(a.Trace.Tokens); got > ctx {
+			t.Fatalf("after %d samples the trace has %d tokens, over ctx %d", i+1, got, ctx)
+		}
+		if a.LastSample == "" {
+			t.Fatalf("after %d samples there is no sample description", i+1)
+		}
+	}
+
+	// The prompt has outgrown the window by exactly this much.
+	over := len(a.Prompt) - ctx
+	if over <= 0 {
+		t.Fatalf("the prompt did not outgrow the window (%d bytes, ctx %d)",
+			len(a.Prompt), ctx)
+	}
+
+	// And the tokenising card must state the drop rather than present the
+	// truncated length as if it described the prompt.
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	var joined strings.Builder
+	for _, s := range tr.Texts() {
+		joined.WriteString(s)
+		joined.WriteString("\n")
+	}
+	text := joined.String()
+	if !strings.Contains(text, fmt.Sprintf("原文 %d", len(a.Prompt))) {
+		t.Fatalf("the card does not state the original length %d", len(a.Prompt))
+	}
+	if !strings.Contains(text, "丢弃前 ") {
+		t.Fatal("the card does not state how much was dropped")
+	}
+}
+
+// TestSamplingRefusesAnEmptyPrompt checks the button cannot produce a token from
+// nothing, and says why.
+func TestSamplingRefusesAnEmptyPrompt(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = ""
+	a.recompute()
+	if len(a.Trace.Tokens) != 0 {
+		t.Fatalf("an empty prompt produced %d tokens", len(a.Trace.Tokens))
+	}
+	a.sampleNext()
+	if a.Prompt != "" {
+		t.Fatalf("sampling appended %q to an empty prompt", a.Prompt)
+	}
+	if !strings.Contains(a.Status, "输入") {
+		t.Fatalf("status = %q, want a prompt for the reader", a.Status)
+	}
+}
