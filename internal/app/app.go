@@ -829,7 +829,11 @@ func (a *App) stepbar(c *ui.Context) {
 				if dot.Clicked() {
 					a.selectStep(i)
 				}
-				dot.Tooltip(fmt.Sprintf("第 %d / %d 步 · %s", i+1, len(lessons), lessons[i].name))
+				// Same text as the sidebar's row tooltip. The two controls
+				// reach the same place, so they should not describe it differently:
+				// the stage's name is already visible in the bar beside the dots,
+				// and the title says what the stage teaches.
+				dot.Tooltip(fmt.Sprintf("第 %d / %d 步 · %s", i+1, len(lessons), lessons[i].title))
 			}
 		})
 		ui.Text(c, fmt.Sprintf("%d / %d · %s", a.Step+1, len(lessons), lessons[a.Step].name)).

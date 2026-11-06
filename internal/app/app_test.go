@@ -5064,3 +5064,49 @@ func diffCount(a, b *image.RGBA) int {
 	}
 	return n
 }
+
+// TestStageJumpTooltipsAgree checks the two controls that jump between stages
+// describe their destination the same way.
+//
+// The sidebar's stepper rows have said "第 N / 7 步 · <title>" since they were
+// added. Last round gave the step-bar dots a tooltip too, but built it from
+// lesson.name — so the same jump was described as "第 3 / 7 步 · 注意力分数" from one
+// control and "第 3 / 7 步 · Query 与 Key 的点积" from the other. The name is already
+// printed in the bar beside the dots, so repeating it adds nothing.
+//
+// Tooltips do not surface in the headless renderer, so this reads the call sites
+// rather than hovering.
+func TestStageJumpTooltipsAgree(t *testing.T) {
+	sources, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf strings.Builder
+	for _, f := range sources {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		buf.Write(b)
+	}
+	src := buf.String()
+
+	const format = `"第 %d / %d 步 · %s"`
+	if n := strings.Count(src, format); n != 2 {
+		t.Fatalf("%d uses of the stage-jump tooltip format, want 2", n)
+	}
+	// The two third-arguments, one per site.
+	if n := strings.Count(src, `len(lessons), s.title)`); n != 1 {
+		t.Fatalf("the sidebar tooltip uses the title %d times, want 1", n)
+	}
+	if n := strings.Count(src, `len(lessons), lessons[i].title)`); n != 1 {
+		t.Fatalf("the step-bar tooltip uses the title %d times, want 1", n)
+	}
+	if strings.Contains(src, `len(lessons), lessons[i].name)`) {
+		t.Fatal("a stage-jump tooltip still uses lesson.name; the bar beside the dots " +
+			"already shows the name, so the tooltip should carry the title")
+	}
+}
