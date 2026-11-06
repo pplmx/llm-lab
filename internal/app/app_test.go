@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 
@@ -43,7 +44,9 @@ func TestRenderSteps(t *testing.T) {
 		if err := png.Encode(f, img); err != nil {
 			t.Fatal(err)
 		}
-		f.Close()
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
 		t.Logf("wrote %s", path)
 	}
 
@@ -60,7 +63,9 @@ func TestRenderSteps(t *testing.T) {
 	if err := png.Encode(f, img); err != nil {
 		t.Fatal(err)
 	}
-	f.Close()
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 	t.Logf("wrote %s", path)
 }
 
@@ -119,6 +124,50 @@ func TestTesterClicks(t *testing.T) {
 	}
 	if a.Step != 5 {
 		t.Fatalf("step = %d, want 5", a.Step)
+	}
+}
+
+func TestSelectStepResetsScrollAndStopsPlaying(t *testing.T) {
+	a := newTestApp(t)
+	a.Scroll.Y = 200
+	a.Playing = true
+	a.selectStep(3)
+	if a.Step != 3 || a.Scroll.Y != 0 || a.Playing {
+		t.Fatalf("selectStep = step %d, scroll %v, playing %v", a.Step, a.Scroll.Y, a.Playing)
+	}
+}
+
+func TestAutoplayUsesFrameClock(t *testing.T) {
+	a := newTestApp(t)
+	a.Playing = true
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	tr.Advance(1400 * time.Millisecond)
+	if a.Step != 1 {
+		t.Fatalf("step after 1.4s = %d, want 1", a.Step)
+	}
+}
+
+func TestRecomputePreservesSelectionWhenPromptIsExtended(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = strings.Repeat("0123456789abcdef", 5) // 80 bytes, truncated at 64
+	a.recompute()
+	a.SelToken = 5
+	old := a.Trace.Tokens[a.SelToken]
+	a.Prompt += "XYZ"
+	a.recompute()
+	if got := a.Trace.Tokens[a.SelToken]; got.ID != old.ID {
+		t.Fatalf("selection moved from id %d to id %d", old.ID, got.ID)
+	}
+}
+
+func TestEmptyPromptDoesNotSample(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = ""
+	a.recompute()
+	a.sampleNext()
+	if a.Prompt != "" {
+		t.Fatalf("empty prompt grew to %q", a.Prompt)
 	}
 }
 

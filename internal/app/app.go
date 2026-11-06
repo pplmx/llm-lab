@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/egoist/mygo/ui"
@@ -35,6 +36,8 @@ type App struct {
 	SidebarW   float32
 	InspectorW float32
 
+	Scroll ui.ScrollState
+
 	LastSample string
 	Status     string
 
@@ -42,6 +45,8 @@ type App struct {
 	NextAt  time.Time
 
 	theme *ui.Theme
+
+	lastPrompt string
 }
 
 // New builds the app with the bundled weights.
@@ -68,23 +73,77 @@ func New(w *model.Weights) *App {
 }
 
 func (a *App) recompute() {
-	ids := make([]int, 0, len(a.Prompt))
-	for _, b := range []byte(a.Prompt) {
-		ids = append(ids, int(b))
+	prevPrompt := a.lastPrompt
+	prevSel := a.SelToken
+	prevTraceLen := 0
+	if a.Trace != nil {
+		prevTraceLen = len(a.Trace.Tokens)
 	}
-	ids = model.Truncate(ids, a.W.Config.Ctx)
+	ids := model.Truncate(promptIDs(a.Prompt), a.W.Config.Ctx)
+
 	a.Trace = model.Forward(a.W, ids)
 	if n := len(a.Trace.Tokens); n > 0 {
-		if a.SelToken < 0 || a.SelToken >= n {
+		switch {
+		case prevSel < 0:
 			a.SelToken = n - 1
+		case strings.HasPrefix(a.Prompt, prevPrompt) && prevTraceLen > 0:
+			// The prompt was extended, so the old token's absolute position
+			// is still meaningful. Shift it by the bytes truncation dropped
+			// on both sides of the edit.
+			droppedOld := len(prevPrompt) - prevTraceLen
+			droppedNew := len(a.Prompt) - len(ids)
+			shifted := droppedOld + prevSel - droppedNew
+			if shifted >= 0 && shifted < n {
+				a.SelToken = shifted
+			} else {
+				a.SelToken = n - 1
+			}
+		case prevSel >= n:
+			a.SelToken = n - 1
+		case a.Prompt != prevPrompt:
+			// A replacement (not an extension) has no meaningful old token
+			// at the same index; fall back to the new last token.
+			a.SelToken = n - 1
+		default:
+			a.SelToken = prevSel
 		}
 	} else {
 		a.SelToken = -1
 	}
+	a.lastPrompt = a.Prompt
+	a.clearHover()
 	a.Status = fmt.Sprintf("%d tokens · %d 层 × %d 头 · 前向完成", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
-	if len([]byte(a.Prompt)) > a.W.Config.Ctx {
+	if len(a.Prompt) > a.W.Config.Ctx {
 		a.Status = fmt.Sprintf("已截断到最近 %d 个 token · %d 层 × %d 头", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
 	}
+}
+
+func promptIDs(s string) []int {
+	ids := make([]int, 0, len(s))
+	for i := 0; i < len(s); i++ {
+		ids = append(ids, int(s[i]))
+	}
+	return ids
+}
+
+func (a *App) clearHover() {
+	a.HoverQ, a.HoverK = -1, -1
+	a.HoverDimIn = -1
+	a.HoverDimQ, a.HoverDimK = -1, -1
+	a.HoverDimV, a.HoverDimH = -1, -1
+}
+
+// selectStep changes the lesson and returns the main scroll area to the top.
+// It is the manual counterpart to play's automatic advance.
+func (a *App) selectStep(step int) {
+	if step < 0 || step >= len(lessons) {
+		return
+	}
+	a.Step = step
+	a.Scroll.X, a.Scroll.Y = 0, 0
+	a.Playing = false
+	a.NextAt = time.Time{}
+	a.clearHover()
 }
 
 // play advances the lesson every 1.3 seconds while the user watches it.
@@ -102,9 +161,11 @@ func (a *App) play(c *ui.Context) {
 			return
 		}
 		a.Step++
+		a.Scroll.X, a.Scroll.Y = 0, 0
+		a.clearHover()
 		a.NextAt = now.Add(1300 * time.Millisecond)
 	}
-	c.After(time.Until(a.NextAt))
+	c.After(a.NextAt.Sub(now))
 }
 
 func (a *App) layer() *model.LayerTrace {
@@ -112,6 +173,9 @@ func (a *App) layer() *model.LayerTrace {
 		return nil
 	}
 	l := a.Layer
+	if l < 0 {
+		l = 0
+	}
 	if l >= len(a.Trace.Layers) {
 		l = len(a.Trace.Layers) - 1
 	}
@@ -132,7 +196,7 @@ func (a *App) View(c *ui.Context) {
 				a.stepbar(c)
 				// MinHeight(0) lets the scroll view give up height; without it
 				// the fixed rows above are squeezed to nothing at 1180×720.
-				ui.Scroll(c).Grow(1).MinHeight(0).Padding(16, 16, 24).Gap(12).Children(func() {
+				ui.Scroll(c).Grow(1).MinHeight(0).Padding(16, 16, 24).Gap(12).TrackScroll(&a.Scroll).Children(func() {
 					a.stage(c)
 					a.lesson(c)
 				})
@@ -164,7 +228,7 @@ func (a *App) sidebar(c *ui.Context) {
 				i, s := i, s
 				row := ui.Row(c).FillWidth().Padding(9, 10).Radius(7).Gap(8).AlignItems(ui.Center).
 					Children(func() {
-						ui.Text(c, fmt.Sprintf("%d", i)).FontSize(10).TextColor(colFaint).Width(12)
+						ui.Text(c, fmt.Sprintf("%d", i+1)).FontSize(10).TextColor(colFaint).Width(12)
 						ui.Text(c, s.name).FontSize(12.5).TextColor(colMuted)
 					})
 				if i == a.Step {
@@ -172,7 +236,7 @@ func (a *App) sidebar(c *ui.Context) {
 					row.Children(func() {}) // keep element stable
 				}
 				if row.Clicked() {
-					a.Step = i
+					a.selectStep(i)
 				}
 			}
 		})
@@ -224,10 +288,16 @@ func (a *App) topbar(c *ui.Context) {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			field := ui.TextInput(c, &a.Prompt).Grow(1).Label("输入").SingleLine()
 			if field.Changed() {
+				a.LastSample = ""
+				a.Playing = false
+				a.NextAt = time.Time{}
 				a.recompute()
 			}
 			if ui.Button(c, "重置").Clicked() {
 				a.Prompt = "The transformer reads the tokens and"
+				a.LastSample = ""
+				a.Playing = false
+				a.NextAt = time.Time{}
 				a.recompute()
 			}
 			if ui.PrimaryButton(c, "采样下一个 token").Clicked() {
@@ -244,6 +314,7 @@ func (a *App) topbar(c *ui.Context) {
 			cur := a.Layer
 			if ui.Segmented(c, &cur, labels...).Changed() {
 				a.Layer = cur
+				a.clearHover()
 			}
 			ui.Text(c, "头").FontSize(11).TextColor(colFaint).Shrink(0)
 			heads := make([]string, a.W.Config.NHead)
@@ -253,9 +324,12 @@ func (a *App) topbar(c *ui.Context) {
 			h := a.Head
 			if ui.Segmented(c, &h, heads...).Changed() {
 				a.Head = h
+				a.clearHover()
 			}
 			ui.Text(c, fmt.Sprintf("温度 %.2f", a.Temp)).FontSize(11).TextColor(colFaint).Width(64).Shrink(0)
-			ui.Slider(c, &a.Temp, 0.1, 2.0).Width(130).Shrink(0)
+			if ui.Slider(c, &a.Temp, 0.1, 2.0).Width(130).Shrink(0).Changed() {
+				a.LastSample = ""
+			}
 		})
 	})
 }
@@ -280,7 +354,7 @@ func (a *App) stepbar(c *ui.Context) {
 					chip = chip.Background(colAccent.Alpha(0.18)).Border(1, colAccent)
 				}
 				if chip.Clicked() {
-					a.Step = i
+					a.selectStep(i)
 				}
 			}
 		})
@@ -294,15 +368,15 @@ func (a *App) stepbar(c *ui.Context) {
 				a.NextAt = time.Time{}
 				if a.Playing && a.Step == len(lessons)-1 {
 					a.Step = 0
+					a.Scroll.X, a.Scroll.Y = 0, 0
+					a.clearHover()
 				}
 			}
 			if ui.Button(c, "← 上一步").Shrink(0).Clicked() && a.Step > 0 {
-				a.Step--
-				a.Playing = false
+				a.selectStep(a.Step - 1)
 			}
 			if ui.Button(c, "下一步 →").Shrink(0).Clicked() && a.Step < len(lessons)-1 {
-				a.Step++
-				a.Playing = false
+				a.selectStep(a.Step + 1)
 			}
 		})
 	})
@@ -311,7 +385,7 @@ func (a *App) stepbar(c *ui.Context) {
 // ---------------------------------------------------------------- inspector
 
 func (a *App) inspector(c *ui.Context) {
-	ui.Column(c).Width(a.InspectorW).FillHeight().Padding(14).Gap(12).Children(func() {
+	ui.Scroll(c).Width(a.InspectorW).FillHeight().Padding(14).Gap(12).Children(func() {
 		ui.Text(c, "检查器").FontSize(12).Bold().TextColor(colMuted)
 		ui.Box(c).FillWidth().Height(1).Background(colBorder)
 
@@ -371,19 +445,6 @@ func (a *App) inspector(c *ui.Context) {
 			mutedText(c, fmt.Sprintf("熵 %.2f nats · 越接近 0 越专注，越接近 log(n) 越分散", ent))
 		})
 
-		// Vector statistics of the selected token.
-		card(c, func() {
-			sectionTitle(c, "向量", "残差流")
-			vec := l.AfterFFN[a.SelToken]
-			mean, std := meanStd(vec)
-			kv(c, "维度", fmt.Sprint(len(vec)))
-			kv(c, "均值", fmt.Sprintf("%+.4f", mean))
-			kv(c, "标准差", fmt.Sprintf("%.4f", std))
-			kv(c, "L2", fmt.Sprintf("%.3f", norm(vec)))
-			lo, hi := minMaxFloat(vec)
-			kv(c, "范围", fmt.Sprintf("%+.2f … %+.2f", lo, hi))
-		})
-
 		if a.HoverQ >= 0 && a.HoverK >= 0 && a.HoverQ < len(tr.Tokens) && a.HoverK < len(tr.Tokens) {
 			card(c, func() {
 				sectionTitle(c, "注意力格子", "")
@@ -401,12 +462,28 @@ func (a *App) inspector(c *ui.Context) {
 			})
 		}
 
-		ui.Spacer(c).Grow(1)
+		// Vector statistics of the selected token.
+		card(c, func() {
+			sectionTitle(c, "向量", "残差流")
+			vec := l.AfterFFN[a.SelToken]
+			mean, std := meanStd(vec)
+			kv(c, "维度", fmt.Sprint(len(vec)))
+			kv(c, "均值", fmt.Sprintf("%+.4f", mean))
+			kv(c, "标准差", fmt.Sprintf("%.4f", std))
+			kv(c, "L2", fmt.Sprintf("%.3f", norm(vec)))
+			lo, hi := minMaxFloat(vec)
+			kv(c, "范围", fmt.Sprintf("%+.2f … %+.2f", lo, hi))
+		})
+
 		mutedText(c, "提示：热力图中行是 query，列是 key；右上三角被因果掩码遮住。")
 	})
 }
 
 func (a *App) sampleNext() {
+	if a.Trace == nil || len(a.Trace.Tokens) == 0 {
+		a.Status = "输入一些文字后再采样"
+		return
+	}
 	probs := a.Trace.Probabilities(a.Temp)
 	if len(probs) == 0 {
 		return

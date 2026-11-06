@@ -100,18 +100,30 @@ func (a *App) stageTokens(c *ui.Context) {
 
 	card(c, func() {
 		sectionTitle(c, "字符 → 字节", "为什么一个汉字要占三个 token")
+		type group struct {
+			r     rune
+			bytes []byte
+		}
+		groups := make([]group, 0, 10)
+		for i := 0; i < len(tr.Tokens) && len(groups) < 10; {
+			start := tr.Tokens[i].Start
+			g := group{r: tr.Tokens[i].Rune}
+			for ; i < len(tr.Tokens) && tr.Tokens[i].Start == start; i++ {
+				g.bytes = append(g.bytes, tr.Tokens[i].Byte)
+			}
+			groups = append(groups, g)
+		}
 		ui.Row(c).Wrap().Gap(10).Children(func() {
-			n := 0
-			for _, r := range tr.Text {
-				if n >= 10 {
-					break
+			for _, g := range groups {
+				g := g
+				label := fmt.Sprintf("%q", g.r)
+				if g.r == 0 && len(g.bytes) > 0 {
+					label = fmt.Sprintf("0x%02X", g.bytes[0])
 				}
-				n++
-				r := r
 				ui.Column(c).Gap(3).Children(func() {
-					ui.Text(c, fmt.Sprintf("%q", r)).FontSize(14).TextColor(colText)
+					ui.Text(c, label).FontSize(14).TextColor(colText)
 					ui.Row(c).Gap(2).Children(func() {
-						for _, b := range []byte(string(r)) {
+						for _, b := range g.bytes {
 							ui.Text(c, fmt.Sprintf("%d", b)).FontSize(9).TextColor(colFaint).
 								Padding(2, 3).Radius(3).Background(colPanel2)
 						}
@@ -135,7 +147,7 @@ func (a *App) stageTokens(c *ui.Context) {
 					chip = chip.Background(colAccent.Alpha(0.16)).Border(1, colAccent)
 				}
 				if chip.Clicked() {
-					a.Step = i
+					a.selectStep(i)
 				}
 				if i < len(lessons)-1 {
 					ui.Text(c, "→").FontSize(11).TextColor(colFaint)
@@ -191,7 +203,7 @@ func (a *App) stageScores(c *ui.Context) {
 
 	card(c, func() {
 		sectionTitle(c, "分数矩阵", "行 = query，列 = key，右上三角被掩码")
-		ui.Row(c).Gap(14).Children(func() {
+		ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
 				a.heatmap(c, h.Scores, "score")
 			})
@@ -295,7 +307,7 @@ func (a *App) stageResidual(c *ui.Context) {
 		histogram(c, before, 32, colWarm)
 		ui.Text(c, "归一化后").FontSize(10).TextColor(colAccent2)
 		histogram(c, after, 32, colAccent2)
-		mutedText(c, "归一化把每个位置的 96 维向量拉回零均值、单位方差，再交给可学习的 γ/β 重新塑形。")
+		mutedText(c, "LayerNorm 先减均值、除标准差，再乘可学习的 γ、加 β；直方图展示最终的 γ/β 输出，所以方差不必恰好为 1。")
 	})
 }
 
@@ -350,7 +362,12 @@ func (a *App) stageOutput(c *ui.Context) {
 			// 0.0% for every tail row tells the reader nothing; keep the
 			// significant digits where they still exist.
 			pct := fmt.Sprintf("%.1f%%", probs[id]*100)
-			if probs[id] < 0.01 {
+			switch {
+			case probs[id] == 0:
+				pct = "0%"
+			case probs[id] < 0.0001:
+				pct = fmt.Sprintf("%.1e%%", probs[id]*100)
+			case probs[id] < 0.01:
 				pct = fmt.Sprintf("%.2f%%", probs[id]*100)
 			}
 			rows = append(rows, barRow{
@@ -414,6 +431,8 @@ func byteText(id int) string {
 		return "␣"
 	case '\n':
 		return "\\n"
+	case '\t':
+		return "\\t"
 	}
 	if b >= 32 && b < 127 {
 		return string(rune(b))

@@ -42,13 +42,14 @@ func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 		return
 	}
 	lo, hi := minMaxFloat(v)
+	maxAbs := maxAbsFloat(v)
 	label := fmt.Sprintf("min %+.2f · max %+.2f · ‖v‖ %.2f", lo, hi, norm(v))
 	el := ui.Box(c).FillWidth().Height(height).Radius(4).
 		Draw(func(p *ui.Painter, r ui.Rect) {
 			cell := r.W / float32(len(v))
 			for i, x := range v {
 				p.Fill(ui.Rect{X: r.X + float32(i)*cell, Y: r.Y, W: cell - 0.6, H: r.H},
-					valueColor(x, maxAbsFloat(v)), 0)
+					valueColor(x, maxAbs), 0)
 			}
 			if *hover >= 0 && *hover < len(v) {
 				hx := r.X + float32(*hover)*cell
@@ -162,6 +163,8 @@ func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 			if q >= 0 && k >= 0 {
 				a.HoverQ, a.HoverK = q, k
 			}
+		} else {
+			a.HoverQ, a.HoverK = -1, -1
 		}
 	}
 	if el.Clicked() && q >= 0 && k >= 0 {

@@ -34,7 +34,9 @@ func TestRenderSizes(t *testing.T) {
 			if err := png.Encode(f, img); err != nil {
 				t.Fatal(err)
 			}
-			f.Close()
+			if err := f.Close(); err != nil {
+				t.Fatal(err)
+			}
 			t.Logf("wrote %s", path)
 		}
 	}
@@ -53,7 +55,9 @@ func TestRenderSizes(t *testing.T) {
 		if err := png.Encode(f, img); err != nil {
 			t.Fatal(err)
 		}
-		f.Close()
+		if err := f.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 	t.Logf("tokens=%d", len(a.Trace.Tokens))
 }
