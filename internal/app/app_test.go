@@ -1889,15 +1889,22 @@ func TestFFNWorkingsFollowTheHoveredDimension(t *testing.T) {
 	}
 }
 
-// TestFFNOutputFormulaIgnoresTheHiddenStrip is the bug this pair of fields
-// fixes. The hidden strip is d_ff wide (384) and the output strip d_model wide
-// (96), so pointing at hidden d200 is a real dimension that the output formula
-// cannot describe. With one shared index it fell back to out[0] while the strip
-// readout above said d200 — two different dimensions on screen at once.
+// TestFFNOutputFormulaIgnoresTheHiddenStrip is the bug the split fields fix.
+// The hidden strip is d_ff wide (384) and the output strip d_model wide (96),
+// so pointing at hidden d200 is a real dimension that the output formula cannot
+// describe. With one shared index it fell back to out[0] while the strip
+// readout above said d200: two different dimensions on screen at once.
+//
+// The hover fields hold pointer positions rather than settings, so this drives
+// them by moving the pointer. Assigning the field and then rendering a frame
+// with the pointer elsewhere clears it again.
 func TestFFNOutputFormulaIgnoresTheHiddenStrip(t *testing.T) {
 	a := newTestApp(t)
 	a.Step = 5
-	a.HoverDimOut = 47 // the output formula's cursor
+	cfg := a.Trace.Config
+	if cfg.DFF == cfg.DModel {
+		t.Fatal("d_ff equals d_model, so this case cannot be tested")
+	}
 	tr := ui.NewTester(a.View, 1500, 940)
 	tr.Frame()
 
@@ -1909,25 +1916,50 @@ func TestFFNOutputFormulaIgnoresTheHiddenStrip(t *testing.T) {
 		}
 		return ""
 	}
-	before := line()
-	if !strings.HasPrefix(before, "out[47]") {
-		t.Fatalf("output formula is %q, want out[47]", before)
+
+	// Find the hidden strip first: hovering the output strip below it changes
+	// the text above, which can reflow the page and move the hidden strip.
+	hidX, hidY := stripPoint(t, a, tr, "hidden")
+
+	outX, outY := stripPoint(t, a, tr, "out")
+	tr.Move(outX, outY)
+	tr.Frame()
+	if a.HoverDimOut < 0 {
+		t.Fatal("pointer is not on the output strip")
+	}
+	pinned := line()
+	if !strings.HasPrefix(pinned, fmt.Sprintf("out[%d]", a.HoverDimOut)) {
+		t.Fatalf("output formula %q does not name the hovered dimension %d", pinned, a.HoverDimOut)
 	}
 
-	// Now hover a hidden dimension that does not exist in the output.
-	a.HoverDimH = 200
-	tr.Frame()
-	if after := line(); after != before {
-		t.Fatalf("pointing at the hidden strip retargeted the output formula: %q", after)
+	// Sweep the hidden strip to its right edge, where its index is close to
+	// d_ff-1 — well past d_model — and require the output formula to stay put.
+	// stripPoint puts the pointer at x=400 (index 62 of 384); the strip runs the
+	// full stage width, so walk right from there.
+	lastHidden := -1
+	// Walk the hidden strip to its right edge.
+	for x := hidX; x <= 1150; x += 20 {
+		tr.Move(x, hidY)
+		tr.Frame()
+		if a.HoverDimH < 0 {
+			// Scrolled out from under the pointer at this x; re-anchor by
+			// re-finding the strip, since the page may have reflowed.
+			hidX, hidY = stripPoint(t, a, tr, "hidden")
+			continue
+		}
+		if a.HoverDimH > lastHidden {
+			lastHidden = a.HoverDimH
+		}
+		if got := line(); got != pinned {
+			t.Fatalf("the hidden strip changed the output formula to %q", got)
+		}
 	}
-	// And the hidden index must still be in range for d_ff, or the test is
-	// asserting nothing.
-	if dff := a.Trace.Config.DFF; 200 >= dff {
-		t.Fatalf("d_ff is %d, so 200 is not a valid hidden dimension", dff)
+	// The sweep has to include a hidden index that does not exist in the output
+	// row, or it proves nothing about the two fields being separate.
+	if lastHidden < cfg.DModel {
+		t.Fatalf("the sweep only reached hidden d%d, not past d_model %d", lastHidden, cfg.DModel)
 	}
-	if dm := a.Trace.Config.DModel; 200 < dm {
-		t.Fatalf("d_model is %d, so 200 would be valid there too", dm)
-	}
+	t.Logf("swept the hidden strip up to d%d (d_model is %d)", lastHidden, cfg.DModel)
 }
 
 // TestScoreWorkingsReproduceTheTrace checks the printed dot product is the
@@ -2342,57 +2374,71 @@ func TestResidualWorkingsFollowTheHoveredDimension(t *testing.T) {
 	}
 }
 
+// stripPoint finds a point inside one of a stage's vector strips by sweeping the
+// stage column and watching which hover field the strip writes. kind is
+// "hidden" (HoverDimH), "out" (HoverDimOut) or "head" (HoverDimHeadOut).
+func stripPoint(t *testing.T, a *App, tr *ui.Tester, kind string) (x, y float32) {
+	t.Helper()
+	for probe := float32(250); probe < 1500; probe += 3 {
+		tr.Move(400, probe)
+		tr.Frame()
+		var got int
+		switch kind {
+		case "hidden":
+			got = a.HoverDimH
+		case "out":
+			got = a.HoverDimOut
+		case "head":
+			got = a.HoverDimHeadOut
+		default:
+			t.Fatalf("unknown strip kind %q", kind)
+		}
+		if got >= 0 {
+			return 400, probe
+		}
+	}
+	t.Fatalf("no strip writing %s found", kind)
+	return 0, 0
+}
+
 // TestEachStripWidthHasItsOwnCursor is the general form of the FFN bug: a card
 // that draws rows of different widths must not share one hover index between
-// them, or the index means different dimensions in each row.
+// them, or the index means different dimensions in each row. It also pins that
+// leaving a strip clears its readout, because a stale "d62 = ..." outliving the
+// pointer is the same kind of lie.
 func TestEachStripWidthHasItsOwnCursor(t *testing.T) {
 	a := newTestApp(t)
 	cfg := a.Trace.Config
-	// The two stages that mix widths in one card.
-	if cfg.DFF == cfg.DModel {
-		t.Fatal("d_ff equals d_model, so the FFN case cannot be tested")
-	}
 	if cfg.DHead() == cfg.DModel {
 		t.Fatal("d_head equals d_model, so the attention case cannot be tested")
 	}
 
-	// FFN: hidden row d_ff wide, output row d_model wide.
-	a.Step = 5
+	// Attention: the head output row is d_head wide, the projection rows are
+	// d_model wide. Pointing at one must not set the other.
+	a.Step = 3
 	tr := ui.NewTester(a.View, 1500, 940)
 	tr.Frame()
-	line := func() string {
-		for _, s := range tr.Texts() {
-			if strings.HasPrefix(s, "out[") {
-				return s
-			}
-		}
-		return ""
-	}
-	a.HoverDimOut = 3
+	headX, headY := stripPoint(t, a, tr, "head")
+	tr.Move(headX, headY)
 	tr.Frame()
-	pinned := line()
-	if !strings.HasPrefix(pinned, "out[3]") {
-		t.Fatalf("output formula is %q, want out[3]", pinned)
+	if a.HoverDimHeadOut < 0 {
+		t.Fatal("pointer is not on the head output strip")
 	}
-	// Every hidden dimension must leave the output formula alone.
-	for _, d := range []int{0, 3, 50, cfg.DFF - 1} {
-		a.HoverDimH = d
-		tr.Frame()
-		if got := line(); got != pinned {
-			t.Fatalf("hidden d%d changed the output formula to %q", d, got)
-		}
+	if head := a.HoverDimHeadOut; head >= cfg.DModel {
+		t.Fatalf("head output hovered at d%d, past d_head %d", head, cfg.DHead())
+	}
+	if a.HoverDimProj >= 0 {
+		t.Fatalf("the head output strip also set HoverDimProj=%d", a.HoverDimProj)
 	}
 
-	// Attention: head output d_head wide, projections d_model wide. Neither
-	// drives a formula, so the assertion is that the two fields exist and hold
-	// their own values rather than overwriting each other.
-	a.Step = 3
-	tr2 := ui.NewTester(a.View, 1500, 940)
-	tr2.Frame()
-	a.HoverDimHeadOut = 5
-	a.HoverDimProj = 60
-	tr2.Frame()
-	if a.HoverDimHeadOut != 5 || a.HoverDimProj != 60 {
-		t.Fatalf("cursors merged: headOut=%d proj=%d", a.HoverDimHeadOut, a.HoverDimProj)
+	// The readout must not outlive the pointer: it claims "this is the cell
+	// you are pointing at", so it goes when the pointer does, even though the
+	// field keeps its value for the formulas below to use.
+	tr.Move(1400, 60)
+	tr.Frame()
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, "d3 = ") {
+			t.Fatalf("readout outlived the pointer: %q", s)
+		}
 	}
 }

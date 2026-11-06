@@ -30,7 +30,14 @@ func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 				p.Stroke(ui.Rect{X: hx, Y: r.Y, W: cell, H: r.H}, colText, 0, 1.4)
 			}
 		})
-	if x, _, ok := el.PointerPosition(); ok {
+	// onStrip says whether the pointer is over this row right now. The field
+	// keeps its value when the pointer leaves, because the formulas below the
+	// strip follow it: clearing on leave would snap them back to d0 the moment
+	// the reader moved towards the working they were reading. What must not
+	// outlive the pointer is the readout, which claims "this is the cell under
+	// your cursor" and would be a lie.
+	x, _, onStrip := el.PointerPosition()
+	if onStrip {
 		*hover = int(x / (el.Bounds().W) * float32(len(v)))
 		if *hover >= len(v) {
 			*hover = len(v) - 1
@@ -38,7 +45,7 @@ func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 	}
 	ui.Row(c).Gap(8).Children(func() {
 		ui.Text(c, label).FontSize(fontMicro).TextColor(colFaint)
-		if *hover >= 0 && *hover < len(v) {
+		if onStrip && *hover >= 0 && *hover < len(v) {
 			ui.Text(c, fmt.Sprintf("d%d = %+.4f", *hover, v[*hover])).FontSize(fontMicro).TextColor(colAccent2)
 		}
 	})
