@@ -4015,3 +4015,36 @@ func renderFFNPositive(t *testing.T) []byte {
 	tr.Frame()
 	return append([]byte(nil), tr.Image().Pix...)
 }
+
+// TestDiagonalCellIsMarkedAsBothQueryAndKey covers the one cell where the query
+// and the key are the same token. railMarks returns "qk" there, and railMarkColor
+// used to fall through to colGreen — the "no mark" colour — so a token attending
+// to itself was drawn exactly like a token the crosshair was not on.
+//
+// The rail has only a border colour to work with (the mark text is not rendered
+// on the chip), so "both" has to pick one of the two colours; it picks the
+// query's, since that is the row the reader is following.
+func TestDiagonalCellIsMarkedAsBothQueryAndKey(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.HoverQ, a.HoverK = 10, 10
+	if got := a.railMarks(10); got != "qk" {
+		t.Fatalf("diagonal cell marks token 10 as %q, want qk", got)
+	}
+	if got := railMarkColor("qk"); got == railMarkColor("") {
+		t.Fatalf("the diagonal cell's colour is the unmarked colour %v", got)
+	}
+	if got := railMarkColor("qk"); got != colWarm {
+		t.Fatalf("the diagonal cell should take the query's colour, got %v", got)
+	}
+	// The plain marks are untouched.
+	if railMarkColor("q") != colWarm || railMarkColor("k") != colAccent2 {
+		t.Fatal("the q and k colours changed")
+	}
+	// And an off-diagonal cell marks two different tokens, not one with "qk".
+	a.HoverQ, a.HoverK = 10, 3
+	if a.railMarks(10) != "q" || a.railMarks(3) != "k" {
+		t.Fatalf("off-diagonal marks are wrong: token10=%q token3=%q",
+			a.railMarks(10), a.railMarks(3))
+	}
+}

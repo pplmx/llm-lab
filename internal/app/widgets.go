@@ -204,6 +204,13 @@ func railMarkColor(marks string) ui.Color {
 		return colWarm
 	case "k":
 		return colAccent2
+	case "qk":
+		// A diagonal cell: the query and the key are the same token, which is
+		// exactly when a token attends to itself. Green used to be the fallback,
+		// so this common case looked like "neither" — the one reading that is
+		// certainly wrong here. The mark reads qk, so the colour is the query's,
+		// which is the row the reader is looking along.
+		return colWarm
 	}
 	return colGreen
 }
