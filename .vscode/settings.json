@@ -1,0 +1,34 @@
+{
+  "go.useLanguageServer": true,
+  "go.formatTool": "gofmt",
+  "go.testFlags": ["-v"],
+  "go.vetOnSave": "package",
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "files.exclude": {
+    "build": true,
+    ".mygo": true
+  },
+  "search.exclude": {
+    "build": true,
+    ".mygo": true,
+    "internal/model/weights.json": true,
+    "internal/model/testdata": true
+  },
+  "files.associations": {
+    "justfile": "just",
+    "Justfile": "just"
+  },
+  "[go]": {
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    },
+    "editor.insertSpaces": false,
+    "editor.tabSize": 4
+  },
+  "[json]": {
+    "editor.formatOnSave": true
+  }
+}

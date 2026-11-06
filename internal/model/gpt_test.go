@@ -1,0 +1,251 @@
+package model
+
+import (
+	"fmt"
+	"math"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+func smallWeights(t *testing.T) *Weights {
+	t.Helper()
+	return Random(Config{Vocab: 256, DModel: 32, NLayer: 2, NHead: 4, DFF: 64, Ctx: 16}, 7)
+}
+
+func TestSoftmaxSumsToOne(t *testing.T) {
+	s := []float32{1, 2, 3, -1}
+	softmaxInPlace(s)
+	var sum float32
+	for _, v := range s {
+		if v < 0 || v > 1 {
+			t.Fatalf("probability out of range: %v", v)
+		}
+		sum += v
+	}
+	if math.Abs(float64(sum-1)) > 1e-6 {
+		t.Fatalf("sum = %v, want 1", sum)
+	}
+}
+
+func TestCausalMask(t *testing.T) {
+	w := smallWeights(t)
+	ids := []int{65, 66, 67, 68, 69}
+	tr := Forward(w, ids)
+	for _, l := range tr.Layers {
+		for h, head := range l.Heads {
+			for i := range head.Attn {
+				for j := i + 1; j < len(head.Attn[i]); j++ {
+					if head.Attn[i][j] != 0 {
+						t.Fatalf("layer %d head %d: attention to future position %d from %d is %v", 0, h, j, i, head.Attn[i][j])
+					}
+					if !math.IsInf(float64(head.Scores[i][j]), -1) {
+						t.Fatalf("score above the diagonal should be -Inf")
+					}
+				}
+				var sum float32
+				for _, p := range head.Attn[i] {
+					sum += p
+				}
+				if math.Abs(float64(sum-1)) > 1e-4 {
+					t.Fatalf("row %d sums to %v", i, sum)
+				}
+			}
+		}
+	}
+}
+
+func TestLayerNormStatistics(t *testing.T) {
+	x := [][]float32{{1, 2, 3, 4, 5}}
+	g := []float32{1, 1, 1, 1, 1}
+	b := make([]float32, 5)
+	out := layerNorm(x, g, b)[0]
+	var mean float32
+	for _, v := range out {
+		mean += v
+	}
+	mean /= float32(len(out))
+	var variance float32
+	for _, v := range out {
+		d := v - mean
+		variance += d * d
+	}
+	variance /= float32(len(out))
+	if math.Abs(float64(mean)) > 1e-5 {
+		t.Fatalf("mean = %v", mean)
+	}
+	if math.Abs(float64(variance)-1) > 1e-3 {
+		t.Fatalf("variance = %v", variance)
+	}
+}
+
+func TestTokenizerRoundTrip(t *testing.T) {
+	for _, s := range []string{"hello world", "中文 token 化", "emoji 🙂 ok", ""} {
+		tokens := Tokenize(s)
+		ids := make([]int, len(tokens))
+		for i, tk := range tokens {
+			ids[i] = tk.ID
+		}
+		if got := DecodeBytes(ids); got != s {
+			t.Fatalf("round trip %q → %q", s, got)
+		}
+	}
+}
+
+func TestForwardIsDeterministic(t *testing.T) {
+	w := smallWeights(t)
+	ids := []int{72, 101, 108, 108, 111}
+	a := Forward(w, ids)
+	b := Forward(w, ids)
+	for i := range a.Logits {
+		if a.Logits[i] != b.Logits[i] {
+			t.Fatalf("logit %d differs: %v vs %v", i, a.Logits[i], b.Logits[i])
+		}
+	}
+	if len(a.Layers[0].Heads[0].Attn) != len(ids) {
+		t.Fatalf("trace has %d rows, want %d", len(a.Layers[0].Heads[0].Attn), len(ids))
+	}
+}
+
+func TestEmptyPrompt(t *testing.T) {
+	w := smallWeights(t)
+	tr := Forward(w, nil)
+	if len(tr.Tokens) != 0 || len(tr.Layers) != w.Config.NLayer {
+		t.Fatalf("empty prompt trace: %d tokens, %d layers", len(tr.Tokens), len(tr.Layers))
+	}
+}
+
+// TestBundledParity checks the Go forward pass against the logits PyTorch
+// recorded while training the bundled weights.
+func TestBundledParity(t *testing.T) {
+	w, err := Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	if w.Reference == nil {
+		t.Skip("bundled weights carry no reference")
+	}
+	tr := Forward(w, w.Reference.IDs)
+	var maxDiff float64
+	for i, want := range w.Reference.Logits {
+		d := math.Abs(float64(tr.Logits[i] - want))
+		if d > maxDiff {
+			maxDiff = d
+		}
+	}
+	if maxDiff > 2e-3 {
+		t.Fatalf("max logit difference vs PyTorch = %.5f", maxDiff)
+	}
+	t.Logf("max logit difference vs PyTorch = %.5f", maxDiff)
+}
+
+func TestTruncate(t *testing.T) {
+	ids := []int{1, 2, 3, 4, 5}
+	got := Truncate(ids, 3)
+	if len(got) != 3 || got[0] != 3 {
+		t.Fatalf("truncate = %v", got)
+	}
+	if !strings.HasPrefix(DecodeBytes([]int{104, 105}), "hi") {
+		t.Fatalf("decode bytes")
+	}
+}
+
+// TestHeadProjSumsToAttnProj pins the identity the UI relies on: what one head
+// writes into the residual stream is its own slice of Wo, and the four of them
+// add up to the block's attention output.
+func TestHeadProjSumsToAttnProj(t *testing.T) {
+	w := smallWeights(t)
+	tr := Forward(w, []int{65, 66, 67, 68})
+	for li, l := range tr.Layers {
+		if len(l.HeadProj) != w.Config.NHead {
+			t.Fatalf("layer %d: %d head projections, want %d", li, len(l.HeadProj), w.Config.NHead)
+		}
+		for i := range l.AttnProj {
+			for d := range l.AttnProj[i] {
+				var sum float32
+				for h := range l.HeadProj {
+					sum += l.HeadProj[h][i][d]
+				}
+				if math.Abs(float64(sum-l.AttnProj[i][d])) > 1e-4 {
+					t.Fatalf("layer %d pos %d dim %d: sum of heads %v != AttnProj %v", li, i, d, sum, l.AttnProj[i][d])
+				}
+			}
+		}
+	}
+	// A single head's contribution must differ from the total, otherwise the
+	// UI would be right to label the sum as that head's output.
+	l := tr.Layers[0]
+	diff := false
+	for i := range l.AttnProj {
+		if l.HeadProj[0][i][0] != l.AttnProj[i][0] {
+			diff = true
+			break
+		}
+	}
+	if !diff {
+		t.Fatal("head 0 projection equals the summed projection")
+	}
+}
+
+// TestTruncateKeepsRunesWhole checks that dropping old tokens never leaves a
+// leading UTF-8 continuation byte, which the UI would render as a broken rune.
+func TestTruncateKeepsRunesWhole(t *testing.T) {
+	const s = "注意力机制就是加权求和"
+	ids := make([]int, 0, len(s))
+	for _, b := range []byte(s) {
+		ids = append(ids, int(b))
+	}
+	for ctx := 2; ctx < len(ids); ctx++ {
+		got := Truncate(ids, ctx)
+		if !utf8.Valid(bytesOf(got)) {
+			t.Fatalf("ctx %d: truncated ids are not valid UTF-8", ctx)
+		}
+		if !strings.HasSuffix(s, DecodeBytes(got)) {
+			t.Fatalf("ctx %d: %q is not a suffix of the prompt", ctx, DecodeBytes(got))
+		}
+	}
+}
+
+func bytesOf(ids []int) []byte {
+	b := make([]byte, len(ids))
+	for i, id := range ids {
+		b[i] = byte(id)
+	}
+	return b
+}
+
+func BenchmarkForward(b *testing.B) {
+	w, err := Bundled()
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, n := range []int{16, 64} {
+		ids := make([]int, n)
+		for i := range ids {
+			ids[i] = 97 + i%26
+		}
+		b.Run(fmt.Sprintf("T=%d", n), func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				Forward(w, ids)
+			}
+		})
+	}
+}
+
+// TestInvalidUTF8Prompt covers a byte-level sampler appending half a rune:
+// the trace must still be well formed and must not mislabel tokens with runes
+// derived from shifted byte offsets.
+func TestInvalidUTF8Prompt(t *testing.T) {
+	w := smallWeights(t)
+	ids := []int{0xE6, 0xB3, 0xA8, 0x80, 0x81} // 注 + two stray continuation bytes
+	tr := Forward(w, ids)
+	if len(tr.Tokens) != len(ids) {
+		t.Fatalf("%d tokens, want %d", len(tr.Tokens), len(ids))
+	}
+	if tr.Tokens[4].Text != "\\x81" {
+		t.Fatalf("stray byte rendered as %q", tr.Tokens[4].Text)
+	}
+	if tr.Tokens[4].Rune != 0 {
+		t.Fatalf("stray byte got rune %q", tr.Tokens[4].Rune)
+	}
+}

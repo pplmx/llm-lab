@@ -1,0 +1,50 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "运行 LLM Lab",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}",
+      "args": ["-w", "1500", "-h", "940"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "运行（最小窗口 1180×720）",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}",
+      "args": ["-w", "1180", "-h", "720"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "运行（直接打开注意力页）",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}",
+      "args": ["-step", "3"],
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "渲染各阶段截图（无窗口）",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${workspaceFolder}/internal/app",
+      "args": ["-test.run", "TestRenderSteps|TestRenderSizes", "-test.v"],
+      "env": { "RENDER": "1" },
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "调试当前测试",
+      "type": "go",
+      "request": "launch",
+      "mode": "test",
+      "program": "${fileDirname}",
+      "cwd": "${workspaceFolder}"
+    }
+  ]
+}
