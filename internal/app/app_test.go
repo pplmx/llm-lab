@@ -4570,3 +4570,85 @@ func TestInspectorScopeTracksTheControls(t *testing.T) {
 		t.Fatalf("stage 1 reports scope %q", got)
 	}
 }
+
+// TestInspectorScopeIsAbsentWithoutTokens checks the scope label is suppressed on
+// the empty state.
+//
+// With no prompt the inspector shows "先在上方输入一句提示词", and a "层 0 · 头 0"
+// beside it says those two controls still select something — when in fact every
+// tensor is empty. Found by rendering the empty state and reading the header, not
+// by any assertion about the numbers.
+func TestInspectorScopeIsAbsentWithoutTokens(t *testing.T) {
+	for _, step := range []int{2, 3, 4, 5} {
+		a := newTestApp(t)
+		a.Prompt = ""
+		a.recompute()
+		a.Step = step
+		if len(a.Trace.Tokens) != 0 {
+			t.Fatalf("stage %d: an empty prompt produced %d tokens", step+1, len(a.Trace.Tokens))
+		}
+		// The helper still knows the scope; the panel just must not show it.
+		if got := a.inspectorScope(); got == "" {
+			t.Fatalf("stage %d: inspectorScope is empty even for a populated prompt",
+				step+1)
+		}
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if !strings.HasPrefix(s, "层 ") {
+				continue
+			}
+			r, ok := tr.Find(s)
+			if !ok || r.Y > 40 || r.X < 850 {
+				continue
+			}
+			t.Fatalf("stage %d: the empty state claims a scope %q", step+1, s)
+		}
+	}
+}
+
+// TestInspectorScopeReturnsWhenTheresAPrompt is the other half: typing must bring
+// the label back, so the suppression is conditional rather than a deletion.
+//
+// Counts occurrences rather than locating one: Tester.Find returns the first
+// match, and the stage heading carries the same string, so a frame-level lookup
+// reports the heading's position and never sees the inspector's copy.
+func TestInspectorScopeReturnsWhenTheresAPrompt(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.Layer = 1
+	a.Head = 2
+	const scope = "层 1 · 头 2"
+
+	count := func() int {
+		t.Helper()
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		n := 0
+		for _, s := range tr.Texts() {
+			if s == scope {
+				n++
+			}
+		}
+		return n
+	}
+
+	a.Prompt = ""
+	a.recompute()
+	if n := count(); n != 0 {
+		t.Fatalf("the empty state renders %q %d time(s); it should render none", scope, n)
+	}
+
+	a.Prompt = "hi"
+	a.recompute()
+	withPrompt := count()
+	if withPrompt == 0 {
+		t.Fatalf("with a prompt the frame never renders %q", scope)
+	}
+	// Back to empty, and it goes away again.
+	a.Prompt = ""
+	a.recompute()
+	if n := count(); n != 0 {
+		t.Fatalf("after clearing the prompt %q still appears %d time(s)", scope, n)
+	}
+}

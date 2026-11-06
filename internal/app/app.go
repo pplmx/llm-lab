@@ -865,9 +865,15 @@ func (a *App) inspector(c *ui.Context) {
 			// because the top bar's controls are what select them and the panel
 			// is on the far side of the window. State the scope once here rather
 			// than repeating it in every card below.
-			if scope := a.inspectorScope(); scope != "" {
-				ui.Box(c).Grow(1)
-				ui.Text(c, scope).FontSize(fontMicro).TextColor(colAccent2).Shrink(0)
+			//
+			// Only when there is something to scope: with no prompt every tensor
+			// is empty, and "层 0 · 头 0" beside an empty-state paragraph reads as
+			// though those two controls still select something.
+			if len(a.Trace.Tokens) > 0 {
+				if scope := a.inspectorScope(); scope != "" {
+					ui.Box(c).Grow(1)
+					ui.Text(c, scope).FontSize(fontMicro).TextColor(colAccent2).Shrink(0)
+				}
 			}
 		})
 		ui.Box(c).FillWidth().Height(1).Background(colBorder)
