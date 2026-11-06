@@ -61,6 +61,14 @@ jobs:
       - name: go test
         run: go test ./...
 
+      - name: go test -race（Linux）
+        if: runner.os == 'Linux'
+        run: go test -race ./...
+
+      - name: go test GOEXPERIMENT=simd（Linux，实验性 SIMD 内核）
+        if: runner.os == 'Linux'
+        run: GOEXPERIMENT=simd go test ./...
+
   build:
     name: build (${{ matrix.artifact }})
     needs: test

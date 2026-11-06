@@ -64,6 +64,18 @@ check:
 fmt:
     gofmt -w .
 
+# 基准测试：模型前向 + 整帧渲染（多轮，便于 benchstat 对比）
+bench:
+    go test ./internal/model ./internal/app -run '^$' -bench . -benchmem -count 5
+
+# 用实验性 SIMD 跑测试（Go 1.27+，amd64 走 AVX，arm64 走 NEON；见 README 性能一节）
+test-simd:
+    GOEXPERIMENT=simd go test ./...
+
+# 用实验性 SIMD 跑前向基准
+bench-simd:
+    GOEXPERIMENT=simd go test ./internal/model -run '^$' -bench . -benchmem -count 5
+
 # 环境自检（报 webkit 缺失可忽略，原生 UI 不需要）
 doctor:
     -go tool mygo doctor
