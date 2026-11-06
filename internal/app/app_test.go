@@ -3356,3 +3356,112 @@ func TestLayerDivergenceRowNamesThePreviousLayer(t *testing.T) {
 		}
 	}
 }
+
+// TestInspectorHeaderShowsCharacterSubindex is the fix this round: selecting a
+// byte of a multi-byte character used to show the model's "\xb3" escape as the
+// headline glyph, with "rune '注'" as the only hint about what it belonged to.
+// The strip already showed 注₂, so the header now agrees with it and names the
+// character's bytes.
+func TestInspectorHeaderShowsCharacterSubindex(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "a注b"
+	a.recompute()
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+
+	// Selecting byte 2 of 注 must not show the escape as the glyph.
+	a.SelToken = 2
+	tr.Frame()
+	sawGlyph, sawDetail := false, false
+	for _, s := range tr.Texts() {
+		if s == "注₂" {
+			sawGlyph = true
+		}
+		if strings.Contains(s, "是 '注' 的第 2/3 个字节") && strings.Contains(s, "E6 B3 A8") {
+			sawDetail = true
+		}
+		if s == `\xb3` {
+			t.Fatal("the escape is still the headline glyph")
+		}
+	}
+	if !sawGlyph {
+		t.Fatal("the header does not show the character with its byte index")
+	}
+	if !sawDetail {
+		t.Fatal("the header does not name the byte's position within the character")
+	}
+
+	// The first byte of the same character reads 1/3.
+	b := newTestApp(t)
+	b.Prompt = "a注b"
+	b.recompute()
+	b.Step = 0
+	b.SelToken = 1
+	tr2 := ui.NewTester(b.View, 1500, 940)
+	tr2.Frame()
+	found := false
+	for _, s := range tr2.Texts() {
+		if strings.Contains(s, "第 1/3 个字节") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the first byte of a character is not numbered 1/3")
+	}
+}
+
+// TestInspectorHeaderLeavesSingleByteTokensAlone checks the substitution stays
+// away from tokens that already read well: ASCII, and an invalid byte that
+// belongs to no character at all.
+func TestInspectorHeaderLeavesSingleByteTokensAlone(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "abc"
+	a.recompute()
+	a.Step = 0
+	a.SelToken = 1
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	sawChar := false
+	for _, s := range tr.Texts() {
+		if s == "b" {
+			sawChar = true
+		}
+		// Only the header is under test here; the stage-1 card legally
+		// describes every character, ASCII included.
+		if strings.Contains(s, "· 是 '") && strings.Contains(s, "个字节") {
+			t.Fatalf("an ASCII token was described as part of a multi-byte character: %q", s)
+		}
+	}
+	if !sawChar {
+		t.Fatal("the ASCII glyph is missing")
+	}
+
+	// An invalid byte has no character, so it keeps the plain byte form.
+	b := newTestApp(t)
+	b.Prompt = string([]byte{0x61, 0xFF, 0x62})
+	b.recompute()
+	b.Step = 0
+	b.SelToken = 1
+	tr2 := ui.NewTester(b.View, 1500, 940)
+	tr2.Frame()
+	for _, s := range tr2.Texts() {
+		if strings.Contains(s, "· 是 '") {
+			t.Fatalf("an invalid byte was described as part of a character: %q", s)
+		}
+	}
+}
+
+// TestInspectorDetailFitsTheColumn keeps the longer header line inside the panel
+// at its narrowest width. The widest realistic form is a 4-byte character.
+func TestInspectorDetailFitsTheColumn(t *testing.T) {
+	var w float32
+	ui.Render(func(c *ui.Context) {
+		w, _ = c.MeasureText(0, ui.Span{
+			Text: `byte 0xF0 · 是 '𝄞' 的第 1/4 个字节（F0 9D 84 9E）`, Size: fontMicro})
+	}, 400, 100, 1)
+	// 330 panel - 2*14 card padding - 34 icon - 8 gap.
+	const available = 330 - 2*14 - 34 - 8
+	if w > available {
+		t.Fatalf("the detail line is %.0f wide, the header offers %.0f", w, float32(available))
+	}
+}

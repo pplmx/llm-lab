@@ -874,14 +874,41 @@ func (a *App) inspector(c *ui.Context) {
 
 func (a *App) inspectorToken(c *ui.Context, tr *model.Trace) {
 	tk := tr.Tokens[a.SelToken]
+	// A byte of a multi-byte character has no glyph of its own; showing the
+	// model's "\xb3" escape as the headline glyph is accurate about the byte and
+	// unreadable as an answer to "which token is this". The strip already shows
+	// 注₂ for this token, so the header says the same thing and names the
+	// character's bytes.
+	glyph, detail := tk.Text, fmt.Sprintf("byte 0x%02X · rune %q", tk.ID, tk.Rune)
+	if tk.Rune != 0 && tk.ID >= 0x80 {
+		if rb := runeAt(tr, tk.Start); rb.OK && len(rb.Bytes) > 1 {
+			idx := 0
+			for k := a.SelToken; k > 0; k-- {
+				if tr.Tokens[k-1].Start != tk.Start || tr.Tokens[k-1].Rune != tk.Rune {
+					break
+				}
+				idx++
+			}
+			sub := "₁₂₃₄"
+			if idx < len(sub)/3 {
+				glyph = fmt.Sprintf("%c%s", tk.Rune, string([]rune(sub)[idx]))
+			}
+			parts := make([]string, 0, len(rb.Bytes))
+			for _, b := range rb.Bytes {
+				parts = append(parts, fmt.Sprintf("%02X", b))
+			}
+			detail = fmt.Sprintf("byte 0x%02X · 是 %q 的第 %d/%d 个字节（%s）",
+				tk.ID, tk.Rune, idx+1, len(rb.Bytes), strings.Join(parts, " "))
+		}
+	}
 	card(c, func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Size(34, 34).Radius(6).Background(colAccent.Alpha(0.16)).Children(func() {
-				ui.Text(c, tk.Text).FontSize(fontHero).Bold().TextColor(colAccentOnTint).NoWrap()
+				ui.Text(c, glyph).FontSize(fontHero).Bold().TextColor(colAccentOnTint).NoWrap()
 			})
 			ui.Column(c).Gap(1).Children(func() {
 				ui.Text(c, fmt.Sprintf("token #%d / %d", a.SelToken, len(tr.Tokens)-1)).FontSize(fontBody).Bold()
-				ui.Text(c, fmt.Sprintf("byte 0x%02X · rune %q", tk.ID, tk.Rune)).FontSize(fontMicro).TextColor(colFaint)
+				ui.Text(c, detail).FontSize(fontMicro).TextColor(colFaint).NoWrap()
 			})
 		})
 	})
