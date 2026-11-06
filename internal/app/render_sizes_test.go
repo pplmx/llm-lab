@@ -2,10 +2,13 @@ package app
 
 import (
 	"fmt"
+	"image"
 	"image/png"
 	"os"
 	"strings"
 	"testing"
+
+	"llmlab/internal/model"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -25,19 +28,8 @@ func TestRenderSizes(t *testing.T) {
 	for _, s := range sizes {
 		for _, step := range []int{0, 3, 5, 6} {
 			a.Step = step
-			img := ui.Render(a.View, s.w, s.h, 1)
-			path := fmt.Sprintf("%s/size-%dx%d-step%d.png", dir, int(s.w), int(s.h), step)
-			f, err := os.Create(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := png.Encode(f, img); err != nil {
-				t.Fatal(err)
-			}
-			if err := f.Close(); err != nil {
-				t.Fatal(err)
-			}
-			t.Logf("wrote %s", path)
+			writeSnapshot(t, dir, fmt.Sprintf("size-%dx%d-step%d.png", s.w, s.h, step),
+				ui.Render(a.View, s.w, s.h, 1))
 		}
 	}
 
@@ -47,26 +39,31 @@ func TestRenderSizes(t *testing.T) {
 	a.Step = 3
 	a.SelToken = len(a.Trace.Tokens) - 1
 	for _, w := range []int{1180, 1500} {
-		img := ui.Render(a.View, w, 940, 1)
-		f, err := os.Create(fmt.Sprintf("%s/size-longprompt-%d.png", dir, w))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := png.Encode(f, img); err != nil {
-			t.Fatal(err)
-		}
-		if err := f.Close(); err != nil {
-			t.Fatal(err)
-		}
+		writeSnapshot(t, dir, fmt.Sprintf("size-longprompt-%d.png", w), ui.Render(a.View, w, 940, 1))
 	}
 	t.Logf("tokens=%d", len(a.Trace.Tokens))
 
-	// Empty prompt: the strip's empty state and the lessons with no trace.
+	// Empty prompt: the strip's empty state, the recovery card on a stage that
+	// is not the tokenising one, and the inspector's empty copy.
 	a.Prompt = ""
 	a.recompute()
-	a.Step = 0
-	img := ui.Render(a.View, 1180, 720, 1)
-	f, err := os.Create(dir + "/size-emptyprompt-1180.png")
+	for _, step := range []int{0, 4} {
+		a.Step = step
+		writeSnapshot(t, dir, fmt.Sprintf("size-emptyprompt-1180-step%d.png", step),
+			ui.Render(a.View, 1180, 720, 1))
+	}
+
+	// Untrained weights: the banner that stops a reader from trusting a random
+	// model's perfectly plausible triangle.
+	b := New(model.Random(model.DefaultConfig, 42))
+	b.Step = 3
+	writeSnapshot(t, dir, "size-untrained-1180.png", ui.Render(b.View, 1180, 720, 1))
+}
+
+// writeSnapshot encodes img to dir/name, failing the test on either error.
+func writeSnapshot(t *testing.T, dir, name string, img *image.RGBA) {
+	t.Helper()
+	f, err := os.Create(dir + "/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,4 +73,5 @@ func TestRenderSizes(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("wrote %s", name)
 }

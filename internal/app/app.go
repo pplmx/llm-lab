@@ -356,11 +356,36 @@ func (a *App) sidebar(c *ui.Context) {
 		ui.Text(c, "权重："+a.W.Source).FontSize(9).TextColor(colFaint)
 		if a.W.Steps > 0 {
 			ui.Text(c, fmt.Sprintf("训练 %d 步 · loss %.3f", a.W.Steps, a.W.Loss)).FontSize(9).TextColor(colFaint)
+		} else {
+			// The one line that stops a reader from reading meaning into the
+			// logits: these weights were never trained.
+			ui.Text(c, "未训练 · 数值真实但输出无意义").FontSize(9).TextColor(colWarm).LineHeight(1.35)
 		}
 		// The status line used to sit in the top bar, where it pushed the
 		// temperature slider out of the window at 1180 wide.
 		ui.Text(c, a.Status).FontSize(9).TextColor(colFaint).LineHeight(1.35)
 	})
+}
+
+// untrained reports whether the app is running on weights that never saw a
+// training step. main.go falls back to model.Random when the bundled file
+// cannot be read, and random weights still produce perfectly valid numbers —
+// so every visualisation in the lesson stays plausible while the outputs are
+// gibberish. Nothing else in the UI would say so.
+func (a *App) untrained() bool {
+	return a.W != nil && a.W.Steps == 0
+}
+
+// untrainedWhy distinguishes the two ways to reach an untrained model: the
+// bundled file failed to load and main fell back to random weights, or the
+// reader pointed -weights at a file that carries no training metadata. They
+// need different advice, so the banner does not claim the bundled file was
+// missing when a custom one was given.
+func (a *App) untrainedWhy() string {
+	if strings.HasPrefix(a.W.Source, "random(") {
+		return "读不到内置权重，正在跑一个随机初始化的模型。"
+	}
+	return "这份权重没有训练信息（steps = 0），数值来自未训练的模型。"
 }
 
 func (a *App) paramCount() int {
@@ -386,6 +411,9 @@ func humanCount(n int) string {
 func (a *App) topbar(c *ui.Context) {
 	ui.Column(c).FillWidth().Padding(16, 14, 10).Gap(10).Background(colPanel).
 		BorderColor(colBorder).Shrink(0).Children(func() {
+		if a.untrained() {
+			a.untrainedBanner(c)
+		}
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			field := ui.TextInput(c, &a.Prompt).Grow(1).Label("输入").SingleLine()
 			if field.Changed() {
@@ -413,6 +441,24 @@ func (a *App) topbar(c *ui.Context) {
 			a.tempControl(c)
 		})
 	})
+}
+
+// untrainedBanner warns that the numbers on screen come from random weights.
+// It sits in the top bar, above every stage, because the failure is invisible
+// in the lesson: a random transformer still produces a causal triangle, rows
+// that sum to 1, and a top-12 distribution. Only the sampled text gives it
+// away, and by then the reader has already trusted the rest.
+func (a *App) untrainedBanner(c *ui.Context) {
+	ui.Row(c).FillWidth().Padding(8, 10).Radius(7).Gap(8).AlignItems(ui.Center).
+		Background(colWarm.Alpha(0.12)).Border(1, colWarm.Alpha(0.45)).
+		Children(func() {
+			ui.Text(c, "⚠").FontSize(13).TextColor(colWarm).Shrink(0)
+			ui.Text(c, "权重未训练").
+				FontSize(11).Bold().TextColor(colWarm).Shrink(0)
+			ui.Text(c, a.untrainedWhy()+
+				"形状、掩码、每行和为 1 都是真算出来的，但权重是随机数——别从输出里读出意义。").
+				FontSize(10.5).TextColor(colText).LineHeight(1.35)
+		})
 }
 
 // ------------------------------------------------------- stage-scoped controls
@@ -569,6 +615,14 @@ func (a *App) inspector(c *ui.Context) {
 
 		tr := a.Trace
 		if a.SelToken < 0 || a.SelToken >= len(tr.Tokens) {
+			// Both empty states are dead ends unless they name the next
+			// action: with no tokens there is nothing to click, and with no
+			// selection the reader needs to know what to click.
+			if len(tr.Tokens) == 0 {
+				mutedText(c, "检查器跟着选中的 token 走。先在上方输入一句提示词，"+
+					"中栏会列出从这里开始的几条路。")
+				return
+			}
 			mutedText(c, "点击 token 或热力图的格子，这里会显示它的数值。")
 			return
 		}

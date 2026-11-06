@@ -2,7 +2,6 @@ package app
 
 import (
 	"fmt"
-	"image/png"
 	"os"
 	"strings"
 	"testing"
@@ -35,38 +34,14 @@ func TestRenderSteps(t *testing.T) {
 	}
 	for step := range lessons {
 		a.Step = step
-		img := ui.Render(a.View, 1500, 940, 1)
-		path := fmt.Sprintf("%s/llmlab-step%d.png", dir, step)
-		f, err := os.Create(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := png.Encode(f, img); err != nil {
-			t.Fatal(err)
-		}
-		if err := f.Close(); err != nil {
-			t.Fatal(err)
-		}
-		t.Logf("wrote %s", path)
+		writeSnapshot(t, dir, fmt.Sprintf("llmlab-step%d.png", step), ui.Render(a.View, 1500, 940, 1))
 	}
 
 	// A CJK prompt exercises three-byte tokens and wider chips.
 	a.Prompt = "注意力就是加权求和"
 	a.Step = 0
 	a.recompute()
-	img := ui.Render(a.View, 1500, 940, 1)
-	path := dir + "/llmlab-step0-cjk.png"
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := png.Encode(f, img); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
-	t.Logf("wrote %s", path)
+	writeSnapshot(t, dir, "llmlab-step0-cjk.png", ui.Render(a.View, 1500, 940, 1))
 }
 
 func TestRecomputeKeepsSelectionValid(t *testing.T) {
@@ -453,5 +428,113 @@ func TestStepButtonsDimAtEnds(t *testing.T) {
 	tr.Frame()
 	if a.Step != len(lessons)-1 {
 		t.Fatalf("next moved past the last step: %d", a.Step)
+	}
+}
+
+// TestEmptyPromptOffersPresets checks that the empty state names a way out on
+// every stage: the presets used to live only in the tokenising card, so a
+// reader who emptied the prompt on step 5 had no visible recovery.
+func TestEmptyPromptOffersPresets(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = ""
+	a.recompute()
+	for _, step := range []int{0, 4, 6} {
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		if !tr.HasText("还没有提示词") {
+			t.Fatalf("stage %d: empty state does not say there is no prompt", step)
+		}
+		if !tr.HasText("字节级分词器") {
+			t.Fatalf("stage %d: empty state does not explain what the field accepts", step)
+		}
+		// The chips themselves must be live, not just named: clicking one
+		// restores the pipeline.
+		if err := tr.Click("中文"); err != nil {
+			t.Fatalf("stage %d: click a preset: %v", step, err)
+		}
+		tr.Frame()
+		if len(a.Trace.Tokens) == 0 {
+			t.Fatalf("stage %d: the preset did not restore tokens", step)
+		}
+		if a.Step != step {
+			t.Fatalf("stage %d: choosing a preset jumped to stage %d", step, a.Step)
+		}
+		a.Prompt = ""
+		a.recompute()
+	}
+}
+
+// TestEmptyPromptHasNoEmptyPresetChip checks the chip the reader cannot use is
+// not offered: with an empty prompt, an "空" chip would be a button that does
+// nothing, and the inspector already says the pipeline has no input.
+func TestEmptyPromptHasNoEmptyPresetChip(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = ""
+	a.recompute()
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	for _, s := range tr.Texts() {
+		if s == "空" {
+			t.Fatal("the empty preset is offered while the prompt is already empty")
+		}
+	}
+}
+
+// TestUntrainedWeightsWarned checks that random weights are called out. They
+// still produce a plausible causal triangle and rows that sum to 1, so nothing
+// else on screen would tell the reader the numbers mean nothing.
+func TestUntrainedWeightsWarned(t *testing.T) {
+	w := model.Random(model.DefaultConfig, 42)
+	a := New(w)
+	if !a.untrained() {
+		t.Fatal("random weights are not reported as untrained")
+	}
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("权重未训练") {
+		t.Fatal("no banner for untrained weights")
+	}
+	if !tr.HasText("别从输出里读出意义") {
+		t.Fatal("the banner does not say the outputs are meaningless")
+	}
+
+	// Trained weights say nothing: the banner is for the failure only.
+	trained := newTestApp(t)
+	if trained.untrained() {
+		t.Fatal("bundled weights are reported as untrained")
+	}
+	tr2 := ui.NewTester(trained.View, 1500, 940)
+	tr2.Frame()
+	if tr2.HasText("权重未训练") {
+		t.Fatal("the untrained banner shows for the bundled weights")
+	}
+}
+
+// TestEmptyPromptInspectorExplains checks the inspector's empty state names the
+// next action rather than only describing what it would show.
+func TestEmptyPromptInspectorExplains(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = ""
+	a.recompute()
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("先在上方输入一句提示词") {
+		t.Fatal("the inspector's empty state does not point at the input field")
+	}
+}
+
+// TestUntrainedBannerNamesTheCause checks the two ways to reach an untrained
+// model get different advice: the bundled file is missing, or the -weights file
+// the reader named carries no training metadata.
+func TestUntrainedBannerNamesTheCause(t *testing.T) {
+	bundledMissing := New(model.Random(model.DefaultConfig, 42))
+	if got := bundledMissing.untrainedWhy(); !strings.Contains(got, "内置权重") {
+		t.Fatalf("random fallback says %q, want it to name the bundled file", got)
+	}
+	custom := model.Random(model.DefaultConfig, 7)
+	custom.Source = "/tmp/other.json"
+	if got := New(custom).untrainedWhy(); !strings.Contains(got, "没有训练信息") {
+		t.Fatalf("custom untrained weights say %q, want it to name the file's missing steps", got)
 	}
 }

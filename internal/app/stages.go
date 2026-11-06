@@ -67,7 +67,7 @@ var lessons = []lesson{
 func (a *App) stage(c *ui.Context) {
 	tr := a.Trace
 	if len(tr.Tokens) == 0 {
-		mutedText(c, "输入一些文字开始。")
+		a.emptyPromptCard(c)
 		return
 	}
 	switch a.Step {
@@ -86,6 +86,54 @@ func (a *App) stage(c *ui.Context) {
 	case 6:
 		a.stageOutput(c)
 	}
+}
+
+// emptyPromptCard is the way out of the empty state. The presets used to live
+// only in the tokenising stage's card, so a reader who emptied the prompt on
+// step 5 was told "输入一些文字开始" with no visible way to do it: the presets
+// were four steps away and the input field, while empty, gives no hint that a
+// byte-level tokenizer will accept anything at all.
+func (a *App) emptyPromptCard(c *ui.Context) {
+	card(c, func() {
+		sectionTitle(c, "还没有提示词", "整条流水线从这里开始")
+		mutedText(c, "向上方的输入框随便打几个字——英文、中文、标点都行。"+
+			"这是一个字节级分词器：每个 UTF-8 字节是一个 token，所以任何文字都能进来，"+
+			"不需要先出现在词表里。")
+		ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "或者从一句现成的开始").FontSize(10).TextColor(colFaint).Shrink(0)
+			for _, p := range promptPresets {
+				p := p
+				// The empty preset is the state the reader is already in: a
+				// chip for it would be a button that does nothing.
+				if p.prompt == "" {
+					continue
+				}
+				chip := ui.Row(c).Padding(5, 9).Radius(6).Gap(5).AlignItems(ui.Center).
+					Background(colPanel2).Border(1, colBorder).Children(func() {
+					ui.Text(c, p.name).FontSize(11).TextColor(colMuted).NoWrap()
+				})
+				if chip.Clicked() {
+					a.applyPrompt(p.prompt)
+				}
+				chip.Tooltip(truncateRunes(p.prompt, 48))
+			}
+		})
+		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "提示：").FontSize(10).TextColor(colFaint).Shrink(0)
+			ui.Text(c, "输入后按任意阶段键（1–7）继续，顶部的 token 条会立刻出现。").
+				FontSize(10).TextColor(colFaint)
+		})
+	})
+}
+
+// truncateRunes shortens s to at most n runes, for a tooltip about a prompt
+// that is by definition longer than the chip that names it.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 func (a *App) stageTokens(c *ui.Context) {
