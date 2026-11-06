@@ -246,13 +246,13 @@ def export(model: TinyGPT, cfg, path: str, meta: dict):
             }
         )
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(out, f, separators=(",", ":"))
+        json.dump(out, f, separators=(",", ":"), allow_nan=False)
     print(f"wrote {path}")
 
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--steps", type=int, default=2000)
+    p.add_argument("--steps", type=int, default=600)
     p.add_argument("--batch", type=int, default=32)
     p.add_argument("--lr", type=float, default=3e-3)
     p.add_argument("--seed", type=int, default=1337)
@@ -260,6 +260,12 @@ def main():
     p.add_argument("--threads", type=int, default=16)
     p.add_argument("--out", default="internal/model/weights.json")
     args = p.parse_args()
+    if args.steps < 1:
+        p.error("--steps must be at least 1")
+    if args.batch < 1:
+        p.error("--batch must be at least 1")
+    if args.repeats < 1:
+        p.error("--repeats must be at least 1")
 
     model = train(args)
     export(

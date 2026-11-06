@@ -2,9 +2,9 @@
 """Dump every intermediate tensor of the toy GPT for cross-checking the Go port.
 
 Both sides load the same weights.json, so any difference reported by
-TestParityAllTensors is an implementation difference, not a rounding artifact.
+TestParityEveryTensor is an implementation difference, not a rounding artifact.
 
-    python3 tools/parity.py            # writes internal/model/testdata/parity.json
+    python3 tools/parity.py            # writes internal/model/testdata/parity.json.gz
 """
 from __future__ import annotations
 
