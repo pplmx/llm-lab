@@ -4814,3 +4814,139 @@ func TestDroppedByteCountIsTheRealPrefixLength(t *testing.T) {
 		}
 	}
 }
+
+// TestShortcutHintMatchesTheStageBehaviour checks the on-screen shortcut line
+// agrees with what the keys do.
+//
+// README.md has described the two behaviours correctly for a while: Shift+arrows
+// walk the matrix on stages 3-4 and move the token selection elsewhere. The line
+// inside the app said "Shift+← → 切换 token" on every stage, so on the two stages
+// that draw a matrix — where a reader is most likely to reach for the keys — the
+// help text described the wrong action.
+func TestShortcutHintMatchesTheStageBehaviour(t *testing.T) {
+	for step := 0; step < 7; step++ {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+
+		var hint string
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "快捷键") {
+				hint = s
+			}
+		}
+		if hint == "" {
+			t.Fatalf("stage %d: no shortcut line", step+1)
+		}
+
+		inMatrix := step == 2 || step == 3
+		saysCell := strings.Contains(hint, "格子")
+		saysToken := strings.Contains(hint, "切换 token")
+		switch {
+		case inMatrix && !saysCell:
+			t.Fatalf("stage %d draws a matrix but the hint does not mention cells: %q",
+				step+1, hint)
+		case inMatrix && saysToken:
+			t.Fatalf("stage %d draws a matrix but the hint still says 切换 token: %q",
+				step+1, hint)
+		case !inMatrix && !saysToken:
+			t.Fatalf("stage %d has no matrix but the hint does not mention the token: %q",
+				step+1, hint)
+		case !inMatrix && saysCell:
+			t.Fatalf("stage %d has no matrix but the hint mentions cells: %q", step+1, hint)
+		}
+
+		// And the statement must match the keys: run the one the hint names.
+		// Park the selection mid-sequence first: it starts on the last token,
+		// where Shift+Right has nowhere to go and the check would fail for a
+		// reason that has nothing to do with the hint.
+		a.SelToken = 10
+		tr.Frame()
+		selBefore, cellBefore := a.SelToken, a.KeyQ
+		tr.Key(ui.Shift, ui.KeyRight)
+		tr.Frame()
+		if inMatrix {
+			if a.KeyQ < 0 || a.KeyQ == cellBefore {
+				t.Fatalf("stage %d: the hint says Shift moves the cell, but it did not",
+					step+1)
+			}
+		} else {
+			if a.SelToken == selBefore {
+				t.Fatalf("stage %d: the hint says Shift moves the token, but it did not",
+					step+1)
+			}
+		}
+	}
+}
+
+// TestShortcutHintKeepsTheOtherKeys guards the rest of the line, which is the same
+// on every stage and easy to drop while editing the Shift clause.
+func TestShortcutHintKeepsTheOtherKeys(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	var hint string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "快捷键") {
+			hint = s
+		}
+	}
+	for _, want := range []string{"← → 切换阶段", "空格 播放/暂停", "1–7 跳转"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("the shortcut line no longer mentions %q: %q", want, hint)
+		}
+	}
+}
+
+// TestMatrixStagesAdvertiseTheirKeysWhereTheyCanBeSeen covers the placement half of
+// the shortcut problem.
+//
+// Fixing the wording alone was not enough: the full shortcut list lives at the foot
+// of the lesson card, and on stages 3-4 that card starts at Y=1223 at 1180x720 and
+// Y=1486 at 1920x1080 — below the fold at every supported size. Those are exactly
+// the two stages where Shift+arrows change meaning, so the corrected sentence was
+// unreachable from the stages that needed it. The step bar is always on screen, so
+// the matrix hint goes there.
+func TestMatrixStagesAdvertiseTheirKeysWhereTheyCanBeSeen(t *testing.T) {
+	for _, step := range []int{2, 3} {
+		for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}, {1920, 1080}} {
+			a := newTestApp(t)
+			a.Step = step
+			tr := ui.NewTester(a.View, size.w, size.h)
+			tr.Frame()
+			found := false
+			for _, s := range tr.Texts() {
+				if !strings.Contains(s, "移动格子") {
+					continue
+				}
+				if r, ok := tr.Find(s); ok && r.Y < float32(size.h)*0.5 {
+					// In the upper half: the step bar, not the lesson footer.
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("stage %d at %dx%d: no matrix hint above the fold",
+					step+1, size.w, size.h)
+			}
+		}
+	}
+
+	// Stages without a matrix must not show it, or it would promise cells that
+	// are not there.
+	for step := 0; step < 7; step++ {
+		if step == 2 || step == 3 {
+			continue
+		}
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "移动格子") {
+				t.Fatalf("stage %d has no matrix but advertises moving a cell: %q",
+					step+1, s)
+			}
+		}
+	}
+}

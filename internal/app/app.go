@@ -819,6 +819,15 @@ func (a *App) stepbar(c *ui.Context) {
 		})
 		ui.Text(c, fmt.Sprintf("%d / %d · %s", a.Step+1, len(lessons), lessons[a.Step].name)).
 			FontSize(fontSmall).TextColor(colMuted).NoWrap()
+		// The full shortcut list sits at the foot of the lesson card, which on the
+		// two matrix stages is 300-450 DIPs below the fold at every window size.
+		// Those stages are exactly where Shift+arrows change meaning, so the one
+		// place the reader cannot see the help is the place it matters. Say it in
+		// the step bar instead, where it is always on screen.
+		if a.hasMatrix() {
+			ui.Text(c, "⇧ + 方向键 移动格子 · 点击固定").
+				FontSize(fontMicro).TextColor(colFaint).NoWrap()
+		}
 		ui.Spacer(c).Grow(1)
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 			label := "▶ 自动播放"

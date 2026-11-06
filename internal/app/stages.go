@@ -1115,7 +1115,16 @@ func (a *App) lesson(c *ui.Context) {
 				strings.Join(off, " / "), controlScopeNote(off))).
 				FontSize(fontMicro).TextColor(colFaint).LineHeight(1.4)
 		}
-		ui.Text(c, "快捷键：← → 切换阶段 · Shift+← → 切换 token · 空格 播放/暂停 · 1–7 跳转").
+		// The Shift+arrow line has to follow the stage: on the two attention
+		// stages those keys walk the matrix cell, elsewhere they move the token.
+		// One shared sentence told every stage "切换 token", which was simply
+		// wrong on the two stages that draw a matrix — the ones where a reader is
+		// most likely to try the keys.
+		shift := "Shift+← → 切换 token"
+		if a.hasMatrix() {
+			shift = "Shift+← → ↑ ↓ 移动矩阵格子"
+		}
+		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · 1–7 跳转", shift)).
 			FontSize(fontMicro).TextColor(colFaint)
 	})
 }
