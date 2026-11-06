@@ -47,7 +47,7 @@ var lessons = []lesson{
 	{
 		name:    "残差 / LN",
 		title:   "残差与层归一化",
-		body:    "子层的输出不会覆盖原向量，而是加回去——这就是残差连接，它让梯度有一条高速公路，也让「原始信息」一路保留到最后。加法之前先做 LayerNorm：减均值、除标准差，再乘可学习的 γ、加 β。看直方图会发现归一化后分布被拉回零附近，这就是数值稳定的来源。一个块里有两次这样的加法：一次接注意力，一次接 FFN。",
+		body:    "子层的输出不会覆盖原向量，而是加回去——这就是残差连接，它让梯度有一条高速公路，也让「原始信息」一路保留到最后。进入子层之前先做 LayerNorm（pre-norm）：减均值、除标准差，再乘可学习的 γ、加 β。看直方图会发现归一化后分布被拉回零附近，这就是数值稳定的来源。一个块里有两次这样的加法：一次接注意力，一次接 FFN。",
 		formula: "x ← x + Attn(LN₁(x));  x ← x + FFN(LN₂(x))",
 	},
 	{
@@ -398,8 +398,9 @@ func (a *App) stageSoftmax(c *ui.Context) {
 }
 
 func (a *App) stageResidual(c *ui.Context) {
+	tr := a.Trace
 	l := a.layer()
-	i := clampIndex(a.SelToken, len(a.Trace.Tokens))
+	i := clampIndex(a.SelToken, len(tr.Tokens))
 
 	card(c, func() {
 		sectionTitle(c, "残差流", "两次加法，信息都绕过了子层")
@@ -426,7 +427,64 @@ func (a *App) stageResidual(c *ui.Context) {
 		ui.Text(c, "归一化后").FontSize(fontMicro).TextColor(colAccent2)
 		histogram(c, after, 32, colAccent2)
 		mutedText(c, "LayerNorm 先减均值、除标准差，再乘可学习的 γ、加 β；直方图展示最终的 γ/β 输出，所以方差不必恰好为 1。")
+		// The two numbers that make the point: γ/β leave the variance a little
+		// off 1, but the LENGTH of a normalized row is pinned near √d_model no
+		// matter how large the stream feeding it has grown.
+		lnLo, lnHi := lnNormRange(tr.Layers, len(tr.Tokens), tr.FinalNorm)
+		pin := math.Sqrt(float64(tr.Config.DModel))
+		inMean, outMean := residualNormMeans(tr)
+		misconception(c,
+			"「残差是加法，所以每加一次，数值就更大一点」",
+			fmt.Sprintf("残差流确实会一路变长：各位置平均 ‖x‖ 从块输入处的 %.0f 长到最后一层输出的 %.0f，"+
+				"约 %.1f 倍，而且每一层都在变大。但每个子层之前都先做 LayerNorm，"+
+				"它的输出长度几乎是常数：√d_model = %.2f，实测所有行落在 %.2f–%.2f，也就是 %.0f%%–%.0f%%。"+
+				"所以子层看到的输入幅度始终稳定，一路膨胀的只是「原始信息」那条旁路本身。",
+				inMean, outMean, outMean/inMean,
+				pin, lnLo, lnHi, 100*lnLo/pin, 100*lnHi/pin))
 	})
+}
+
+// residualNormMeans returns the mean L2 norm of the residual stream at the block
+// input and at the last block's output, averaged over positions. The residual
+// stage quotes both to show that the stream grows while its normalized view of
+// it does not.
+func residualNormMeans(tr *model.Trace) (in, out float64) {
+	n := len(tr.Tokens)
+	if n == 0 || len(tr.Layers) == 0 {
+		return 0, 0
+	}
+	first, last := tr.Layers[0], tr.Layers[len(tr.Layers)-1]
+	for i := 0; i < n; i++ {
+		in += float64(norm(first.In[i]))
+		out += float64(norm(last.AfterFFN[i]))
+	}
+	return in / float64(n), out / float64(n)
+}
+
+// lnNormRange returns the smallest and largest L2 norm of every LayerNorm output
+// in the trace, final norm included. It backs the residual stage's claim that
+// normalization pins a row's length even while the residual stream grows.
+func lnNormRange(layers []model.LayerTrace, tokens int, final [][]float32) (lo, hi float64) {
+	lo = math.Inf(1)
+	for li := range layers {
+		for i := 0; i < tokens && i < len(layers[li].Norm1); i++ {
+			for _, row := range [][]float32{layers[li].Norm1[i], layers[li].Norm2[i]} {
+				if v := float64(norm(row)); v < lo {
+					lo = v
+				} else if v > hi {
+					hi = v
+				}
+			}
+		}
+	}
+	for i := 0; i < tokens && i < len(final); i++ {
+		if v := float64(norm(final[i])); v < lo {
+			lo = v
+		} else if v > hi {
+			hi = v
+		}
+	}
+	return lo, hi
 }
 
 // geluFloor is GELU's global minimum, about -0.16997 at x ≈ -0.7518. It is the

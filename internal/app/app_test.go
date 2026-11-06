@@ -644,10 +644,11 @@ func TestFFNParamShareMatchesParamCount(t *testing.T) {
 }
 
 // TestMisconceptionCalloutsOnlyWhereMeasured keeps the callouts tied to stages
-// whose claim this round verified against the model, so a later edit cannot
-// quietly move one next to a picture it does not describe.
+// whose claims were verified against the model, so a later edit cannot quietly
+// move one next to a picture it does not describe. Steps 3, 4, 5, 6 and 7 have
+// one; steps 1 and 2 are not misconceptions in the same sense.
 func TestMisconceptionCalloutsOnlyWhereMeasured(t *testing.T) {
-	want := map[int]bool{2: true, 3: true, 5: true, 6: true}
+	want := map[int]bool{2: true, 3: true, 4: true, 5: true, 6: true}
 	for step := range lessons {
 		a := newTestApp(t)
 		a.Step = step
@@ -1155,5 +1156,61 @@ func TestRailIDContrastInEveryChipState(t *testing.T) {
 		if got := contrastRatio(colMuted, bg); got < 4.5 {
 			t.Errorf("rail id on the %s chip: %.2f:1", name, got)
 		}
+	}
+}
+
+// TestResidualCalloutNumbersAreTrue pins the residual stage's claim: the stream
+// grows across blocks while the LayerNorm outputs feeding each sublayer stay
+// pinned near √d_model. If either half stops holding, the callout is teaching
+// something false.
+func TestResidualCalloutNumbersAreTrue(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	inMean, outMean := residualNormMeans(tr)
+	if !(outMean > inMean*1.5) {
+		t.Fatalf("residual stream did not grow: %.2f -> %.2f; the callout claims it does",
+			inMean, outMean)
+	}
+	pin := math.Sqrt(float64(tr.Config.DModel))
+	lo, hi := lnNormRange(tr.Layers, len(tr.Tokens), tr.FinalNorm)
+	if lo <= 0 || hi <= 0 {
+		t.Fatalf("lnNormRange returned %v..%v", lo, hi)
+	}
+	// The callout quotes these as percentages of √d_model, so they have to sit
+	// in a band narrow enough to call "almost constant".
+	if lo < pin*0.8 || hi > pin*1.25 {
+		t.Fatalf("LayerNorm norms span %.2f..%.2f around √d_model = %.2f; too wide for '几乎是个常数'",
+			lo, hi, pin)
+	}
+	// And the stream must genuinely outgrow the normalized band, or the
+	// contrast the callout draws is not visible.
+	if outMean <= hi {
+		t.Fatalf("stream output %.2f never exceeds the normalized band (max %.2f)", outMean, hi)
+	}
+}
+
+// TestResidualCalloutScalesWithPrompt checks the callout recomputes for a
+// different prompt rather than quoting one default run.
+func TestResidualCalloutScalesWithPrompt(t *testing.T) {
+	text := func(prompt string) string {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 4
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		longest := ""
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "残差流确实会一路变长") && len(s) > len(longest) {
+				longest = s
+			}
+		}
+		if longest == "" {
+			t.Fatalf("prompt %q: the residual callout is missing", prompt)
+		}
+		return longest
+	}
+	if a, b := text("hi"), text("attention is all you need and more"); a == b {
+		t.Fatal("the residual callout quotes the same numbers for two very different prompts")
 	}
 }
