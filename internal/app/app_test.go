@@ -2442,3 +2442,119 @@ func TestEachStripWidthHasItsOwnCursor(t *testing.T) {
 		}
 	}
 }
+
+// TestHeadEntropyBarsMatchTheHeads checks the per-head comparison rows quote
+// each head's own entropy, so the block is a reading of the trace rather than a
+// decoration. It also pins the bar scale: entropy is bounded by log(n), and a
+// row drawn against the wrong denominator would exaggerate the differences.
+func TestHeadEntropyBarsMatchTheHeads(t *testing.T) {
+	a := newTestApp(t)
+	l := a.layer()
+	i := a.SelToken
+	n := i + 1
+	ceiling := math.Log(float64(n))
+	for h := range l.Heads {
+		row := l.Heads[h].Attn[i]
+		e := float64(model.Entropy(row[:min(len(row), n)]))
+		if e < 0 {
+			t.Fatalf("head %d: entropy %v is negative", h, e)
+		}
+		if e > ceiling+1e-4 {
+			t.Fatalf("head %d: entropy %v exceeds log(%d) = %v", h, e, n, ceiling)
+		}
+	}
+	// The heads must actually differ on this model, or the comparison has
+	// nothing to teach and the block is noise.
+	var lo float32 = math.MaxFloat32
+	var hi float32
+	for h := range l.Heads {
+		row := l.Heads[h].Attn[i]
+		e := model.Entropy(row[:min(len(row), n)])
+		if e < lo {
+			lo = e
+		}
+		if e > hi {
+			hi = e
+		}
+	}
+	if hi-lo < 0.3 {
+		t.Fatalf("all heads have nearly the same entropy (%.2f-%.2f); the comparison teaches nothing", lo, hi)
+	}
+
+	// The rendered rows must quote those same numbers. Checking the trace alone
+	// would pass even if every bar were built from the same head.
+	a.Step = 3
+	tester := ui.NewTester(a.View, 1500, 940)
+	tester.Frame()
+	seen := 0
+	for h := range l.Heads {
+		row := l.Heads[h].Attn[i]
+		want := fmt.Sprintf("%.2f", model.Entropy(row[:min(len(row), n)]))
+		if tester.HasText(want) {
+			seen++
+		}
+	}
+	if seen == 0 {
+		t.Fatalf("no head entropy value appears on screen (looked for %.2f values)", 0.0)
+	}
+	// Every head's value must appear. That is the assertion with teeth: a bar
+	// built from the wrong head still shows *a* plausible entropy, so checking
+	// that "some value appears" would pass while three rows were copies of the
+	// selected head.
+	for h := range l.Heads {
+		row := l.Heads[h].Attn[i]
+		want := fmt.Sprintf("%.2f", model.Entropy(row[:min(len(row), n)]))
+		if !tester.HasText(want) {
+			t.Fatalf("head %d's entropy %s does not appear on screen", h, want)
+		}
+	}
+}
+
+// TestHeadEntropyBarsShowInTheInspector checks the block reaches the screen and
+// marks the head currently selected.
+func TestHeadEntropyBarsShowInTheInspector(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.Head = 1
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("这一行在各头的熵") {
+		t.Fatal("no head comparison label")
+	}
+	// Every head gets a label row, and the selected one is marked.
+	for h := 0; h < a.W.Config.NHead; h++ {
+		plain := fmt.Sprintf("H%d", h)
+		marked := fmt.Sprintf("H%d ◂", h)
+		has := tr.HasText(plain) || tr.HasText(marked)
+		if !has {
+			t.Fatalf("head %d has no label", h)
+		}
+		if h == a.Head && !tr.HasText(marked) {
+			t.Fatalf("the selected head %d is not marked", h)
+		}
+		if h != a.Head && tr.HasText(marked) {
+			t.Fatalf("head %d is marked but head %d is selected", h, a.Head)
+		}
+	}
+}
+
+// TestHeadEntropyBarsFollowTheHeadSwitch checks switching heads moves the mark
+// rather than adding a second one.
+func TestHeadEntropyBarsFollowTheHeadSwitch(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.Head = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("H0 ◂") {
+		t.Fatal("head 0 is not marked at the start")
+	}
+	a.Head = 3
+	tr.Frame()
+	if tr.HasText("H0 ◂") {
+		t.Fatal("head 0 is still marked after switching to head 3")
+	}
+	if !tr.HasText("H3 ◂") {
+		t.Fatal("head 3 is not marked after switching")
+	}
+}

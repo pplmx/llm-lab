@@ -1071,6 +1071,32 @@ func (a *App) inspectorAttention(c *ui.Context, tr *model.Trace) {
 		kv(c, "熵", fmt.Sprintf("%.2f nats", model.Entropy(row[:min(len(row), i+1)])))
 		kv(c, "输出 L2", fmt.Sprintf("%.3f", norm(h.Out[i])))
 		mutedText(c, "熵越接近 0 越专注；越接近 log(n) 越分散。")
+		// The four heads are a segmented control above the stage, and switching
+		// between them shows different bars but no way to compare. One compact
+		// block per head, with the current one marked, makes "this head is the
+		// focused one" a reading rather than a memory task.
+		headRows := make([]barRow, 0, len(l.Heads))
+		for hi := range l.Heads {
+			hr := l.Heads[hi].Attn[i]
+			e := model.Entropy(hr[:min(len(hr), i+1)])
+			label := fmt.Sprintf("H%d", hi)
+			colour := colGreen
+			if hi == a.Head {
+				label = fmt.Sprintf("H%d ◂", hi)
+				colour = colAccent2
+			}
+			headRows = append(headRows, barRow{
+				Label:      label,
+				Value:      e,
+				ValueText:  fmt.Sprintf("%.2f", e),
+				Color:      colour,
+				LabelWidth: 40,
+				ValueWidth: 34,
+				Tip:        fmt.Sprintf("头 %d 这一行的熵 %.2f nats", hi, e),
+			})
+		}
+		ui.Text(c, "这一行在各头的熵（越小越专注）").FontSize(fontMicro).TextColor(colFaint)
+		bars(c, headRows, float32(math.Log(float64(i+1))), colGreen)
 	})
 }
 
