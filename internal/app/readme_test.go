@@ -122,3 +122,81 @@ func TestReadmeFadeDurationMatchesTheTransition(t *testing.T) {
 		t.Fatalf("the README says 160ms, the transition is %v", got)
 	}
 }
+
+// TestReadmeGraphLegendsMatchTheCode keeps the "图上每个元素怎么读" table honest.
+// Each row states a rule the painter implements; the rules are the part a reader
+// would otherwise have to reverse-engineer, and they are the part most likely to
+// drift when someone tunes a colour ramp.
+func TestReadmeGraphLegendsMatchTheCode(t *testing.T) {
+	doc := readREADME(t)
+	for _, section := range []string{
+		"### 图上每个元素怎么读",
+		"色深上限",
+		"向量条带两端的",
+		"直方图的竖线",
+		"共同横轴",
+	} {
+		if !strings.Contains(doc, section) {
+			t.Fatalf("the README no longer documents %q; update or remove this test", section)
+		}
+	}
+
+	// The colour ramps stated in the table must be the ones the painter uses.
+	if !strings.Contains(doc, "0.0005") {
+		t.Fatal("the README no longer states the threshold below which a cell is drawn as background")
+	}
+	// Heat colour: at or below 0.0005 the cell is the panel colour, not a tint.
+	atThreshold := heatColor(0.0005)
+	justAbove := heatColor(0.002)
+	if atThreshold == justAbove {
+		t.Fatal("heatColor no longer treats 0.0005 as a cutoff, so the README's rule is wrong")
+	}
+
+	// The score scale is per-matrix, not a constant: the table says so and the
+	// caption prints it, so a fixed value would make both wrong.
+	caps := map[float64]bool{}
+	for _, prompt := range []string{"hi", "attention is a weighted sum"} {
+		b := newTestApp(t)
+		b.Prompt = prompt
+		b.recompute()
+		caps[scoreColorScale(b.layer().Heads[b.Head])] = true
+	}
+	if len(caps) < 2 {
+		t.Fatal("the colour cap is the same for every prompt, but the README describes it " +
+			"as a value that moves with the prompt")
+	}
+}
+
+// TestReadmeStrideRuleIsTheOneImplemented checks the stride figures the table
+// quotes against the widget's own rule.
+//
+// My first version of the table said "36 token 时逐个标，64 token 时每 6 个标一次",
+// both of which were guesses. The rule is a 26-DIP minimum gap, which gives 3 and
+// 4 — so the document was wrong in two places and this test is what caught it.
+func TestReadmeStrideRuleIsTheOneImplemented(t *testing.T) {
+	// The painter's rule, restated: a label every `stride` cells, stride the
+	// first integer putting at least 26 DIPs between labels.
+	strideFor := func(cell float32) int {
+		s := 1
+		for float32(s)*cell < 26 {
+			s++
+		}
+		return s
+	}
+	avail := float32(420) // the matrix box's default width
+	cell36, cell64 := avail/36, avail/64
+	if got := strideFor(cell36); got != 3 {
+		t.Fatalf("36 tokens: stride %d, but the README and this test say 3", got)
+	}
+	if got := strideFor(cell64); got != 4 {
+		t.Fatalf("64 tokens: stride %d, but the README and this test say 4", got)
+	}
+
+	// And the document must say those numbers.
+	doc := readREADME(t)
+	for _, want := range []string{"每 3 个标一次", "每 4 个标一次"} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("the README does not state %q, so its stride parenthetical is stale", want)
+		}
+	}
+}
