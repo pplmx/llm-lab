@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 
@@ -2022,5 +2023,120 @@ func TestScoreWorkingsAppearForACell(t *testing.T) {
 	}
 	if !tr2.HasText("score = 点积 / √24") {
 		t.Fatal("no scaling line")
+	}
+}
+
+// TestRuneLookupCoversEveryByte checks runeAt against the trace for every
+// position: each byte belongs to exactly one character, and the characters tile
+// the prompt in order.
+func TestRuneLookupCoversEveryByte(t *testing.T) {
+	for _, prompt := range []string{"注意力就是加权求和", "The transformer", "a注b", "x"} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		tr := a.Trace
+		off := 0
+		for _, r := range tr.Text {
+			n := utf8.RuneLen(r)
+			// Every byte of this character must resolve to this character.
+			for b := off; b < off+n; b++ {
+				got := runeAt(tr, b)
+				if !got.OK {
+					t.Fatalf("%q byte %d: no character", prompt, b)
+				}
+				if got.Rune != r {
+					t.Fatalf("%q byte %d: got %q, want %q", prompt, b, got.Rune, r)
+				}
+				if got.Index != off {
+					t.Fatalf("%q byte %d: index %d, want %d", prompt, b, got.Index, off)
+				}
+			}
+			off += n
+		}
+		if got := runeAt(tr, off); got.OK {
+			t.Fatalf("%q: byte %d is past the end but resolved to %q", prompt, off, got.Rune)
+		}
+		if got := runeAt(tr, -1); got.OK {
+			t.Fatal("byte -1 resolved to a character")
+		}
+	}
+}
+
+// TestRuneAtUsesStartAsARuneIndex pins the convention that makes the card's
+// lookup correct: Tokens[i].Start counts runes, not bytes, so the card must not
+// use it as a byte offset.
+func TestRuneAtUsesStartAsARuneIndex(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "a注b"
+	a.recompute()
+	tr := a.Trace
+	if len(tr.Tokens) != 5 {
+		t.Fatalf("want 5 tokens for 3 characters, got %d", len(tr.Tokens))
+	}
+	// The second token starts the 3-byte character at rune index 1.
+	if tr.Tokens[1].Start != 1 {
+		t.Fatalf("token 1 Start = %d, want 1", tr.Tokens[1].Start)
+	}
+	rb := runeAt(tr, tr.Tokens[1].Start)
+	if !rb.OK || rb.Rune != '注' {
+		t.Fatalf("runeAt(%d) = %q, want 注", tr.Tokens[1].Start, rb.Rune)
+	}
+	if len(rb.Bytes) != 3 {
+		t.Fatalf("注 has %d bytes, want 3", len(rb.Bytes))
+	}
+	// Tokens 2 and 3 carry the same Start, which is what makes them one group.
+	for _, i := range []int{2, 3} {
+		if tr.Tokens[i].Start != tr.Tokens[1].Start {
+			t.Fatalf("token %d Start = %d, want %d", i, tr.Tokens[i].Start, tr.Tokens[1].Start)
+		}
+	}
+}
+
+// TestUTF8PayloadReassemblesTheCodepoint checks the arithmetic the card prints:
+// the payload bits shifted into place must equal the character's codepoint, for
+// every character in a mixed-script prompt.
+func TestUTF8PayloadReassemblesTheCodepoint(t *testing.T) {
+	shifts := map[int][]int{1: {0}, 2: {6, 0}, 3: {12, 6, 0}, 4: {18, 12, 6, 0}}
+	for _, s := range []string{"注意力就是加权求和", "abc", "a注b", "é", "𝄞"} {
+		for _, r := range s {
+			bs := []byte(string(r))
+			w, ok := shifts[len(bs)]
+			if !ok {
+				t.Fatalf("%q: no shift table for %d bytes", r, len(bs))
+			}
+			var got rune
+			for i, b := range bs {
+				got |= rune(utf8Payload(b)) << uint(w[i])
+			}
+			if got != r {
+				t.Fatalf("%q: payload bits reassemble to U+%04X, want U+%04X", r, got, r)
+			}
+		}
+	}
+}
+
+// TestUTF8PrefixMatchesTheEncoding checks the prefix the card prints beside each
+// byte: the high bits are fixed by the byte's length, which is the thing that
+// lets a reader spot a continuation byte at a glance.
+func TestUTF8PrefixMatchesTheEncoding(t *testing.T) {
+	cases := []struct {
+		r      rune
+		prefix []string
+	}{
+		{'a', []string{"0"}},
+		{'é', []string{"110", "10"}},
+		{'注', []string{"1110", "10", "10"}},
+		{'𝄞', []string{"11110", "10", "10", "10"}},
+	}
+	for _, c := range cases {
+		bs := []byte(string(c.r))
+		if len(bs) != len(c.prefix) {
+			t.Fatalf("%q: %d bytes, %d prefixes", c.r, len(bs), len(c.prefix))
+		}
+		for i, b := range bs {
+			if got := utf8Prefix(b); got != c.prefix[i] {
+				t.Fatalf("%q byte %d: prefix %q, want %q", c.r, i, got, c.prefix[i])
+			}
+		}
 	}
 }

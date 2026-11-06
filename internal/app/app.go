@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 
@@ -979,6 +980,76 @@ func computeFFN(hidden []float32, w2 []float32, dff, d, j int) ffnParts {
 		p.Rest -= t.V
 	}
 	return p
+}
+
+// runeBytes is one character's path through the tokenizer: the rune, its
+// codepoint, and the bytes it became.
+type runeBytes struct {
+	Rune      rune
+	Codepoint rune
+	Bytes     []byte
+	// Index is the byte offset of the character in the prompt.
+	Index int
+	OK    bool
+}
+
+// runeAt returns the character whose bytes cover byte offset i in the trace, or
+// the zero value if i is past the end. A byte-level tokenizer has no character
+// boundaries of its own — Tokens[i].Start counts runes, not bytes — so the
+// answer comes from decoding the prompt text and walking it.
+func runeAt(tr *model.Trace, i int) runeBytes {
+	if tr == nil || i < 0 || i >= len(tr.Text) {
+		return runeBytes{}
+	}
+	off := 0
+	for _, r := range tr.Text {
+		n := utf8.RuneLen(r)
+		if n < 0 {
+			n = 1
+		}
+		if i >= off && i < off+n {
+			return runeBytes{
+				Rune: r, Codepoint: r,
+				Bytes: []byte(tr.Text[off : off+n]),
+				Index: off, OK: true,
+			}
+		}
+		off += n
+	}
+	return runeBytes{}
+}
+
+// utf8Prefix describes the fixed high bits of a UTF-8 lead and continuation
+// byte, which is what makes the encoding checkable by hand.
+func utf8Prefix(b byte) string {
+	switch {
+	case b < 0x80:
+		return "0"
+	case b&0xE0 == 0xC0:
+		return "110"
+	case b&0xF0 == 0xE0:
+		return "1110"
+	case b&0xF8 == 0xF0:
+		return "11110"
+	default:
+		return "10"
+	}
+}
+
+// utf8Payload returns the data bits a byte carries, after its length prefix.
+func utf8Payload(b byte) byte {
+	switch {
+	case b < 0x80:
+		return b
+	case b&0xE0 == 0xC0:
+		return b & 0x1F
+	case b&0xF0 == 0xE0:
+		return b & 0x0F
+	case b&0xF8 == 0xF0:
+		return b & 0x07
+	default:
+		return b & 0x3F
+	}
 }
 
 // lnParts is the arithmetic behind one LayerNorm output entry: the row mean,

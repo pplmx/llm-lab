@@ -212,6 +212,23 @@ func (a *App) stageTokens(c *ui.Context) {
 				})
 			}
 		})
+		// Work through the selected token's own character, so the claim "one
+		// hanzi is three tokens" stops being a fact to accept and becomes a
+		// conversion to check: the bytes are shown with their UTF-8 prefix
+		// bits, and the payload bits are added back into the codepoint.
+		if i := clampIndex(a.SelToken, len(tr.Tokens)); i >= 0 {
+			if rb := runeAt(tr, tr.Tokens[i].Start); rb.OK {
+				var parts []string
+				for _, b := range rb.Bytes {
+					parts = append(parts, fmt.Sprintf("%s %08b", fmt.Sprintf("%02X", b), b))
+				}
+				workingsLines(c, []string{
+					fmt.Sprintf("%q = U+%04X，占 %d 个字节：%s",
+						rb.Rune, rb.Codepoint, len(rb.Bytes), strings.Join(parts, "  ")),
+					fmt.Sprintf("还原码点：%s → U+%04X", utf8PayloadChain(rb.Bytes), rb.Codepoint),
+				})
+			}
+		}
 	})
 
 	card(c, func() {
@@ -364,6 +381,30 @@ func (a *App) stageScores(c *ui.Context) {
 				"真正让 key 彻底出局的只有右上角的因果掩码，那里是 -Inf，softmax 之后才是 0。",
 				i+1))
 	})
+}
+
+// utf8PayloadChain reassembles the codepoint from the bytes the way a reader
+// would by hand: strip each byte's length prefix, then shift the remaining bits
+// into place. Written as (payload<<shift) added together, because the bit-twiddling
+// form "E6&0F<<12|B3&3F<<6|A8&3F" reads as arithmetic noise.
+func utf8PayloadChain(bs []byte) string {
+	if len(bs) == 0 {
+		return ""
+	}
+	shifts := map[int][]int{1: {0}, 2: {6, 0}, 3: {12, 6, 0}, 4: {18, 12, 6, 0}}
+	w, ok := shifts[len(bs)]
+	if !ok {
+		return ""
+	}
+	parts := make([]string, 0, len(bs))
+	for i, b := range bs {
+		if w[i] == 0 {
+			parts = append(parts, fmt.Sprintf("%02X", utf8Payload(b)))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("(%02X<<%d)", utf8Payload(b), w[i]))
+	}
+	return strings.Join(parts, " + ")
 }
 
 // scoreWorkings prints how one score is computed: the largest contributions to
