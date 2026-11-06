@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -144,6 +145,61 @@ func TestStepperRowsJumpToTheirStage(t *testing.T) {
 		tr.Frame()
 		if a.Step != want {
 			t.Fatalf("clicking %q went to step %d, want %d", label, a.Step, want)
+		}
+	}
+}
+
+// TestShapeChipsJumpToTheirStage drives the data-flow card's chips, which are
+// the only thing on stage 1 that navigates anywhere. The heading promises
+// "点击任意阶段跳转", so a chip landing on the wrong stage is a broken promise.
+//
+// Chips are located by their shape string, not their label: the labels duplicate
+// the sidebar stepper's and Find returns whichever match comes first (the
+// sidebar). The shape strings are unique to the card.
+func TestShapeChipsJumpToTheirStage(t *testing.T) {
+	T := len(newTestApp(t).Trace.Tokens)
+	d, dff, vocab := 96, 384, 256
+	chips := []struct {
+		shape string
+		step  int
+	}{
+		{fmt.Sprintf("[%d]", T), 0},
+		{fmt.Sprintf("[%d, %d]", T, d), 1},
+		{fmt.Sprintf("[%d, %d]", T, T), 3},
+		{fmt.Sprintf("[%d, %d]", T, dff), 5},
+		{fmt.Sprintf("[%d]", vocab), 6},
+	}
+	for _, c := range chips {
+		a := newTestApp(t)
+		a.Step = 0
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		r, ok := tr.Find(c.shape)
+		if !ok {
+			t.Fatalf("shape chip %q not found on stage 1", c.shape)
+		}
+		tr.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+		tr.Frame()
+		if a.Step != c.step {
+			t.Fatalf("chip %q jumped to stage %d, want %d", c.shape, a.Step+1, c.step+1)
+		}
+	}
+}
+
+// TestShapeChipsListEveryStage checks the card names all seven stages in order.
+// A missing row would be a stage the reader cannot reach from here.
+func TestShapeChipsListEveryStage(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	seen := map[string]bool{}
+	for _, s := range tr.Texts() {
+		seen[s] = true
+	}
+	for _, name := range []string{"分词", "嵌入", "注意力", "Softmax", "残差 / LN", "FFN", "输出"} {
+		if !seen[name] {
+			t.Fatalf("the shape card does not list %q", name)
 		}
 	}
 }
