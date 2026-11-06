@@ -18,14 +18,13 @@ func matMulRows(x [][]float32, w []float32, b []float32, outDim int) [][]float32
 		xi := x[i]
 		for k := 0; k < inDim; k++ {
 			v := xi[k]
-			if v == 0 {
-				continue
-			}
+			// Forward inputs are dense after LayerNorm; skipping zero values
+			// costs a branch per element and is slower than a straight loop.
 			// Re-slicing keeps both operands the same length so the bounds
-			// check on wk[j] is provably in range and the loop stays tight.
+			// check on wv is provably in range and the loop stays tight.
 			wk := w[k*outDim : (k+1)*outDim]
-			for j := range row {
-				row[j] += v * wk[j]
+			for j, wv := range wk {
+				row[j] += v * wv
 			}
 		}
 		out[i] = row

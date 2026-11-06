@@ -90,9 +90,10 @@ func Forward(w *Weights, ids []int) *Trace {
 		v := matMulRows(lt.Norm1, lw.WV, nil, d)
 
 		lt.Heads = make([]HeadTrace, c.NHead)
-		concat := make([][]float32, T)
-		for i := range concat {
-			concat[i] = make([]float32, d)
+		lt.HeadProj = make([][][]float32, c.NHead)
+		lt.AttnProj = make([][]float32, T)
+		for i := range lt.AttnProj {
+			lt.AttnProj[i] = make([]float32, d)
 		}
 		scale := float32(1 / math.Sqrt(float64(dh)))
 		for h := 0; h < c.NHead; h++ {
@@ -130,20 +131,22 @@ func Forward(w *Weights, ids []int) *Trace {
 					}
 				}
 				ht.Out[i] = out
-				copy(concat[i][h*dh:(h+1)*dh], out)
 			}
 			lt.Heads[h] = ht
-		}
-
-		lt.AttnProj = matMulRows(concat, lw.WO, nil, d)
-		// Split the same product by head: head h only ever touches the rows of
-		// Wo that line up with its own slice of the concatenation, so
-		// AttnProj = Σ_h HeadProj[h]. The UI shows one head at a time and
-		// therefore must not label the summed projection as that head's output.
-		lt.HeadProj = make([][][]float32, c.NHead)
-		for h := 0; h < c.NHead; h++ {
+			// Head h only touches the rows of Wo that line up with its own
+			// slice of the concatenation, so AttnProj is exactly the sum of
+			// the per-head projections. Accumulating those avoids computing
+			// the same d×d product a second time while keeping the same
+			// addition order as a full concat·Wo multiply.
 			wo := lw.WO[h*dh*d : (h+1)*dh*d]
-			lt.HeadProj[h] = matMulRows(lt.Heads[h].Out, wo, nil, d)
+			lt.HeadProj[h] = matMulRows(ht.Out, wo, nil, d)
+			for i := range lt.HeadProj[h] {
+				row := lt.HeadProj[h][i]
+				acc := lt.AttnProj[i]
+				for j := range row {
+					acc[j] += row[j]
+				}
+			}
 		}
 		lt.AfterAttn = make([][]float32, T)
 		for i := 0; i < T; i++ {
@@ -177,6 +180,9 @@ func Forward(w *Weights, ids []int) *Trace {
 	return tr
 }
 
+// sliceCols returns copies of a column range in m. The copies keep each
+// head's Q/K/V rows contiguous, which benchmarks noticeably faster than
+// sharing the wider parent rows.
 func sliceCols(m [][]float32, start, width int) [][]float32 {
 	out := make([][]float32, len(m))
 	for i, row := range m {
