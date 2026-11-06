@@ -222,11 +222,22 @@ func (a *App) stageTokens(c *ui.Context) {
 				for _, b := range rb.Bytes {
 					parts = append(parts, fmt.Sprintf("%s %08b", fmt.Sprintf("%02X", b), b))
 				}
-				workingsLines(c, []string{
-					fmt.Sprintf("%q = U+%04X，占 %d 个字节：%s",
-						rb.Rune, rb.Codepoint, len(rb.Bytes), strings.Join(parts, "  ")),
-					fmt.Sprintf("还原码点：%s → U+%04X", utf8PayloadChain(rb.Bytes), rb.Codepoint),
-				})
+				if rb.Rune == 0 && len(rb.Bytes) == 1 {
+					// A byte that is not valid UTF-8. Saying it "decodes to
+					// U+FFFD" would describe the display, not the input: the
+					// byte is what the model sees, and the tokenizer accepted it
+					// while the text view had to replace it to stay printable.
+					workingsLines(c, []string{
+						fmt.Sprintf("0x%02X %08b：不是合法的 UTF-8 字节，单独作为一个 token", rb.Bytes[0], rb.Bytes[0]),
+						fmt.Sprintf("文本视图里显示为 �，但模型看到的 id 就是 %d", rb.Bytes[0]),
+					})
+				} else {
+					workingsLines(c, []string{
+						fmt.Sprintf("%q = U+%04X，占 %d 个字节：%s",
+							rb.Rune, rb.Codepoint, len(rb.Bytes), strings.Join(parts, "  ")),
+						fmt.Sprintf("还原码点：%s → U+%04X", utf8PayloadChain(rb.Bytes), rb.Codepoint),
+					})
+				}
 			}
 		}
 	})

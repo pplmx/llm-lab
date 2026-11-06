@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 
@@ -2108,26 +2107,23 @@ func TestRuneLookupCoversEveryByte(t *testing.T) {
 		a.Prompt = prompt
 		a.recompute()
 		tr := a.Trace
-		off := 0
+		// runeAt takes a rune index, which is the convention Tokens[].Start uses.
+		ri := 0
 		for _, r := range tr.Text {
-			n := utf8.RuneLen(r)
-			// Every byte of this character must resolve to this character.
-			for b := off; b < off+n; b++ {
-				got := runeAt(tr, b)
-				if !got.OK {
-					t.Fatalf("%q byte %d: no character", prompt, b)
-				}
-				if got.Rune != r {
-					t.Fatalf("%q byte %d: got %q, want %q", prompt, b, got.Rune, r)
-				}
-				if got.Index != off {
-					t.Fatalf("%q byte %d: index %d, want %d", prompt, b, got.Index, off)
-				}
+			got := runeAt(tr, ri)
+			if !got.OK {
+				t.Fatalf("%q rune %d: no character", prompt, ri)
 			}
-			off += n
+			if got.Rune != r {
+				t.Fatalf("%q rune %d: got %q, want %q", prompt, ri, got.Rune, r)
+			}
+			if got.Index != ri {
+				t.Fatalf("%q rune %d: index %d", prompt, ri, got.Index)
+			}
+			ri++
 		}
-		if got := runeAt(tr, off); got.OK {
-			t.Fatalf("%q: byte %d is past the end but resolved to %q", prompt, off, got.Rune)
+		if got := runeAt(tr, ri); got.OK {
+			t.Fatalf("%q: rune %d is past the end but resolved to %q", prompt, ri, got.Rune)
 		}
 		if got := runeAt(tr, -1); got.OK {
 			t.Fatal("byte -1 resolved to a character")
@@ -2797,5 +2793,67 @@ func TestReadmeStageRangesMatchTheControls(t *testing.T) {
 	}
 	if want := fmt.Sprintf("第 %d 步", tempFrom+1); !strings.Contains(tempRow, want) {
 		t.Fatalf("README temperature row should say %q; it says:\n  %s", want, tempRow)
+	}
+}
+
+// TestRuneAtHandlesInvalidUTF8 is the case that made runeAt read from the tokens
+// rather than from Trace.Text. DecodeBytes replaces an invalid byte with U+FFFD
+// to keep the text printable, and that replacement is one rune where the
+// original byte sequence was another length, so the two sources disagree about
+// every index after it.
+func TestRuneAtHandlesInvalidUTF8(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = string([]byte{0x61, 0xFF, 0xFF, 0x62}) // a, two invalid bytes, b
+	a.recompute()
+	tr := a.Trace
+	if len(tr.Tokens) != 4 {
+		t.Fatalf("%d tokens, want 4", len(tr.Tokens))
+	}
+	// The valid characters must be reported as themselves, including the one
+	// after the invalid bytes — that is the index shift this guards against.
+	if rb := runeAt(tr, tr.Tokens[0].Start); !rb.OK || rb.Rune != 'a' {
+		t.Fatalf("token 0: %q", rb.Rune)
+	}
+	if rb := runeAt(tr, tr.Tokens[3].Start); !rb.OK || rb.Rune != 'b' {
+		t.Fatalf("token 3: %q, want 'b' (the invalid bytes must not shift this index)", rb.Rune)
+	}
+	// The invalid bytes report themselves rather than the replacement.
+	for _, i := range []int{1, 2} {
+		rb := runeAt(tr, tr.Tokens[i].Start)
+		if !rb.OK {
+			t.Fatalf("token %d: no result", i)
+		}
+		if rb.Rune == '\uFFFD' {
+			t.Fatalf("token %d reports the replacement character instead of its byte", i)
+		}
+		if rb.Byte != 0xFF || len(rb.Bytes) != 1 {
+			t.Fatalf("token %d: Byte=%#x Bytes=% x", i, rb.Byte, rb.Bytes)
+		}
+	}
+}
+
+// TestInvalidByteCardShowsTheByte checks the stage-1 card describes an invalid
+// byte as a byte, not as U+FFFD. The card used to say "'<replacement>' = U+FFFD,
+// 占 3 个字节" for a one-byte input, which describes the display rather than
+// what the model was given.
+func TestInvalidByteCardShowsTheByte(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = string([]byte{0x61, 0xFF, 0x62})
+	a.recompute()
+	a.Step = 0
+	a.SelToken = 1
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	hasByte := false
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "0xFF") && strings.Contains(s, "不是合法的 UTF-8") {
+			hasByte = true
+		}
+		if strings.Contains(s, "U+FFFD，占 3 个字节") {
+			t.Fatalf("the card still describes the replacement: %q", s)
+		}
+	}
+	if !hasByte {
+		t.Fatal("the card does not explain the invalid byte")
 	}
 }

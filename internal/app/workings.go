@@ -186,33 +186,73 @@ type runeBytes struct {
 	Rune      rune
 	Codepoint rune
 	Bytes     []byte
-	// Index is the byte offset of the character in the prompt.
+	// Byte is set when the character is a byte that does not decode to any
+	// rune, in which case Rune is left zero and the card shows the byte.
+	Byte byte
+	// Index is the rune index of the character in the prompt.
 	Index int
 	OK    bool
 }
 
-// runeAt returns the character whose bytes cover byte offset i in the trace, or
-// the zero value if i is past the end. A byte-level tokenizer has no character
-// boundaries of its own — Tokens[i].Start counts runes, not bytes — so the
-// answer comes from decoding the prompt text and walking it.
-func runeAt(tr *model.Trace, i int) runeBytes {
-	if tr == nil || i < 0 || i >= len(tr.Text) {
+// runeAt returns the character that the token at byte offset i belongs to, or
+// the zero value if i is past the end.
+//
+// The index is Tokens[i].Start, which counts runes rather than bytes. Two
+// sources disagree about invalid UTF-8 and this function has to prefer the
+// tokens: Trace.Text is built by DecodeBytes, which replaces an invalid byte
+// with U+FFFD, while the tokens keep the real byte. Reading the character back
+// out of Trace.Text therefore describes the replacement rather than what was
+// typed, and the replacement is one rune where the original may be several
+// bytes — which shifts every later index too.
+//
+// So the token's own rune wins when it has one. Only a byte that decodes to no
+// character at all (Rune == 0, set by alignTokens) falls back to the text.
+func runeAt(tr *model.Trace, runeIdx int) runeBytes {
+	if tr == nil || runeIdx < 0 {
 		return runeBytes{}
 	}
-	off := 0
+	// runeIdx is a rune index (Tokens[i].Start counts runes, not bytes). Find the
+	// first token of that character and take its rune plus the run of bytes that
+	// share it.
+	first := -1
+	for k := range tr.Tokens {
+		if tr.Tokens[k].Start == runeIdx {
+			first = k
+			break
+		}
+	}
+	if first >= 0 && tr.Tokens[first].Rune == 0 {
+		// An invalid byte: alignTokens leaves Rune zero because it decodes to no
+		// character. The honest answer is the byte itself, not the U+FFFD that
+		// Trace.Text shows in its place.
+		return runeBytes{Byte: tr.Tokens[first].Byte, Bytes: []byte{tr.Tokens[first].Byte},
+			Index: runeIdx, OK: true}
+	}
+	if first >= 0 {
+		r := tr.Tokens[first].Rune
+		var bs []byte
+		for k := first; k < len(tr.Tokens) && tr.Tokens[k].Start == runeIdx; k++ {
+			bs = append(bs, tr.Tokens[k].Byte)
+		}
+		// The bytes must actually encode this rune, or the tokens are describing
+		// something the text cannot express; fall through to the text then.
+		if len(bs) > 0 && utf8.RuneLen(r) == len(bs) {
+			return runeBytes{Rune: r, Codepoint: r, Bytes: bs, Index: runeIdx, OK: true}
+		}
+	}
+	// Fall back to walking the decoded text by rune, which is right whenever the
+	// text and the tokens agree.
+	byteOff, ri := 0, 0
 	for _, r := range tr.Text {
 		n := utf8.RuneLen(r)
 		if n < 0 {
 			n = 1
 		}
-		if i >= off && i < off+n {
-			return runeBytes{
-				Rune: r, Codepoint: r,
-				Bytes: []byte(tr.Text[off : off+n]),
-				Index: off, OK: true,
-			}
+		if ri == runeIdx {
+			return runeBytes{Rune: r, Codepoint: r, Bytes: []byte(tr.Text[byteOff : byteOff+n]), Index: runeIdx, OK: true}
 		}
-		off += n
+		byteOff += n
+		ri++
 	}
 	return runeBytes{}
 }
