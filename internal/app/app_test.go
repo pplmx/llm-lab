@@ -3181,3 +3181,52 @@ func TestStageSwitchStillClearsThePin(t *testing.T) {
 		t.Fatalf("stage switch left the pin at (%d,%d)", a.KeyQ, a.KeyK)
 	}
 }
+
+// TestPinClaimsInTheReadmeAreTrue checks the four things the interaction table
+// now says about pinning a cell. The row used to promise only that the pin
+// survived the pointer moving, which was all it did; the claim grew when
+// recompute started preserving it, and a claim in a document is worth a test.
+func TestPinClaimsInTheReadmeAreTrue(t *testing.T) {
+	// Pinning survives the pointer leaving the matrix.
+	a := newTestApp(t)
+	a.Step = 2
+	a.KeyQ, a.KeyK = 20, 5
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	tr.Move(1400, 300)
+	tr.Frame()
+	if a.KeyQ != 20 || a.KeyK != 5 {
+		t.Fatalf("pointer move lost the pin: (%d,%d)", a.KeyQ, a.KeyK)
+	}
+
+	// It survives an edit and a sample.
+	a.sampleNext()
+	if a.KeyQ != 20 || a.KeyK != 5 {
+		t.Fatalf("sampling lost the pin: (%d,%d)", a.KeyQ, a.KeyK)
+	}
+	a.Prompt += "!"
+	a.recompute()
+	if a.KeyQ != 20 || a.KeyK != 5 {
+		t.Fatalf("typing lost the pin: (%d,%d)", a.KeyQ, a.KeyK)
+	}
+
+	// Esc releases it.
+	b := newTestApp(t)
+	b.Step = 2
+	b.KeyQ, b.KeyK = 20, 5
+	tr2 := ui.NewTester(b.View, 1500, 940)
+	tr2.Frame()
+	tr2.Key(0, ui.KeyEscape)
+	tr2.Frame()
+	if b.KeyQ >= 0 {
+		t.Fatalf("Esc left the pin at (%d,%d)", b.KeyQ, b.KeyK)
+	}
+
+	// A stage switch releases it, which the row also states.
+	c := newTestApp(t)
+	c.KeyQ, c.KeyK = 20, 5
+	c.selectStep(2)
+	if c.KeyQ >= 0 || c.KeyK >= 0 {
+		t.Fatalf("stage switch left the pin at (%d,%d)", c.KeyQ, c.KeyK)
+	}
+}
