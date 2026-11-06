@@ -3465,3 +3465,100 @@ func TestInspectorDetailFitsTheColumn(t *testing.T) {
 		t.Fatalf("the detail line is %.0f wide, the header offers %.0f", w, float32(available))
 	}
 }
+
+// TestTemperatureOnlyAffectsTheOutputStage pins the scope of the temperature
+// slider. It is greyed out on stages 1-6 and the label says so, but nothing
+// checked that the value really has no effect there — a defensive copy, a stray
+// Probabilities call in the attention path, and the greyed control would be
+// lying about its own reach.
+func TestTemperatureOnlyAffectsTheOutputStage(t *testing.T) {
+	render := func(step int, temp float64) []string {
+		a := newTestApp(t)
+		a.Step = step
+		a.Temp = temp
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		return tr.Texts()
+	}
+	// The label prints the temperature, so it always differs; everything else in
+	// the frame must be identical.
+	for step := 0; step < 6; step++ {
+		cold := render(step, 0.1)
+		hot := render(step, 2.0)
+		if len(cold) != len(hot) {
+			t.Fatalf("step %d: %d texts at temp 0.1, %d at 2.0", step+1, len(cold), len(hot))
+		}
+		for i := range cold {
+			if cold[i] == hot[i] {
+				continue
+			}
+			if strings.HasPrefix(cold[i], "温度 ") && strings.HasPrefix(hot[i], "温度 ") {
+				continue // the control's own readout
+			}
+			t.Fatalf("step %d: temperature changed something else: %q vs %q",
+				step+1, cold[i], hot[i])
+		}
+	}
+
+	// And on the output stage it must change the distribution.
+	base := newTestApp(t)
+	base.Step = 6
+	base.Temp = 0.1
+	tr := ui.NewTester(base.View, 1500, 940)
+	tr.Frame()
+	flat := newTestApp(t)
+	flat.Step = 6
+	flat.Temp = 2.0
+	tr2 := ui.NewTester(flat.View, 1500, 940)
+	tr2.Frame()
+	// A higher temperature should raise the entropy readout.
+	var coldEnt, hotEnt string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "nats") {
+			coldEnt = s
+		}
+	}
+	for _, s := range tr2.Texts() {
+		if strings.Contains(s, "nats") {
+			hotEnt = s
+		}
+	}
+	if coldEnt == "" || hotEnt == "" {
+		t.Fatal("no entropy readout on the output stage")
+	}
+	if coldEnt == hotEnt {
+		t.Fatalf("temperature did not change the output distribution: both %q", coldEnt)
+	}
+}
+
+// TestDisabledTemperatureSliderRefusesInput checks the control is actually inert
+// where it is greyed out, not merely drawn grey.
+func TestDisabledTemperatureSliderRefusesInput(t *testing.T) {
+	// Coordinates that move the slider when the output stage is showing.
+	const sliderX, sliderY = 700, 65
+
+	enabled := newTestApp(t)
+	enabled.Step = 6
+	tr := ui.NewTester(enabled.View, 1500, 940)
+	tr.Frame()
+	before := enabled.Temp
+	tr.Press(sliderX, sliderY)
+	tr.Release(sliderX, sliderY)
+	tr.Frame()
+	if enabled.Temp == before {
+		t.Fatalf("the slider did not move at (%d,%d) even when enabled (still %.2f)",
+			sliderX, sliderY, before)
+	}
+
+	disabled := newTestApp(t)
+	disabled.Step = 0
+	tr2 := ui.NewTester(disabled.View, 1500, 940)
+	tr2.Frame()
+	beforeD := disabled.Temp
+	tr2.Press(sliderX, sliderY)
+	tr2.Release(sliderX, sliderY)
+	tr2.Frame()
+	if disabled.Temp != beforeD {
+		t.Fatalf("a greyed slider changed the temperature: %.2f -> %.2f", beforeD, disabled.Temp)
+	}
+}
