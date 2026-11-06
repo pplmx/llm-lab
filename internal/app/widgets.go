@@ -115,15 +115,17 @@ func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 			// and the layout shrinks it. Drawing with the requested cell then
 			// silently cut the right-hand columns off the matrix.
 			cw, ch := r.W/float32(T), r.H/float32(T)
+			// The masked cells are colPanel at 45% over the card's colPanel,
+			// which is colPanel again, so they paint nothing the card does not
+			// already show, and neither do the 0.4px gaps between the cells:
+			// draw only the cells the mask leaves visible, halving the fills
+			// of a 64×64 matrix.
 			for i := 0; i < T; i++ {
-				for j := 0; j < T; j++ {
-					w := attn[i][j]
-					c := heatColor(w)
+				row := attn[i]
+				for j := 0; j <= i && j < len(row); j++ {
+					c := heatColor(row[j])
 					if kind == "score" {
-						c = scoreColor(w, scale)
-					}
-					if j > i {
-						c = colPanel.Alpha(0.45)
+						c = scoreColor(row[j], scale)
 					}
 					p.Fill(ui.Rect{
 						X: r.X + float32(j)*cw,
