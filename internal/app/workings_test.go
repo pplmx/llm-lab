@@ -499,3 +499,105 @@ func worstPrintedLNGap(t *testing.T) float64 {
 	}
 	return worst
 }
+
+// TestWorkingsComputersRejectOutOfRangeInput covers the guard clauses.
+//
+// Mutation testing removed each one in turn and every test still passed: the call
+// sites clamp their indices, so nothing exercises the guards in normal use. They
+// are still load-bearing — with the clamp in computeSoftmaxParts's `q >= len(...)`
+// removed, computeSoftmaxParts(h, 999, 0) panics with "index out of range [999] with
+// length 36" rather than declining.
+func TestWorkingsComputersRejectOutOfRangeInput(t *testing.T) {
+	a := newTestApp(t)
+	h := a.layer().Heads[0]
+	row := a.layer().AfterAttn[a.SelToken]
+	w := a.W.Layers[a.Layer]
+	dHead := a.Trace.Config.DHead()
+	n := len(a.Trace.Tokens)
+	d, dff := a.W.Config.DModel, a.W.Config.DFF
+
+	t.Run("softmax rejects q past the matrix", func(t *testing.T) {
+		if p := computeSoftmaxParts(h, 999, 0); p.ok {
+			t.Fatal("accepted q=999")
+		}
+		if p := computeSoftmaxParts(h, 0, 999); p.ok {
+			t.Fatal("accepted k=999")
+		}
+		if p := computeSoftmaxParts(h, 0, 5); p.ok {
+			t.Fatal("accepted k > q, which is behind the causal mask")
+		}
+		if p := computeSoftmaxParts(h, -1, 0); p.ok {
+			t.Fatal("accepted q=-1")
+		}
+	})
+
+	t.Run("score rejects short vectors and bad dHead", func(t *testing.T) {
+		if p := computeScore(nil, h.K[0], dHead, 0); p.OK {
+			t.Fatal("accepted a nil q")
+		}
+		if p := computeScore(h.Q[0], h.K[0], 0, 0); p.OK {
+			t.Fatal("accepted dHead=0, which would divide by zero at scale time")
+		}
+		if p := computeScore(h.Q[0], h.K[0], 999, 0); p.OK {
+			t.Fatal("accepted dHead beyond the vector length")
+		}
+	})
+
+	t.Run("ffn rejects out-of-range dims", func(t *testing.T) {
+		w2 := a.W.Layers[a.Layer].W2
+		if p := computeFFN(a.layer().Hidden[a.SelToken], w2, dff, d, -1); p.OK {
+			t.Fatal("accepted j=-1")
+		}
+		if p := computeFFN(a.layer().Hidden[a.SelToken], w2, dff, d, d); p.OK {
+			t.Fatal("accepted j=d")
+		}
+		if p := computeFFN(nil, w2, dff, d, 0); p.OK {
+			t.Fatal("accepted a nil hidden row")
+		}
+	})
+
+	t.Run("weighted rejects out-of-range dims", func(t *testing.T) {
+		if p := computeWeighted(h.Attn[0], h.V, 0, -1, n); p.OK {
+			t.Fatal("accepted dim=-1")
+		}
+		if p := computeWeighted(h.Attn[0], h.V, 0, 99, n); p.OK {
+			t.Fatal("accepted dim beyond d_head")
+		}
+		if p := computeWeighted(h.Attn[0], h.V, -1, 0, n); p.OK {
+			t.Fatal("accepted q=-1")
+		}
+	})
+
+	t.Run("ln rejects out-of-range dims", func(t *testing.T) {
+		if p := computeLN(row, w.LN2G, w.LN2B, -1); p.ok {
+			t.Fatal("accepted dim=-1")
+		}
+		if p := computeLN(row, w.LN2G, w.LN2B, len(row)); p.ok {
+			t.Fatal("accepted dim == len(row)")
+		}
+		if p := computeLN(row, nil, w.LN2B, 0); p.ok {
+			t.Fatal("accepted a nil gamma")
+		}
+	})
+
+	t.Run("layerDivergence rejects a missing previous layer", func(t *testing.T) {
+		if d := computeLayerDivergence(a.Trace.Layers, 0, 0, 0); d.Ok {
+			t.Fatal("accepted layer 0, which has no previous layer")
+		}
+		if d := computeLayerDivergence(a.Trace.Layers, 99, 0, 0); d.Ok {
+			t.Fatal("accepted layer 99")
+		}
+	})
+
+	t.Run("activationConcentration handles empty input", func(t *testing.T) {
+		if share, topN := activationConcentration(nil); share != 0 || topN != 0 {
+			t.Fatalf("nil input gave (%v, %d)", share, topN)
+		}
+		if share, _ := activationConcentration([]float32{}); share != 0 {
+			t.Fatalf("empty input gave share %v", share)
+		}
+		if share, _ := activationConcentration([]float32{0, 0, 0}); share != 0 {
+			t.Fatalf("all-zero input gave share %v", share)
+		}
+	})
+}

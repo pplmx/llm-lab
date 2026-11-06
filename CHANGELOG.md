@@ -43,6 +43,14 @@
 
 ### Added
 
+- 变异测试覆盖键盘与边界守卫：
+  - **键盘 7 个变异全部被捕获**（左右箭头方向、空格播放、Esc 解除固定、Shift+方向在矩阵里的方向、数字键跳转），说明这块覆盖良好
+  - **`workings.go` 的 8 个守卫里有 5 个是真实缺口**（`computeSoftmaxParts` 的 q/k 越界与 k>q、`computeFFN` 的 j 越界、`computeWeighted` 的 dim 越界、`computeLN` 的 dim 越界）——补了一个 7 个子测试的用例
+  - 其中 `computeSoftmaxParts` 的 q 越界守卫被删会 **panic**：`index out of range [999] with length 36`
+  - 另外 3 个「存活」是**误报**：`dHead <= 0`、`len(layers) < 2`、`len(x) == 0` 三个守卫是冗余的，后面的判断已经覆盖同样的情形，删掉行为不变
+
+### Added
+
 - 变异测试在另外两个检查器上又发现 **3 个缺口**（`inspectorLogits` 与 `inspectorFFN` 的字段读取已被覆盖）：
   - **`inspectorResidual` 忽略层**：换成 `a.Trace.Layers[0]`，测试全绿。实测 `‖AfterFFN‖` 层 0 是 37.766、层 1 是 26.023，均值也差 0.069
   - **`inspectorResidual` 读错字段**：把 `l.AfterFFN[i]` 换成 `l.In[i]`，测试全绿
