@@ -955,7 +955,31 @@ func (a *App) stageOutput(c *ui.Context) {
 	})
 
 	card(c, func() {
-		sectionTitle(c, "Top-12 概率", "softmax(logits / T)")
+		// The list is a slice, and on this model the slice is essentially the
+		// whole distribution: the top 12 carry 99.99999% of the mass and the
+		// other 244 candidates share the remaining 0.00002%. Saying only
+		// "Top-12" left a reader to conclude the vocabulary has twelve entries
+		// — the opposite of what a token-prediction stage should teach.
+		var rest float32
+		inTop := map[int]bool{}
+		for _, id := range top {
+			inTop[id] = true
+		}
+		for id, p := range probs {
+			if !inTop[id] {
+				rest += p
+			}
+		}
+		// %.4f would print 0.0000 for a tail that shares 0.00002%, which reads as
+		// nothing at all. The rows below already switch to scientific notation
+		// when a probability gets small; the summary follows the same rule.
+		restText := fmt.Sprintf("%.4f%%", rest*100)
+		if rest*100 < 0.01 {
+			restText = fmt.Sprintf("%.1e%%", rest*100)
+		}
+		sectionTitle(c, "Top-12 概率",
+			fmt.Sprintf("softmax(logits / T) · 词表 %d 个，其余 %d 个合计 %s",
+				len(probs), len(probs)-len(top), restText))
 		rows := make([]barRow, 0, len(top))
 		for rank, id := range top {
 			// 0.0% for every tail row tells the reader nothing; keep the

@@ -4048,3 +4048,77 @@ func TestDiagonalCellIsMarkedAsBothQueryAndKey(t *testing.T) {
 			a.railMarks(10), a.railMarks(3))
 	}
 }
+
+// TestTop12StatesTheVocabularySize is the fix this round. The card listed twelve
+// candidates without saying they were a slice of 256, and on this model the top 12
+// carry essentially all the probability mass — so a reader summing the visible
+// percentages to 100% would reasonably conclude the model chooses among twelve
+// bytes. That is the opposite of what a token-prediction stage should teach.
+func TestTop12StatesTheVocabularySize(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	probs := a.Trace.Probabilities(a.Temp)
+	top := model.TopK(probs, 12)
+	inTop := map[int]bool{}
+	for _, id := range top {
+		inTop[id] = true
+	}
+	var rest float32
+	for id, p := range probs {
+		if !inTop[id] {
+			rest += p
+		}
+	}
+
+	// The header must name the vocabulary size and the count outside the list.
+	wantVocab := fmt.Sprintf("词表 %d 个", len(probs))
+	wantRest := fmt.Sprintf("其余 %d 个", len(probs)-len(top))
+	found := ""
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, wantVocab) && strings.Contains(s, wantRest) {
+			found = s
+		}
+	}
+	if found == "" {
+		t.Fatalf("the Top-12 header does not state the vocabulary size and the tail "+
+			"count (want %q and %q)", wantVocab, wantRest)
+	}
+
+	// And the tail's share must be shown the way the rows show small numbers:
+	// %.4f prints 0.0000 for 0.000013%, which reads as nothing.
+	if rest*100 < 0.01 {
+		if !strings.Contains(found, "e-") {
+			t.Fatalf("the tail share %.3e%% is printed without scientific notation: %q",
+				rest*100, found)
+		}
+	}
+}
+
+// TestTop12TailIsActuallySmall pins the premise of the test above: if the tail
+// were ever a meaningful share, the wording would need to change.
+func TestTop12TailIsActuallySmall(t *testing.T) {
+	a := newTestApp(t)
+	probs := a.Trace.Probabilities(a.Temp)
+	top := model.TopK(probs, 12)
+	inTop := map[int]bool{}
+	for _, id := range top {
+		inTop[id] = true
+	}
+	var rest float32
+	for id, p := range probs {
+		if !inTop[id] {
+			rest += p
+		}
+	}
+	if len(probs) != 256 {
+		t.Fatalf("vocabulary is %d, the stage is written for 256", len(probs))
+	}
+	t.Logf("the 244 candidates outside top-12 share %.3e of the mass", rest)
+	if rest > 0.01 {
+		t.Fatalf("the tail is %.2f%% of the mass, so 'Top-12' is no longer nearly "+
+			"everything and the header understates it", rest*100)
+	}
+}
