@@ -200,3 +200,47 @@ func TestReadmeStrideRuleIsTheOneImplemented(t *testing.T) {
 		}
 	}
 }
+
+// TestReadmeSamplingRowStatesItsCondition keeps the README's sampling claim honest.
+//
+// The row used to end "同一句提示词永远得到同一个结果". The seed comes only from the
+// prompt, but the interval it lands in depends on the distribution, which the
+// temperature slider reshapes — measured: at T=0.8 the draw is id 32, and from
+// T=2.2 it is a different token. The in-app note was fixed in round 66 with "在温度
+// 不变的前提下"; the README kept the unconditional version for twenty rounds.
+func TestReadmeSamplingRowStatesItsCondition(t *testing.T) {
+	doc := readREADME(t)
+	i := strings.Index(doc, "采样并续写")
+	if i < 0 {
+		t.Fatal("the README no longer has a sampling row")
+	}
+	end := strings.Index(doc[i:], "\n")
+	if end < 0 {
+		end = len(doc) - i
+	}
+	row := doc[i : i+end]
+	if !strings.Contains(row, "温度不变") {
+		t.Fatalf("the sampling row does not state that the repeatability depends on "+
+			"a fixed temperature: %q", row)
+	}
+
+	// And the condition is real: some temperature draws something else.
+	a := newTestApp(t)
+	a.Step = 6
+	base, ok := a.sampleDraw(a.Trace.Probabilities(0.8))
+	if !ok {
+		t.Fatal("no draw at T=0.8")
+	}
+	differs := false
+	for temp := 0.1; temp <= 3.0; temp += 0.1 {
+		d, ok := a.sampleDraw(a.Trace.Probabilities(temp))
+		if ok && d.pick != base.pick {
+			differs = true
+			break
+		}
+	}
+	if !differs {
+		t.Skip("temperature does not change the draw on this prompt, so the " +
+			"condition cannot be demonstrated here")
+	}
+}
