@@ -507,6 +507,16 @@ func (a *App) stageResidual(c *ui.Context) {
 		vectorStrip(c, l.FFNOut[i], 16, &a.HoverDimIn)
 		ui.Text(c, "x + Δ_attn + Δ_ffn（送往下一层）").FontSize(fontMicro).TextColor(colAccent2)
 		vectorStrip(c, l.AfterFFN[i], 20, &a.HoverDimIn)
+		// One dimension of the chain, so "the stream accumulates" stops being a
+		// metaphor: each line is one addInto, and the running total is the
+		// vector the strip above draws. Hovering any strip picks the dimension.
+		dim := 0
+		if a.HoverDimIn >= 0 && a.HoverDimIn < len(l.In[i]) {
+			dim = a.HoverDimIn
+		}
+		if steps, ok := residualChain(*l, i, dim); ok {
+			residualWorkings(c, dim, steps, l == &tr.Layers[len(tr.Layers)-1], a.Layer)
+		}
 	})
 
 	card(c, func() {
@@ -548,6 +558,33 @@ func (a *App) stageResidual(c *ui.Context) {
 				inMean, outMean, outMean/inMean,
 				pin, lnLo, lnHi, 100*lnLo/pin, 100*lnHi/pin))
 	})
+}
+
+// residualWorkings prints the additions that build one dimension of the residual
+// stream. It is the one place in the lab where the point is the running total
+// rather than any single term, so every line ends on it.
+func residualWorkings(c *ui.Context, dim int, steps []residualStep, isLast bool, layer int) {
+	lines := make([]string, 0, len(steps))
+	lines = append(lines, fmt.Sprintf("d%d 的残差流在第 %d 层：%s = %+.4f",
+		dim, layer+1, steps[0].Label, steps[0].Term))
+	running := steps[0].Sum
+	for _, s := range steps[1:] {
+		// Parenthesise the term when it is negative, so the line reads
+		// "-0.1050 + (-1.0295) = -1.1344" rather than the ambiguous
+		// "-0.1050 + -1.0295".
+		term := fmt.Sprintf("%+.4f", s.Term)
+		if s.Term < 0 {
+			term = fmt.Sprintf("(%+.4f)", s.Term)
+		}
+		lines = append(lines, fmt.Sprintf("%+.4f %s %s = %+.4f", running, s.Label, term, s.Sum))
+		running = s.Sum
+	}
+	next := "送往下一层"
+	if isLast {
+		next = "送入最终 LayerNorm"
+	}
+	lines = append(lines, fmt.Sprintf("每一次加法都不覆盖原值，所以第 %d 层的输出完整%s", layer+1, next))
+	workingsLines(c, lines)
 }
 
 // residualNormMeans returns the mean L2 norm of the residual stream at the block

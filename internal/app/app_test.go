@@ -2203,3 +2203,100 @@ func TestChipGlyphKeepsASCIIAndControlGlyphs(t *testing.T) {
 		}
 	}
 }
+
+// TestResidualChainReproducesTheTrace checks the printed additions are the
+// trace's own values: each line's running total is the vector the strip above
+// draws, for every layer and dimension.
+func TestResidualChainReproducesTheTrace(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	i := a.SelToken
+	for li := range tr.Layers {
+		l := tr.Layers[li]
+		for _, dim := range []int{0, 1, 47, len(l.In[i]) - 1} {
+			steps, ok := residualChain(l, i, dim)
+			if !ok {
+				t.Fatalf("layer %d dim %d: no chain", li, dim)
+			}
+			if len(steps) != 3 {
+				t.Fatalf("layer %d dim %d: %d steps, want 3", li, dim, len(steps))
+			}
+			// The inputs of the chain must be the trace's fields.
+			if steps[0].Term != float64(l.In[i][dim]) {
+				t.Fatalf("layer %d dim %d: starts from %v, In is %v", li, dim, steps[0].Term, l.In[i][dim])
+			}
+			if steps[1].Term != float64(l.AttnProj[i][dim]) {
+				t.Fatalf("layer %d dim %d: attention term %v, AttnProj is %v", li, dim, steps[1].Term, l.AttnProj[i][dim])
+			}
+			if steps[2].Term != float64(l.FFNOut[i][dim]) {
+				t.Fatalf("layer %d dim %d: ffn term %v, FFNOut is %v", li, dim, steps[2].Term, l.FFNOut[i][dim])
+			}
+			// Each running total must be the recorded intermediate.
+			if steps[1].Sum != float64(l.AfterAttn[i][dim]) {
+				t.Fatalf("layer %d dim %d: running total %v, AfterAttn is %v", li, dim, steps[1].Sum, l.AfterAttn[i][dim])
+			}
+			if steps[2].Sum != float64(l.AfterFFN[i][dim]) {
+				t.Fatalf("layer %d dim %d: running total %v, AfterFFN is %v", li, dim, steps[2].Sum, l.AfterFFN[i][dim])
+			}
+			// And the additions must actually add up.
+			if math.Abs(steps[0].Term+steps[1].Term-steps[1].Sum) > 1e-6 {
+				t.Fatalf("layer %d dim %d: %v + %v != %v", li, dim, steps[0].Term, steps[1].Term, steps[1].Sum)
+			}
+			if math.Abs(steps[1].Sum+steps[2].Term-steps[2].Sum) > 1e-6 {
+				t.Fatalf("layer %d dim %d: %v + %v != %v", li, dim, steps[1].Sum, steps[2].Term, steps[2].Sum)
+			}
+		}
+	}
+}
+
+// TestResidualChainLinksTheLayers checks that one block's output is the next
+// block's input, which is what makes "the stream carries forward" true rather
+// than a saying.
+func TestResidualChainLinksTheLayers(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	i := a.SelToken
+	for li := 0; li+1 < len(tr.Layers); li++ {
+		for dim := range tr.Layers[li].AfterFFN[i] {
+			if tr.Layers[li].AfterFFN[i][dim] != tr.Layers[li+1].In[i][dim] {
+				t.Fatalf("layer %d output dim %d is %v, layer %d input is %v",
+					li, dim, tr.Layers[li].AfterFFN[i][dim], li+1, tr.Layers[li+1].In[i][dim])
+			}
+		}
+	}
+}
+
+// TestResidualWorkingsFollowTheHoveredDimension checks the printed line tracks
+// the strips' shared hover.
+func TestResidualWorkingsFollowTheHoveredDimension(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	line := func() string {
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "d0 的残差流") || strings.HasPrefix(s, "d7 的残差流") {
+				return s
+			}
+		}
+		return ""
+	}
+	a.HoverDimIn = 0
+	tr.Frame()
+	first := line()
+	if first == "" {
+		t.Fatal("no residual chain line")
+	}
+	a.HoverDimIn = 7
+	tr.Frame()
+	second := line()
+	if second == "" {
+		t.Fatal("the line disappeared when the dimension changed")
+	}
+	if first == second {
+		t.Fatal("hovering another dimension printed the same line")
+	}
+	if !strings.HasPrefix(second, "d7 ") {
+		t.Fatalf("hovering d7 printed %q", second)
+	}
+}

@@ -1052,6 +1052,33 @@ func utf8Payload(b byte) byte {
 	}
 }
 
+// residualStep is one addition in the residual chain, at one dimension.
+type residualStep struct {
+	// Label names the term: "进入" for the block input, or the sublayer that
+	// contributed.
+	Label string
+	Term  float64
+	Sum   float64
+}
+
+// residualChain returns the additions that build one dimension of the residual
+// stream through one block: the block input, plus the attention projection,
+// plus the FFN output. Each Sum is the running total after that addition, and
+// the model builds them this way with addInto, so the printed sums are the
+// trace's values rather than a recomputation.
+func residualChain(l model.LayerTrace, i, dim int) ([]residualStep, bool) {
+	if i < 0 || i >= len(l.In) || dim < 0 || dim >= len(l.In[i]) ||
+		dim >= len(l.AttnProj[i]) || dim >= len(l.AfterAttn[i]) ||
+		dim >= len(l.FFNOut[i]) || dim >= len(l.AfterFFN[i]) {
+		return nil, false
+	}
+	return []residualStep{
+		{Label: "进入本层的 x", Term: float64(l.In[i][dim]), Sum: float64(l.In[i][dim])},
+		{Label: "+ 注意力子层 Δ", Term: float64(l.AttnProj[i][dim]), Sum: float64(l.AfterAttn[i][dim])},
+		{Label: "+ FFN 子层 Δ", Term: float64(l.FFNOut[i][dim]), Sum: float64(l.AfterFFN[i][dim])},
+	}, true
+}
+
 // lnParts is the arithmetic behind one LayerNorm output entry: the row mean,
 // the inverse standard deviation that scales it, and the per-dimension γ and β
 // the model learned.
