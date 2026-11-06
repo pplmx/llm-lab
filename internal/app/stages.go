@@ -130,8 +130,15 @@ func (a *App) promptChip(c *ui.Context, p promptPreset, showSelected bool) {
 		Background(colPanel2).Border(1, colBorder).Children(func() {
 		ui.Text(c, p.name).FontSize(fontSmall).TextColor(colMuted).NoWrap()
 	})
+	// Every other clickable chip in the app lights up under the pointer — the
+	// token strip and the sidebar's stepper rows both go to colPanel2. These
+	// presets never did, so the one control that fills the prompt field looked
+	// less clickable than a token you can only select. The selected state takes
+	// precedence, since it is the more specific fact.
 	if showSelected && a.Prompt == p.prompt {
 		chip = chip.Background(colAccent.Alpha(0.14)).Border(1, colAccent.Alpha(0.6))
+	} else if chip.Hovered() {
+		chip = chip.Background(colPanel).Border(1, colMuted.Alpha(0.5))
 	}
 	if chip.Clicked() {
 		a.applyPrompt(p.prompt)

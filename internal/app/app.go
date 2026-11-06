@@ -812,9 +812,24 @@ func (a *App) stepbar(c *ui.Context) {
 				default:
 					dot = ui.Box(c).Size(6, 6).Radius(3).Background(colBorder)
 				}
+				// These are 6-DIP dots that jump to a stage, and they gave no sign
+				// of being reachable: no hover change, no tooltip, nothing to
+				// separate them from the label beside them.
+				//
+				// Only the colour changes, never the width. Growing the dot to the
+				// current dot's 18 DIPs did move the row, so it was reverted.
+				// Hovered() has to be asked on the element that is already laid
+				// out, before painting — asking it after building a replacement
+				// shifts every later dot, because the replacement is a new element
+				// in the flex row.
+				hovered := i != a.Step && dot.Hovered()
+				if hovered {
+					dot = dot.Background(colText.Alpha(0.8))
+				}
 				if dot.Clicked() {
 					a.selectStep(i)
 				}
+				dot.Tooltip(fmt.Sprintf("第 %d / %d 步 · %s", i+1, len(lessons), lessons[i].name))
 			}
 		})
 		ui.Text(c, fmt.Sprintf("%d / %d · %s", a.Step+1, len(lessons), lessons[a.Step].name)).

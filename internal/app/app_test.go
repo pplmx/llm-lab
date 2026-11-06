@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"math"
@@ -4949,4 +4950,117 @@ func TestMatrixStagesAdvertiseTheirKeysWhereTheyCanBeSeen(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestClickableChipsGiveHoverFeedback checks the elements a reader can click all
+// react to the pointer.
+//
+// Two kinds did not: the prompt presets on stage 1 (the control that fills the
+// prompt field) and the 6-DIP stage dots in the step bar. Both were clickable and
+// both looked identical under the pointer, while every other clickable thing in
+// the app — token chips, sidebar rows, buttons — changes on hover. A control that
+// can be clicked has to look like one.
+func TestClickableChipsGiveHoverFeedback(t *testing.T) {
+	// Preset chips: stage 1 lists them in the empty-prompt card, which is what a
+	// first-time reader sees.
+	t.Run("prompt presets", func(t *testing.T) {
+		a := newTestApp(t)
+		a.Prompt = ""
+		a.recompute()
+		a.Step = 0
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		r, ok := tr.Find("长提示词")
+		if !ok {
+			t.Skip("the preset chip is not on this frame")
+		}
+		before := tr.Image()
+		tr.Move(r.X+r.W/2, r.Y+r.H/2)
+		tr.Frame()
+		if diffCount(before, tr.Image()) == 0 {
+			t.Fatal("hovering the 长提示词 preset changes nothing")
+		}
+	})
+
+	// Stage dots: find one by scanning, since they have no text.
+	t.Run("stage dots", func(t *testing.T) {
+		a := newTestApp(t)
+		a.Step = 1
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		base := tr.Image()
+		found := false
+		for y := float32(170); y < 190 && !found; y += 2 {
+			for x := float32(240); x < 400 && !found; x += 2 {
+				tr.Move(x, y)
+				tr.Frame()
+				if diffCount(base, tr.Image()) > 0 {
+					found = true
+				}
+			}
+		}
+		if !found {
+			t.Fatal("no stage dot reacts to the pointer")
+		}
+	})
+}
+
+// TestStageDotHoverDoesNotMoveTheRow is the constraint that decided how the dot
+// feedback is drawn. Growing the hovered dot to the current dot's width read more
+// clearly, but flex layout shifts every dot after it while the pointer is still,
+// so the row jumps as the pointer crosses it. Only the colour may change.
+//
+// Compares pixels rather than asking Tester.Find for the label's position: Find
+// reports a different X for the same unchanged label depending on what else is
+// hovered (measured: 321 vs 331 with the label visibly in the same place), so it
+// cannot answer this question.
+func TestStageDotHoverDoesNotMoveTheRow(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 1
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	label, ok := tr.Find("2 / 7 · 嵌入")
+	if !ok {
+		t.Fatal("the step label is missing")
+	}
+	// Crop the label's own band once, then require it to stay pixel-identical
+	// while the pointer crosses every dot to its left.
+	const bandW, bandH = 120, 18
+	crop := func(img *image.RGBA) []uint8 {
+		var out []uint8
+		for y := int(label.Y); y < int(label.Y)+bandH; y++ {
+			for x := int(label.X); x < int(label.X)+bandW; x++ {
+				i := img.PixOffset(x, y)
+				out = append(out, img.Pix[i:i+4]...)
+			}
+		}
+		return out
+	}
+	baseBand := crop(tr.Image())
+	if len(baseBand) == 0 {
+		t.Fatal("empty label band")
+	}
+
+	for x := float32(240); x < 400; x += 2 {
+		tr.Move(x, 184)
+		tr.Frame()
+		if got := crop(tr.Image()); !bytes.Equal(baseBand, got) {
+			t.Fatalf("hovering a dot at x=%.0f redraws the step label region", x)
+		}
+	}
+}
+
+// diffCount counts pixels that differ between two frames.
+func diffCount(a, b *image.RGBA) int {
+	if a == nil || b == nil || len(a.Pix) != len(b.Pix) {
+		return 1
+	}
+	n := 0
+	for i := 0; i < len(a.Pix); i += 4 {
+		if a.Pix[i] != b.Pix[i] || a.Pix[i+1] != b.Pix[i+1] ||
+			a.Pix[i+2] != b.Pix[i+2] || a.Pix[i+3] != b.Pix[i+3] {
+			n++
+		}
+	}
+	return n
 }
