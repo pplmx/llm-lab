@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -9,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 // TestWorkingsStaysFreeOfTheInterface keeps workings.go what it claims to be:
@@ -600,4 +603,139 @@ func TestWorkingsComputersRejectOutOfRangeInput(t *testing.T) {
 			t.Fatalf("all-zero input gave share %v", share)
 		}
 	})
+}
+
+// TestWorkingsStateHowManyTermsTheyOmit checks the "其余 N" figures are the real
+// counts.
+//
+// Mutation testing changed each by one and every test passed. Those numbers tell the
+// reader what the printed sum leaves out — "三项 + 其余 21 维 = 点积" for a 24-wide head,
+// "其余 381 项" for the 384-wide FFN — so an off-by-one makes the arithmetic look
+// incomplete or double-counted while the printed total still closes.
+func TestWorkingsStateHowManyTermsTheyOmit(t *testing.T) {
+	t.Run("score omits dHead minus the terms shown", func(t *testing.T) {
+		a := newTestApp(t)
+		a.Step = 2
+		a.SelToken = 10
+		a.KeyQ, a.KeyK = 10, 5 // pin a cell so the workings render
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+
+		p := computeScore(a.layer().Heads[a.Head].Q[10], a.layer().Heads[a.Head].K[5],
+			a.Trace.Config.DHead(), a.layer().Heads[a.Head].Scores[10][5])
+		if !p.OK {
+			t.Fatal("computeScore declined")
+		}
+		want := fmt.Sprintf("+ 其余 %d 维", a.Trace.Config.DHead()-len(p.Top))
+		found := false
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("the score workings do not state %q", want)
+		}
+	})
+
+	t.Run("ffn omits dff minus the terms shown", func(t *testing.T) {
+		a := newTestApp(t)
+		a.Step = 5
+		a.SelToken = 10
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+
+		l := a.layer()
+		p := computeFFN(l.Hidden[a.SelToken], a.W.Layers[a.Layer].W2, a.W.Config.DFF,
+			a.W.Config.DModel, 0)
+		if !p.OK {
+			t.Fatal("computeFFN declined")
+		}
+		want := fmt.Sprintf("+ 其余 %d 项", a.W.Config.DFF-len(p.Top))
+		found := false
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("the FFN workings do not state %q", want)
+		}
+	})
+
+	t.Run("weighted omits q+1 minus the terms shown", func(t *testing.T) {
+		a := newTestApp(t)
+		a.Step = 3
+		a.SelToken = 10
+		a.KeyQ, a.KeyK = 10, 5
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+
+		h := a.layer().Heads[a.Head]
+		p := computeWeighted(h.Attn[10], h.V, 10, 0, len(a.Trace.Tokens))
+		if !p.OK {
+			t.Fatal("computeWeighted declined")
+		}
+		want := fmt.Sprintf("+ 其余 %d 项", 11-len(p.Top))
+		found := false
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("the weighted workings do not state %q", want)
+		}
+	})
+}
+
+// TestWeightedShareUsesAbsoluteMass pins the denominator of the "三项占..." sentence.
+//
+// The obvious denominator, |out|, is wrong: the signed sum cancels heavily — the
+// helper's own comment says dividing by it "would overstate them several times" —
+// so the printed share has to be against Σ|term|. Mutation testing swapped the
+// signed total in and nothing failed.
+func TestWeightedShareUsesAbsoluteMass(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 10, 5
+	h := a.layer().Heads[a.Head]
+	p := computeWeighted(h.Attn[10], h.V, 10, 0, len(a.Trace.Tokens))
+	if !p.OK {
+		t.Fatal("computeWeighted declined")
+	}
+	if p.AbsTotal == 0 || p.Out == 0 {
+		t.Skip("this row has no mass or no output, so the two denominators coincide")
+	}
+	var top float64
+	for _, tm := range p.Top {
+		top += math.Abs(tm.Val)
+	}
+	absoluteShare := 100 * top / p.AbsTotal
+	signedShare := 100 * top / math.Abs(p.Out)
+	if math.Abs(absoluteShare-signedShare) < 1 {
+		t.Skip("the two denominators give the same percentage here, so the panel " +
+			"cannot distinguish them")
+	}
+
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	want := fmt.Sprintf("三项占绝对值总量的 %.0f%%", absoluteShare)
+	wrong := fmt.Sprintf("三项占绝对值总量的 %.0f%%", signedShare)
+	var sawWant, sawWrong bool
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, want) {
+			sawWant = true
+		}
+		if strings.Contains(s, wrong) {
+			sawWrong = true
+		}
+	}
+	if !sawWant {
+		t.Fatalf("the panel does not print the absolute-mass share %q", want)
+	}
+	if sawWrong {
+		t.Fatalf("the panel prints the signed share %q as well", wrong)
+	}
 }
