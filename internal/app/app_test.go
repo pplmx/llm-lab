@@ -5679,3 +5679,67 @@ func TestSamplingCardDividesByTheSameModulusItNames(t *testing.T) {
 			d.x, numerator, implied)
 	}
 }
+
+// TestTop12TailSwitchesFormatBySize checks both branches of the tail-share
+// formatter.
+//
+// The line reads "其余 244 个合计 1.3e-05%" at the default temperature, where the
+// tail is negligible, and format selection matters exactly there: "%.4f" would print
+// 0.0000% and say nothing. But the other branch never ran in any test — replacing the
+// threshold check with `if true` left the suite green, because every tested
+// temperature produced a tail below 0.01%.
+//
+// At T=50 the tail carries 93% of the mass, which needs the plain percentage. Both
+// branches exist for real cases, so both get a test.
+func TestTop12TailSwitchesFormatBySize(t *testing.T) {
+	tailShare := func(temp float64) (share float64, printed string) {
+		a := newTestApp(t)
+		a.Step = 6
+		a.Temp = temp
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		probs := a.Trace.Probabilities(temp)
+		top := model.TopK(probs, 12)
+		inTop := map[int]bool{}
+		for _, id := range top {
+			inTop[id] = true
+		}
+		for id, p := range probs {
+			if !inTop[id] {
+				share += float64(p)
+			}
+		}
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "个合计") {
+				printed = s
+			}
+		}
+		return share * 100, printed
+	}
+
+	// Cold: the tail is vanishing, so the percentage must be written in scientific
+	// notation — "%.4f" would round it to 0.0000%.
+	smallShare, smallText := tailShare(0.5)
+	if smallShare >= 0.01 {
+		t.Fatalf("at T=0.5 the tail is %.4f%%, not small enough to test the "+
+			"scientific branch", smallShare)
+	}
+	if !strings.Contains(smallText, "e-") {
+		t.Fatalf("a tail of %.4f%% is printed as %q, which rounds to 0.0000%%",
+			smallShare, smallText)
+	}
+
+	// Hot: the tail dominates, so the plain percentage is the readable form and
+	// scientific notation would say "9.3e+01%" where "93.0368%" is right there.
+	bigShare, bigText := tailShare(50)
+	if bigShare < 0.01 {
+		t.Fatalf("at T=50 the tail is only %.4f%%, so the plain branch cannot be "+
+			"reached", bigShare)
+	}
+	if strings.Contains(bigText, "e+") || strings.Contains(bigText, "e-") {
+		t.Fatalf("a tail of %.4f%% is printed in scientific notation: %q", bigShare, bigText)
+	}
+	if !strings.Contains(bigText, "%") {
+		t.Fatalf("the tail line does not carry a percentage: %q", bigText)
+	}
+}
