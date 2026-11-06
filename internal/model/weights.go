@@ -1,8 +1,10 @@
 package model
 
 import (
+	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -95,9 +97,20 @@ func Load(path string) (*Weights, error) {
 
 // Parse decodes and validates weights.
 func Parse(data []byte, source string) (*Weights, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		// "unexpected end of JSON input" is what an empty file and a truncated
+		// one both produce, and it does not say which. An empty file is the more
+		// likely mistake — a failed download, a wrong path — so name it.
+		return nil, fmt.Errorf("parse weights: %s is empty", source)
+	}
 	var w Weights
 	if err := json.Unmarshal(data, &w); err != nil {
-		return nil, fmt.Errorf("parse weights: %w", err)
+		var syn *json.SyntaxError
+		if errors.As(err, &syn) {
+			return nil, fmt.Errorf("parse weights: %s is not valid JSON (%v at byte %d)",
+				source, syn, syn.Offset)
+		}
+		return nil, fmt.Errorf("parse weights: %s: %w", source, err)
 	}
 	w.Source = source
 	if err := w.validate(); err != nil {
@@ -108,6 +121,16 @@ func Parse(data []byte, source string) (*Weights, error) {
 
 func (w *Weights) validate() error {
 	c := w.Config
+	// An all-zero config means the JSON parsed but carried none of the keys this
+	// loader looks for — wrong names, wrong nesting, or a different format
+	// entirely. Reporting the first field it happened to reach ("vocab is 0")
+	// sends the reader to fix a value that was never there, so say what the shape
+	// of the problem is instead.
+	if c == (Config{}) {
+		return fmt.Errorf("weights: the file parsed but has no configuration " +
+			"(expected keys like \"config\", \"tok_embed\", \"layers\"); " +
+			"it may be from another tool or a different schema")
+	}
 	if c.Vocab != ByteVocab {
 		return fmt.Errorf("weights: vocab is %d, want %d for byte-level tokens", c.Vocab, ByteVocab)
 	}
@@ -129,17 +152,23 @@ func (w *Weights) validate() error {
 	if c.DModel%c.NHead != 0 {
 		return fmt.Errorf("weights: d_model %d is not divisible by n_head %d", c.DModel, c.NHead)
 	}
+	// Tensors are checked largest-first, in the order a hand-built or converted
+	// file is most likely to omit them. Reporting lnf_g (a d_model-long vector)
+	// before tok_embed (vocab x d_model) told the reader to fix the small one
+	// first, when a file missing every tensor is missing the big ones.
+	if len(w.TokEmbed) != c.Vocab*c.DModel {
+		return fmt.Errorf("weights: tok_embed has %d values, want %d (vocab x d_model)",
+			len(w.TokEmbed), c.Vocab*c.DModel)
+	}
+	if len(w.PosEmbed) != c.Ctx*c.DModel {
+		return fmt.Errorf("weights: pos_embed has %d values, want %d (ctx x d_model)",
+			len(w.PosEmbed), c.Ctx*c.DModel)
+	}
 	if len(w.LNFG) != c.DModel {
 		return fmt.Errorf("weights: lnf_g has %d values, want %d", len(w.LNFG), c.DModel)
 	}
 	if len(w.LNFB) != c.DModel {
 		return fmt.Errorf("weights: lnf_b has %d values, want %d", len(w.LNFB), c.DModel)
-	}
-	if len(w.TokEmbed) != c.Vocab*c.DModel {
-		return fmt.Errorf("weights: tok_embed has %d values, want %d", len(w.TokEmbed), c.Vocab*c.DModel)
-	}
-	if len(w.PosEmbed) != c.Ctx*c.DModel {
-		return fmt.Errorf("weights: pos_embed has %d values, want %d", len(w.PosEmbed), c.Ctx*c.DModel)
 	}
 	if len(w.Layers) != c.NLayer {
 		return fmt.Errorf("weights: %d layers, want %d", len(w.Layers), c.NLayer)

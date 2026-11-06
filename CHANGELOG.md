@@ -34,6 +34,14 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Fixed
+
+- 畸形权重文件的报错信息指向了错误的字段
+  - 空文件与截断文件原来都报 `unexpected end of JSON input`，无法区分；现在空文件报「`<path>` is empty」，截断报「not valid JSON（… at byte N）」
+  - JSON 键名全都不对时（例如来自另一个工具的文件）原来报 `vocab is 0`，读者会去改一个**根本不存在**的值；现在报「文件能解析但没有配置（期望 `config` / `tok_embed` / `layers` 之类的键）」
+  - 缺少张量时原来先报最小的 `lnf_g`（96 个数），现在按大小顺序先报 `tok_embed`（24576 个数）并附上期望维度（`vocab x d_model`）
+  - 这些信息是读者**唯一**能看到的东西：`main.go` 对 `-weights` 加载失败是 `log.Fatalf` 直接退出
+
 ### Added
 
 - 新增 `enums_test.go`：检查 `internal/app` 里「列出部分取值、其余落到 default」的那几个 switch 是否真的取值封闭
