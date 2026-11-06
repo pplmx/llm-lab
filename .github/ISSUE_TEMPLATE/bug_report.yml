@@ -1,0 +1,59 @@
+name: Bug 报告
+description: 界面错位、数字不对、构建失败等问题
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        提 issue 前先跑一遍 `just check`，并在 `main` 最新代码上确认问题仍存在。
+        如果是安全问题，请不要公开提交，见 SECURITY.md。
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本
+      description: release 版本号，或 `git rev-parse --short HEAD`
+      placeholder: v0.1.0 / a1b2c3d
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: 系统
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Linux (amd64)
+        - Linux (arm64)
+        - Windows
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 现象
+      description: 看到什么、期望什么。界面问题请附截图（`RENDER=1 go test ./internal/app -run TestRenderSteps` 的产物也可以）。
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: 提示词、窗口尺寸、层/头/温度设置等，越具体越好
+      placeholder: |
+        1. 运行 `just run -w 1180 -h 720` 或 `go run . -w 1180 -h 720`
+        2. 输入 "The transformer reads"
+        3. 切到第 4 步
+        4. ……
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 报错
+      description: 终端输出、堆栈，或 `go test` 的失败信息
+      render: shell

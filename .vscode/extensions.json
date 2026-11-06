@@ -1,0 +1,12 @@
+{
+  "recommendations": [
+    "golang.go",
+    "editorconfig.editorconfig",
+    "redhat.vscode-yaml",
+    "timonwong.shellcheck",
+    "nefrob.vscode-just-syntax"
+  ],
+  "unwantedRecommendations": [
+    "ms-vscode.cpptools"
+  ]
+}

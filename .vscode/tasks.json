@@ -1,0 +1,51 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "just: build（三端）",
+      "type": "shell",
+      "command": "just build",
+      "group": { "kind": "build", "isDefault": true },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "just: build（本机平台）",
+      "type": "shell",
+      "command": "just build ${input:platform}",
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "just: test",
+      "type": "shell",
+      "command": "just test",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": ["$go"]
+    },
+    {
+      "label": "just: run",
+      "type": "shell",
+      "command": "just run",
+      "problemMatcher": []
+    },
+    {
+      "label": "just: clean",
+      "type": "shell",
+      "command": "just clean",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "platform",
+      "type": "pickString",
+      "description": "构建哪个平台",
+      "options": [
+        "linux/amd64",
+        "linux/arm64",
+        "windows/amd64",
+        "darwin/universal"
+      ],
+      "default": "linux/amd64"
+    }
+  ]
+}

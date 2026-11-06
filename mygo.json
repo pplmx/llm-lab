@@ -1,0 +1,5 @@
+{
+  "name": "LLM Lab",
+  "identifier": "dev.llmlab.app",
+  "out": "build"
+}

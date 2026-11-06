@@ -1,0 +1,56 @@
+# 构建产物（just build / go tool mygo build 的输出目录）
+/build/
+/dist/
+*.app
+*.dmg
+*.deb
+*.rpm
+*.exe
+*.msi
+*.tar.gz
+*.zip
+
+# MyGo 与本地可执行文件
+.mygo/
+/llm-lab
+/mygo
+
+# 运行期数据
+*.db
+*.log
+
+# Go
+/vendor/
+*.test
+*.out
+*.prof
+coverage.html
+
+# Python（tools/ 下的训练与对拍脚本）
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# 编辑器与 IDE
+.idea/
+.history/
+*.swp
+*.swo
+*~
+# .vscode 里的共享配置会提交，个人覆盖文件不提交
+.vscode/*.local.json
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 密钥与环境变量
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.pfx

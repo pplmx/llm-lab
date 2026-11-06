@@ -1,0 +1,30 @@
+# 统一用 LF，Windows 检出时由编辑器按 editorconfig 处理
+* text=auto eol=lf
+
+*.go            text eol=lf
+*.md            text eol=lf
+*.json          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+*.py            text eol=lf
+justfile        text eol=lf
+go.mod          text eol=lf
+go.sum          text eol=lf
+
+# Windows 脚本保持 CRLF
+*.bat           text eol=crlf
+*.cmd           text eol=crlf
+
+# 二进制，别做换行转换与文本 diff
+*.png           binary
+*.jpg           binary
+*.gif           binary
+*.gz            binary
+*.exe           binary
+*.dmg           binary
+*.deb           binary
+
+# 生成物：折叠 diff、排除语言统计
+internal/model/weights.json      linguist-generated=true
+internal/model/testdata/*.gz     linguist-generated=true
+docs/*.png                       linguist-documentation=true
