@@ -2656,3 +2656,99 @@ func TestWeightedWorkingsAppearOnStage(t *testing.T) {
 		t.Fatal("the working did not follow the hovered dimension")
 	}
 }
+
+// TestHeadContributionsMatchTheTrace checks the per-head norms are the trace's
+// own, and that the cancellation ratio is the one the card prints.
+func TestHeadContributionsMatchTheTrace(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	for li := range tr.Layers {
+		l := tr.Layers[li]
+		for _, i := range []int{0, 5, a.SelToken} {
+			c := computeHeadContributions(l, i)
+			if !c.OK {
+				t.Fatalf("layer %d token %d: no contributions", li, i)
+			}
+			if len(c.Heads) != len(l.HeadProj) {
+				t.Fatalf("layer %d token %d: %d heads, want %d", li, i, len(c.Heads), len(l.HeadProj))
+			}
+			var sum float64
+			for h, hh := range c.Heads {
+				want := float64(norm(l.HeadProj[h][i]))
+				if math.Abs(hh.Norm-want) > 1e-6 {
+					t.Fatalf("layer %d token %d head %d: norm %.6f, trace %.6f", li, i, h, hh.Norm, want)
+				}
+				sum += want
+			}
+			if math.Abs(c.SumNorm-sum) > 1e-6 {
+				t.Fatalf("layer %d token %d: SumNorm %.6f, want %.6f", li, i, c.SumNorm, sum)
+			}
+			if want := float64(norm(l.AttnProj[i])); math.Abs(c.TotalNorm-want) > 1e-6 {
+				t.Fatalf("layer %d token %d: TotalNorm %.6f, ||AttnProj|| %.6f", li, i, c.TotalNorm, want)
+			}
+			if want := c.TotalNorm / c.SumNorm; math.Abs(c.Cancellation-want) > 1e-9 {
+				t.Fatalf("layer %d token %d: cancellation %.6f, want %.6f", li, i, c.Cancellation, want)
+			}
+			// Shares sum to 100.
+			var share float64
+			for _, hh := range c.Heads {
+				share += hh.Share
+			}
+			if math.Abs(share-100) > 1e-6 {
+				t.Fatalf("layer %d token %d: shares sum to %.4f", li, i, share)
+			}
+		}
+	}
+}
+
+// TestHeadsCancelEverywhere is the claim the card makes: the heads' norms sum to
+// more than the norm of their sum on every row of this model, not just the one
+// being looked at. If that ever stops holding, the callout text is wrong and
+// this fails rather than quietly misleading a reader.
+func TestHeadsCancelEverywhere(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	total := headRowCount(tr)
+	withCancellation := headRowCountWithCancellation(tr)
+	if total == 0 {
+		t.Fatal("no rows measured")
+	}
+	if withCancellation != total {
+		t.Fatalf("only %d of %d rows cancel (ratio < 1); the callout claims all of them",
+			withCancellation, total)
+	}
+	lo, hi := headCancellationRange(tr)
+	if !(lo < 1 && hi < 1) {
+		t.Fatalf("cancellation range %.3f-%.3f is not entirely below 1", lo, hi)
+	}
+	// And the range the card prints must be a real spread, not a degenerate one.
+	if hi-lo < 0.05 {
+		t.Fatalf("cancellation range %.3f-%.3f is too narrow to quote", lo, hi)
+	}
+	t.Logf("%d/%d rows cancel; ratio range %.2f-%.2f", withCancellation, total, lo, hi)
+}
+
+// TestHeadContributionBarsAppear checks the bars reach the stage and follow the
+// selected head.
+func TestHeadContributionBarsAppear(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.Head = 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("各头写进残差流的长度") {
+		t.Fatal("no head-contribution block")
+	}
+	// The selected head is marked, and no other is.
+	if !tr.HasText("H2 ◂") {
+		t.Fatal("the selected head is not marked in the bars")
+	}
+	for h := 0; h < a.W.Config.NHead; h++ {
+		if h == a.Head {
+			continue
+		}
+		if tr.HasText(fmt.Sprintf("H%d ◂", h)) {
+			t.Fatalf("head %d is marked but head %d is selected", h, a.Head)
+		}
+	}
+}

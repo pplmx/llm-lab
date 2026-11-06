@@ -497,6 +497,40 @@ func (a *App) stageSoftmax(c *ui.Context) {
 		if p := computeWeighted(h.Attn[i], h.V, i, dim, len(tr.Tokens)); p.OK {
 			weightedWorkings(c, i, dim, p)
 		}
+		// What each head writes into the residual, and the fact that those
+		// writes partly cancel. Without this the card shows one head's
+		// projection and the merged vector with no sense of scale between them.
+		if hc := computeHeadContributions(*l, i); hc.OK {
+			ui.Text(c, "各头写进残差流的长度 ‖HeadProj[h]‖").FontSize(fontMicro).TextColor(colFaint)
+			rows := make([]barRow, 0, len(hc.Heads))
+			for _, hh := range hc.Heads {
+				label := fmt.Sprintf("H%d", hh.Head)
+				colour := colGreen
+				if hh.Head == a.Head {
+					label = fmt.Sprintf("H%d ◂", hh.Head)
+					colour = colAccent2
+				}
+				rows = append(rows, barRow{
+					Label:      label,
+					Value:      float32(hh.Norm),
+					ValueText:  fmt.Sprintf("%.2f", hh.Norm),
+					Color:      colour,
+					LabelWidth: 40,
+					ValueWidth: 40,
+					Tip:        fmt.Sprintf("头 %d 写入残差的 L2 长度 %.3f（占四头之和 %.0f%%）", hh.Head, hh.Norm, hh.Share),
+				})
+			}
+			bars(c, rows, float32(hc.SumNorm), colGreen)
+			cLo, cHi := headCancellationRange(tr)
+			misconception(c,
+				"「四个头各写一块，加起来就是它们长度的和」",
+				fmt.Sprintf("范数不能直接相加。四个头的长度之和是 %.2f，但它们相加后的长度只有 %.2f，"+
+					"比值 %.2f——也就是说四个向量只有一部分指向同一方向，其余互相抵消了。"+
+					"这不是这一行碰巧如此：本模型 %d 行里 %d 行都是这样（比值 %.2f–%.2f）。"+
+					"所以「注意力输出 = 各头之和」是一次向量加法，不是把四份贡献堆起来。",
+					hc.SumNorm, hc.TotalNorm, hc.Cancellation,
+					headRowCount(tr), headRowCountWithCancellation(tr), cLo, cHi))
+		}
 	})
 }
 
@@ -568,6 +602,48 @@ func (a *App) stageResidual(c *ui.Context) {
 				inMean, outMean, outMean/inMean,
 				pin, lnLo, lnHi, 100*lnLo/pin, 100*lnHi/pin))
 	})
+}
+
+// headRowCount is the number of (layer, token) rows the cancellation claim is
+// measured over.
+func headRowCount(tr *model.Trace) int {
+	return len(tr.Layers) * len(tr.Tokens)
+}
+
+// headRowCountWithCancellation counts rows where the heads' norms sum to more
+// than the norm of their sum. The residual card quotes this to make "they
+// cancel" a measurement rather than an impression.
+func headRowCountWithCancellation(tr *model.Trace) int {
+	n := 0
+	for li := range tr.Layers {
+		l := tr.Layers[li]
+		for i := 0; i < len(tr.Tokens) && i < len(l.AttnProj); i++ {
+			if c := computeHeadContributions(l, i); c.OK && c.Cancellation < 1 {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// headCancellationRange returns the smallest and largest cancellation ratio over
+// every row of the trace.
+func headCancellationRange(tr *model.Trace) (lo, hi float64) {
+	lo = math.Inf(1)
+	for li := range tr.Layers {
+		l := tr.Layers[li]
+		for i := 0; i < len(tr.Tokens) && i < len(l.AttnProj); i++ {
+			if c := computeHeadContributions(l, i); c.OK && c.SumNorm > 0 {
+				if c.Cancellation < lo {
+					lo = c.Cancellation
+				}
+				if c.Cancellation > hi {
+					hi = c.Cancellation
+				}
+			}
+		}
+	}
+	return lo, hi
 }
 
 // residualWorkings prints the additions that build one dimension of the residual
