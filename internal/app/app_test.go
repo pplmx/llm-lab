@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
 
@@ -2855,5 +2856,86 @@ func TestInvalidByteCardShowsTheByte(t *testing.T) {
 	}
 	if !hasByte {
 		t.Fatal("the card does not explain the invalid byte")
+	}
+}
+
+// TestTruncationDropsWholeCharacters checks the two claims the tokenising card
+// now makes when a prompt is truncated: the counts describe the truncated
+// sequence while stating the original length, and truncation never starts in the
+// middle of a character.
+func TestTruncationDropsWholeCharacters(t *testing.T) {
+	a := newTestApp(t)
+	ctx := a.W.Config.Ctx
+
+	// ASCII fills the window exactly.
+	b := newTestApp(t)
+	b.Prompt = strings.Repeat("a", ctx+36)
+	b.recompute()
+	if got := len(b.Trace.Tokens); got != ctx {
+		t.Fatalf("ASCII prompt used %d tokens, want the full %d", got, ctx)
+	}
+	if dropped := len(b.Prompt) - len(b.Trace.Tokens); dropped != 36 {
+		t.Fatalf("dropped %d bytes, want 36", dropped)
+	}
+
+	// A multi-byte prompt stops short of ctx so it does not cut a character.
+	c := newTestApp(t)
+	c.Prompt = strings.Repeat("注意力", 30)
+	c.recompute()
+	tr := c.Trace
+	if len(tr.Tokens) > ctx {
+		t.Fatalf("%d tokens exceeds ctx %d", len(tr.Tokens), ctx)
+	}
+	if len(tr.Tokens) < ctx-3 {
+		t.Fatalf("%d tokens leaves more than one character unused", len(tr.Tokens))
+	}
+	// The kept text must be a suffix of the prompt: truncation takes the end.
+	if !strings.HasSuffix(c.Prompt, tr.Text) {
+		t.Fatalf("kept text %q is not a suffix of the prompt", tr.Text)
+	}
+	// And it must begin on a character boundary, i.e. decode cleanly.
+	if !utf8.ValidString(tr.Text) {
+		t.Fatalf("kept text is not valid UTF-8: %q", tr.Text)
+	}
+	if first := []rune(tr.Text)[0]; first < 0x4E00 || first > 0x9FFF {
+		t.Fatalf("kept text starts with %q, not a CJK character", first)
+	}
+}
+
+// TestTruncatedCardStatesBothByteCounts checks the card stops presenting the
+// truncated length as if it described the prompt. "字节数 63" on a 270-byte
+// prompt is a fact about the window, not the input.
+func TestTruncatedCardStatesBothByteCounts(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = strings.Repeat("注意力", 30)
+	a.recompute()
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	var sawTruncated, sawDropped bool
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "原文 270") {
+			sawTruncated = true
+		}
+		if strings.Contains(s, "丢弃前 207 字节") {
+			sawDropped = true
+		}
+	}
+	if !sawTruncated || !sawDropped {
+		t.Fatalf("card does not state both counts: truncated=%v dropped=%v", sawTruncated, sawDropped)
+	}
+
+	// An untruncated prompt keeps the plain form and shows no drop notice.
+	b := newTestApp(t)
+	b.Prompt = "hello"
+	b.recompute()
+	b.Step = 0
+	tr2 := ui.NewTester(b.View, 1500, 940)
+	tr2.Frame()
+	for _, s := range tr2.Texts() {
+		if strings.Contains(s, "原文") || strings.Contains(s, "丢弃") {
+			t.Fatalf("untruncated prompt shows a truncation count: %q", s)
+		}
 	}
 }

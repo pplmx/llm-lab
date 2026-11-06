@@ -158,8 +158,19 @@ func (a *App) stageTokens(c *ui.Context) {
 	// the sequence itself to that strip.
 	card(c, func() {
 		sectionTitle(c, "提示词变成 token 序列", fmt.Sprintf("T = %d", len(tr.Tokens)))
+		// The counts describe the sequence the model actually ran on, which is
+		// not the whole prompt once truncation kicks in. Saying "字节数 63" for a
+		// 270-byte prompt reads as a fact about the prompt, so a truncated run
+		// states both numbers.
+		dropped := len(a.Prompt) - len(tr.Tokens)
 		ui.Row(c).Gap(16).Wrap().Children(func() {
-			ui.Text(c, fmt.Sprintf("字节数 %d", len(tr.Tokens))).FontSize(fontSmall).TextColor(colFaint)
+			if dropped > 0 {
+				ui.Text(c, fmt.Sprintf("字节数 %d（原文 %d）", len(tr.Tokens), len(a.Prompt))).
+					FontSize(fontSmall).TextColor(colMuted)
+				ui.Text(c, fmt.Sprintf("丢弃前 %d 字节", dropped)).FontSize(fontSmall).TextColor(colWarm)
+			} else {
+				ui.Text(c, fmt.Sprintf("字节数 %d", len(tr.Tokens))).FontSize(fontSmall).TextColor(colFaint)
+			}
 			ui.Text(c, fmt.Sprintf("字符数 %d", utf8.RuneCountInString(tr.Text))).FontSize(fontSmall).TextColor(colFaint)
 			ui.Text(c, fmt.Sprintf("上下文上限 %d", tr.Config.Ctx)).FontSize(fontSmall).TextColor(colFaint)
 			if extra := len(tr.Tokens) - utf8.RuneCountInString(tr.Text); extra > 0 {

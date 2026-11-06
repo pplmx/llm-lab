@@ -53,6 +53,13 @@ func TestRenderSizes(t *testing.T) {
 			ui.Render(a.View, 1180, 720, 1))
 	}
 
+	// Truncation: the tokenising card states both the kept length and the
+	// original, which is the only place the drop is visible.
+	a.Prompt = strings.Repeat("注意力", 30)
+	a.recompute()
+	a.Step = 0
+	writeSnapshot(t, dir, "size-truncated-1180.png", ui.Render(a.View, 1180, 720, 1))
+
 	// Untrained weights: the banner that stops a reader from trusting a random
 	// model's perfectly plausible triangle.
 	b := New(model.Random(model.DefaultConfig, 42))
