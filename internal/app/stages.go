@@ -951,7 +951,16 @@ func (a *App) stageOutput(c *ui.Context) {
 	card(c, func() {
 		sectionTitle(c, "最后位置的向量", "最终 LayerNorm 之后")
 		vectorStrip(c, tr.FinalNorm[last], 22, &a.HoverDimIn)
-		kv(c, "下一 token", fmt.Sprintf("温度 %.2f · 熵 %.2f nats", a.Temp, model.Entropy(probs)))
+		// An entropy of 0.16 nats means nothing without a scale. The ceiling is
+		// log(vocab) — the entropy of a uniform distribution over all 256 bytes —
+		// and the stage's whole point is how far below it this model sits, so
+		// state both. The attention stage already anchors its entropy against
+		// log(n); this is the same idea one stage later.
+		ent := float64(model.Entropy(probs))
+		ceiling := math.Log(float64(len(probs)))
+		kv(c, "下一 token", fmt.Sprintf("温度 %.2f · 熵 %.2f nats", a.Temp, ent))
+		kv(c, "熵的参考", fmt.Sprintf("均匀分布 log(%d) = %.2f nats，当前占 %.0f%%",
+			len(probs), ceiling, 100*ent/ceiling))
 	})
 
 	card(c, func() {

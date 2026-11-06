@@ -4122,3 +4122,57 @@ func TestTop12TailIsActuallySmall(t *testing.T) {
 			"everything and the header understates it", rest*100)
 	}
 }
+
+// TestOutputEntropyStatesItsCeiling checks stage 7 anchors its entropy reading.
+//
+// "熵 0.16 nats" says nothing on its own: a reader has no way to know whether
+// that is a lot or a little. The ceiling is log(vocab) — the entropy of a uniform
+// distribution over the 256 bytes — and on this model the answer is 3% of it,
+// which is the whole point of the stage. The attention stage already anchors its
+// entropy against log(n); this is the same idea one stage later.
+func TestOutputEntropyStatesItsCeiling(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	probs := a.Trace.Probabilities(a.Temp)
+	ent := float64(model.Entropy(probs))
+	ceiling := math.Log(float64(len(probs)))
+	wantLog := fmt.Sprintf("log(%d) = %.2f", len(probs), ceiling)
+	wantPct := fmt.Sprintf("当前占 %.0f%%", 100*ent/ceiling)
+
+	found := ""
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, wantLog) && strings.Contains(s, wantPct) {
+			found = s
+		}
+	}
+	if found == "" {
+		t.Fatalf("the stage does not state the entropy ceiling and this reading's share "+
+			"of it (want %q and %q)", wantLog, wantPct)
+	}
+}
+
+// TestOutputEntropyShareMovesWithTemperature is what makes the reference worth
+// printing: the share is not a constant, so a fixed percentage would be wrong as
+// soon as the reader touches the slider.
+func TestOutputEntropyShareMovesWithTemperature(t *testing.T) {
+	shares := map[float64]float64{}
+	for _, temp := range []float64{0.5, 2.0} {
+		a := newTestApp(t)
+		a.Temp = temp
+		probs := a.Trace.Probabilities(temp)
+		shares[temp] = 100 * float64(model.Entropy(probs)) / math.Log(float64(len(probs)))
+	}
+	if shares[0.5] >= shares[2.0] {
+		t.Fatalf("entropy share at T=0.5 (%.0f%%) is not below T=2.0 (%.0f%%)",
+			shares[0.5], shares[2.0])
+	}
+	// And the two round to different whole percentages, so the printed figure
+	// actually distinguishes them.
+	if math.Round(shares[0.5]) == math.Round(shares[2.0]) {
+		t.Fatalf("both temperatures print %.0f%%; the reading would look constant",
+			shares[0.5])
+	}
+}
