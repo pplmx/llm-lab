@@ -319,6 +319,16 @@ func (a *App) stageEmbed(c *ui.Context) {
 				dim, tr.Tokens[i].ID, dim, e, i, pos),
 			fmt.Sprintf("%s + %s = %+.4f", signed(e), signed(pos), x),
 		})
+		// The two terms are added, so the obvious question is how their sizes
+		// compare: if the position vector were much larger it would swamp the
+		// word, and much smaller would leave order barely encoded. Measured on
+		// this model they come out almost equal, which is a fact about this
+		// model — a reader should be able to see it rather than assume.
+		eNorm, pNorm := norm(tr.Embed[i]), norm(tr.Pos[i])
+		if pNorm > 0 {
+			kv(c, "两项的量级", fmt.Sprintf("‖E‖ %.2f · ‖P‖ %.2f · P/E = %.2f",
+				eNorm, pNorm, pNorm/eNorm))
+		}
 	})
 
 	card(c, func() {

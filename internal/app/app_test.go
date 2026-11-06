@@ -4246,3 +4246,55 @@ func TestActivationConcentrationIsAValidShare(t *testing.T) {
 		t.Fatalf("an empty row reports (%v, %d)", share, n)
 	}
 }
+
+// TestEmbedStageComparesTheTwoMagnitudes checks stage 2 states how the token
+// embedding and the position vector compare in size.
+//
+// They are added, so the ratio is the obvious question and the reader cannot
+// answer it from three separate strips: the caption under each shows its own
+// min/max/norm, and nothing puts them side by side. On this model they come out
+// nearly equal (P/E ≈ 0.95), which is a property of these weights rather than a
+// rule — so it has to be measured and shown, not asserted in prose.
+func TestEmbedStageComparesTheTwoMagnitudes(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 1
+	a.SelToken = 10 // a token whose P/E is not the 0.95 the default selection gives
+	i := a.SelToken
+	eNorm, pNorm := norm(a.Trace.Embed[i]), norm(a.Trace.Pos[i])
+	if pNorm == 0 || eNorm == 0 {
+		t.Fatal("one of the two vectors is zero, so the ratio is undefined")
+	}
+
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	want := fmt.Sprintf("‖E‖ %.2f · ‖P‖ %.2f · P/E = %.2f", eNorm, pNorm, pNorm/eNorm)
+	found := false
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the embedding stage does not state the two magnitudes (%q)", want)
+	}
+}
+
+// TestPositionMagnitudeIsComparableToTheEmbedding pins the premise of the row
+// above: it is worth printing because the two are within the same order. If a
+// future weight file made positions negligible or dominant, the wording would
+// deserve a second look.
+func TestPositionMagnitudeIsComparableToTheEmbedding(t *testing.T) {
+	a := newTestApp(t)
+	for _, i := range []int{0, 10, len(a.Trace.Tokens) - 1} {
+		e, p := norm(a.Trace.Embed[i]), norm(a.Trace.Pos[i])
+		if e == 0 {
+			t.Fatalf("token %d has a zero embedding", i)
+		}
+		ratio := float64(p / e)
+		t.Logf("token %2d: P/E = %.2f", i, ratio)
+		if ratio < 0.25 || ratio > 4 {
+			t.Fatalf("token %d: P/E = %.2f is more than a factor of four from 1; the "+
+				"stage's framing assumes the two are comparable", i, ratio)
+		}
+	}
+}
