@@ -11,6 +11,11 @@
 
 ### Changed
 
+- 对比度审计后修掉三处小字不达标（都不到 WCAG 的 4.5:1）：
+  - token 条的字节 id 从 `colFaint` 改成 `colMuted`：它在 idle 态 4.81:1 是够的，但悬停时降到 4.46:1、选中时只有 3.84:1
+  - 「字符 → 字节」卡片里的字节数字同样从 `colFaint` 改成 `colMuted`（4.46:1 → 6.51:1）
+  - 检查器的 token 字形在 16% 强调色底上是 4.22:1，改用新增的 `colAccentOnTint`（#A79AFF）后到 5.77:1，仍是强调色
+- 新增 `TestPaletteContrast` 与 `TestRailIDContrastInEveryChipState`，把 13 组前景/背景的对比度钉在代码里；把 `colAccentOnTint` 改回 `colAccent` 会立刻失败
 - 键盘格子与鼠标悬停拆成两套状态（`KeyQ/KeyK` 与 `HoverQ/HoverK`）：热力图每帧都会把 hover 重置成 -1，共用的话键盘选中的格子会被任何一次鼠标移动抹掉
 - 淡入起点用 0.35 而不是 0：实测 `Enter.Opacity = 0` 时首帧内容完全透明（那一帧就是纯背景），每次切阶段都会闪一下空白；mygo 在 `ReduceMotion` 下对「纯淡入」的 Enter 仍然会播，所以偏好减少动效的读者同样会看到这一闪
 - 字号收敛成 6 级阶梯（`fontMicro/Small/Body/Data/Title/Hero`，10/11/12/13/15/16），全部写在 `theme.go` 里；此前散落 10 个字号（9、10、10.5、11、12、12.5、13、14、15、16），其中 10.5 和 12.5 各只出现两三次

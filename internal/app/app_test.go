@@ -1077,3 +1077,83 @@ func TestKeyboardCellStaysInTriangle(t *testing.T) {
 		}
 	}
 }
+
+// contrastRatio is the WCAG 2.1 relative-luminance ratio between two colours.
+func contrastRatio(a, b ui.Color) float64 {
+	la, lb := relativeLuminance(a), relativeLuminance(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+func relativeLuminance(c ui.Color) float64 {
+	lin := func(v uint8) float64 {
+		f := float64(v) / 255
+		if f <= 0.04045 {
+			return f / 12.92
+		}
+		return math.Pow((f+0.055)/1.055, 2.4)
+	}
+	return 0.2126*lin(c.R) + 0.7152*lin(c.G) + 0.0722*lin(c.B)
+}
+
+// over composites a translucent colour onto an opaque one, as the painter does.
+func over(fg, bg ui.Color) ui.Color {
+	a := float64(fg.A) / 255
+	mix := func(f, b uint8) uint8 {
+		return uint8(math.Round(float64(f)*a + float64(b)*(1-a)))
+	}
+	return ui.Color{R: mix(fg.R, bg.R), G: mix(fg.G, bg.G), B: mix(fg.B, bg.B), A: 255}
+}
+
+// TestPaletteContrast pins the pairs this round fixed and the ones around them
+// that the audit found already passing, so a later palette tweak cannot quietly
+// drop a caption below the 4.5:1 that small text needs. Disabled controls are
+// exempt under WCAG, so they are not listed.
+func TestPaletteContrast(t *testing.T) {
+	const small = 4.5
+	cases := []struct {
+		name    string
+		fg, bg  ui.Color
+		minimum float64
+	}{
+		{"card body", colText, colPanel, small},
+		{"card muted prose", colMuted, colPanel, small},
+		{"card caption", colFaint, colPanel, small},
+		{"sidebar status line", colFaint, colBg, small},
+		{"sidebar model label", colMuted, colBg, small},
+		// The three this round fixed.
+		{"byte digit on its chip", colMuted, colPanel2, small},
+		{"rail id on a hovered chip", colMuted, colPanel2, small},
+		{"rail id on the selected chip", colMuted, over(colAccent.Alpha(0.16), colPanel), small},
+		{"inspector glyph on its tint", colAccentOnTint, over(colAccent.Alpha(0.16), colPanel), small},
+		// Text on a filled accent/badge surface runs the other way.
+		{"stage badge", colBg, colAccent, small},
+		{"stepper number on a done dot", colBg, colMuted, small},
+		{"mark chip on warm", colBg, colWarm, small},
+		{"mark chip on accent2", colBg, colAccent2, small},
+	}
+	for _, c := range cases {
+		if got := contrastRatio(c.fg, c.bg); got < c.minimum {
+			t.Errorf("%s: contrast %.2f:1, want at least %.1f:1", c.name, got, c.minimum)
+		}
+	}
+}
+
+// TestRailIDContrastInEveryChipState checks the rail's byte id against all
+// three backgrounds the chip can have: idle, hovered, selected. It was colFaint
+// in every state, which passed at 4.81:1 when idle but fell to 4.46:1 hovered
+// and 3.84:1 selected.
+func TestRailIDContrastInEveryChipState(t *testing.T) {
+	states := map[string]ui.Color{
+		"idle":     colPanel,
+		"hovered":  colPanel2,
+		"selected": over(colAccent.Alpha(0.16), colPanel),
+	}
+	for name, bg := range states {
+		if got := contrastRatio(colMuted, bg); got < 4.5 {
+			t.Errorf("rail id on the %s chip: %.2f:1", name, got)
+		}
+	}
+}

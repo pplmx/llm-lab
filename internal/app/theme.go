@@ -16,13 +16,18 @@ var (
 	colMuted  = ui.Hex("#9BA5B8")
 	// colFaint is used for 9–10px labels, so it has to clear 4.5:1 on the
 	// panel colour; the previous #5C6577 sat at 3.0:1 and disappeared.
-	colFaint   = ui.Hex("#7C879B")
-	colAccent  = ui.Hex("#8B7BFF")
-	colAccent2 = ui.Hex("#4CC2FF")
-	colPos     = ui.Hex("#F0596B")
-	colNeg     = ui.Hex("#4C8DF6")
-	colWarm    = ui.Hex("#FFB86B")
-	colGreen   = ui.Hex("#3DD68C")
+	colFaint  = ui.Hex("#7C879B")
+	colAccent = ui.Hex("#8B7BFF")
+	// colAccentOnTint is colAccent lightened just enough to read on the 16%
+	// accent tint behind the inspector's token glyph. Plain colAccent lands at
+	// 4.22:1 there, under the 4.5 the small bold glyph needs; this clears 5.7:1
+	// while still reading as the accent rather than as plain text.
+	colAccentOnTint = ui.Hex("#A79AFF")
+	colAccent2      = ui.Hex("#4CC2FF")
+	colPos          = ui.Hex("#F0596B")
+	colNeg          = ui.Hex("#4C8DF6")
+	colWarm         = ui.Hex("#FFB86B")
+	colGreen        = ui.Hex("#3DD68C")
 )
 
 // Type scale. The lesson used to carry ten sizes — 9, 10, 10.5, 11, 12, 12.5,

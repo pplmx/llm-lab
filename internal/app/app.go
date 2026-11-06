@@ -795,7 +795,7 @@ func (a *App) inspectorToken(c *ui.Context, tr *model.Trace) {
 	card(c, func() {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			ui.Box(c).Size(34, 34).Radius(6).Background(colAccent.Alpha(0.16)).Children(func() {
-				ui.Text(c, tk.Text).FontSize(fontHero).Bold().TextColor(colAccent).NoWrap()
+				ui.Text(c, tk.Text).FontSize(fontHero).Bold().TextColor(colAccentOnTint).NoWrap()
 			})
 			ui.Column(c).Gap(1).Children(func() {
 				ui.Text(c, fmt.Sprintf("token #%d / %d", a.SelToken, len(tr.Tokens)-1)).FontSize(fontBody).Bold()
