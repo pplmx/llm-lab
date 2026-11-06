@@ -116,13 +116,13 @@ go run . -weights /path/to/other.json  # 换一份权重（需为 vocab 256 的 
 - softmax 每行和为 1、因果掩码让上三角严格为 0、LayerNorm 输出零均值单位方差
 - 同一输入两次前向结果逐位一致
 - tokenizer 中英文往返一致；截断不会切在多字节字符中间
-- **逐张量与 PyTorch 对齐**：`tools/parity.py` 把同一份 `weights.json` 在 PyTorch 里跑一遍，导出 46 token 提示词的全部中间结果（embedding、每层 Norm1、每个头的 Q/K/V、score、attn、头输出、AttnProj、Norm2、GELU 前后、FFN 输出、最终 Norm、logits），Go 侧 `TestParityEveryTensor` 逐项比对，所有张量最大误差 1.6e-5，logits 1.7e-5。这比只比最终 logits 严格得多：头切片顺序、拼接布局、GELU 变体、LayerNorm 的 eps 出错都会被抓到
+- **逐张量与 PyTorch 对齐**：`tools/parity.py` 把同一份 `weights.json` 在 PyTorch 里跑一遍，导出 46 token 提示词的全部中间结果（embedding、每层 Norm1、每个头的 Q/K/V、score、attn、头输出、AttnProj、Norm2、GELU 前后、FFN 输出、最终 Norm、logits），Go 侧 `TestParityEveryTensor` 逐项比对，所有张量最大误差 1.8e-5，logits 1.5e-5（GELU 用 8192 项查表近似 erf，误差 ≤ 4e-7，由 `TestGeluMatchesErf` 锁定）。这比只比最终 logits 严格得多：头切片顺序、拼接布局、GELU 变体、LayerNorm 的 eps 出错都会被抓到
 - 单头贡献之和严格等于该层的注意力输出（`TestHeadProjSumsToAttnProj`），界面上「本头贡献 Δ_h」不是拿总和冒充的
 - 用 `ui.Tester` 模拟真实点击，验证阶段切换
 
 界面本身也能在没有窗口的情况下渲染成 PNG（`ui.Render`）：`RENDER=1 go test ./internal/app -run 'TestRenderSteps|TestRenderSizes'` 会把七个阶段、1180/1500/1920 三种窗口宽度、以及 64 token 长提示词的截图写到 `/tmp`，用于回归检查布局与溢出。
 
-性能（单核，Intel Xeon，纯 Go 无 SIMD）：前向 16 token ≈ 4.0 ms、64 token ≈ 16.7 ms；整帧 `ui.Render` ≈ 13.7 ms（CPU 光栅化）。
+性能（AMD EPYC 7742，Go 1.27，纯 Go 无 SIMD）：前向 16 token 单核 ≈ 1.5 ms、64 token 单核 ≈ 6.4 ms，4 核下 64 token ≈ 2.5 ms（矩阵乘按行、注意力按头并行，最多 8 个 worker）；整帧 `ui.Render` ≈ 10.0 ms（CPU 光栅化）。
 
 ## 已知限制
 
