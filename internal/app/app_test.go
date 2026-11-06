@@ -3562,3 +3562,55 @@ func TestDisabledTemperatureSliderRefusesInput(t *testing.T) {
 		t.Fatalf("a greyed slider changed the temperature: %.2f -> %.2f", beforeD, disabled.Temp)
 	}
 }
+
+// TestStageSwitchResetsTheMainScroll pins the behaviour a reader relies on when
+// jumping between stages: the new stage starts at its top, not wherever the last
+// one was scrolled to.
+//
+// Getting this test to say anything required learning that wheel scrolling is
+// animated in this toolkit: Wheel queues a glide and Scroll.Y stays put until
+// time advances. Two probes reported "the wheel does nothing" before that, which
+// would have been a report of a bug that did not exist.
+func TestStageSwitchResetsTheMainScroll(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3 // a tall stage at this window size
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	tr.Move(500, 400)
+	tr.Frame()
+
+	// One notch moves gradually, not instantly.
+	tr.Wheel(500, 400, 0, 100)
+	tr.Advance(time.Second)
+	tr.Frame()
+	if a.Scroll.Y <= 0 {
+		t.Fatalf("the wheel did not scroll the main column (Y=%.0f)", a.Scroll.Y)
+	}
+
+	// Scroll well past the top.
+	for i := 0; i < 10; i++ {
+		tr.Wheel(500, 400, 0, 300)
+		tr.Advance(time.Second)
+	}
+	tr.Frame()
+	deep := a.Scroll.Y
+	if deep < 200 {
+		t.Fatalf("expected to be well down the page, got Y=%.0f", deep)
+	}
+
+	// Switching stages puts it back at the top.
+	a.selectStep(0)
+	tr.Frame()
+	if a.Scroll.Y != 0 {
+		t.Fatalf("stage switch left the scroll at %.0f", a.Scroll.Y)
+	}
+
+	// A scroll set from anywhere else is cleared by the same path, so the reset
+	// is a property of selectStep rather than of having arrived there by wheel.
+	b := newTestApp(t)
+	b.Scroll.Y = 300
+	b.selectStep(5)
+	if b.Scroll.Y != 0 {
+		t.Fatalf("selectStep left a preset scroll at %.0f", b.Scroll.Y)
+	}
+}
