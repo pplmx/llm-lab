@@ -3802,3 +3802,79 @@ func containsText(tr *ui.Tester, s string) bool {
 	}
 	return false
 }
+
+// TestScoreLegendStatesTheColorScale checks the stage says what the brightest
+// cell is worth.
+//
+// The legend said only "正分（暖色）" and "负分（蓝色）", so a reader could see
+// that one cell was warmer than another but not what either value was. The ramp
+// saturates at the largest |score| in the matrix, and that number moves with the
+// prompt — 5.42 for "hi", 8.25 for a longer one — so it cannot be inferred from
+// the weights, the prompt, or anything else on the stage.
+func TestScoreLegendStatesTheColorScale(t *testing.T) {
+	for _, prompt := range []string{"hi", "attention is a weighted sum"} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 2
+		want := scoreColorScale(a.layer().Heads[a.Head])
+		if want <= 0 {
+			t.Fatalf("%q: the matrix has no scores", prompt)
+		}
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+
+		label := fmt.Sprintf("|分数| = %.2f", want)
+		found := false
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, label) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%q: the legend does not state the colour scale %q", prompt, label)
+		}
+	}
+
+	// And the number it states must be the cap the painter actually uses.
+	a := newTestApp(t)
+	a.Step = 2
+	h := a.layer().Heads[a.Head]
+	sc := scoreColorScale(h)
+	var maxAbs float64
+	for i := range h.Scores {
+		for j := 0; j <= i; j++ {
+			if v := math.Abs(float64(h.Scores[i][j])); v > maxAbs {
+				maxAbs = v
+			}
+		}
+	}
+	if math.Abs(sc-maxAbs) > 1e-9 {
+		t.Fatalf("scoreColorScale = %.6f, the largest |score| is %.6f", sc, maxAbs)
+	}
+}
+
+// TestScoreColorScaleTracksThePrompt is what makes the previous test matter: the
+// cap is not a constant, so a number hard-coded in the legend would be wrong for
+// most prompts.
+func TestScoreColorScaleTracksThePrompt(t *testing.T) {
+	seen := map[string]float64{}
+	for _, prompt := range []string{"hi", "attention is a weighted sum", "注意力就是加权求和"} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		seen[prompt] = scoreColorScale(a.layer().Heads[a.Head])
+	}
+	first := -1.0
+	for _, v := range seen {
+		if first < 0 {
+			first = v
+			continue
+		}
+		if math.Abs(v-first) > 0.5 {
+			return // the scale varies, as the test name claims
+		}
+	}
+	t.Fatalf("the colour scale is the same for every prompt (%v); a fixed number "+
+		"in the legend would have sufficed", seen)
+}

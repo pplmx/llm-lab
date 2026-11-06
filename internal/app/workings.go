@@ -352,6 +352,24 @@ func computeWeighted(attn []float32, v [][]float32, q, dim, n int) weightedParts
 	return p
 }
 
+// scoreColorScale is the |score| that saturates the heatmap's colour ramp: the
+// largest absolute value anywhere in the matrix. The cell colour is |v|/scale,
+// so without this number on screen a reader can see that one cell is warmer than
+// another but not what either is worth — and the scale moves with the prompt
+// (5.42 for "hi", 8.25 for a longer one), so it cannot be guessed from the
+// weights either.
+func scoreColorScale(h model.HeadTrace) float64 {
+	var scale float64
+	for i := range h.Scores {
+		for j := 0; j <= i && j < len(h.Scores[i]); j++ {
+			if v := math.Abs(float64(h.Scores[i][j])); v > scale {
+				scale = v
+			}
+		}
+	}
+	return scale
+}
+
 // layerDivergence measures how differently two layers attend from the same
 // position: the total variation distance between their attention distributions,
 // from 0 (identical) to 1 (no overlap).

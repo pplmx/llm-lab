@@ -383,6 +383,14 @@ func (a *App) stageScores(c *ui.Context) {
 				})
 				kv(c, "缩放", fmt.Sprintf("1/√%d = %.3f", tr.Config.DHead(), 1/math.Sqrt(float64(tr.Config.DHead()))))
 				kv(c, "可见", fmt.Sprintf("%d 个 key", i+1))
+				// The colour ramp is |score| / saturation, so its top is a fact
+				// about this matrix: state it, since it moves with the prompt
+				// (5.4 to 8.2 across the bundled examples) and nothing else on
+				// the stage implies it.
+				if sc := scoreColorScale(h); sc > 0 {
+					kv(c, "色深上限", fmt.Sprintf("|分数| = %.2f", sc))
+					mutedText(c, "颜色深浅按 |分数| ÷ 上限 取值，所以最亮的那格就是这个上限。")
+				}
 			})
 		})
 		// One cell of the matrix, worked out: which q·k products make it up, and
