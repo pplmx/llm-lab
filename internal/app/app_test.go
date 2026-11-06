@@ -5243,3 +5243,77 @@ func TestFFNStageLabelsItsInputCorrectly(t *testing.T) {
 		t.Fatal("the FFN stage no longer states that its input is LN(x)")
 	}
 }
+
+// TestSeedDependsOnThePromptText checks the sampling card's central claim: the
+// seed comes from the prompt, so changing a character changes the draw.
+//
+// No test covered this. The existing ones check that the card *says* "种子 =
+// FNV-1a(提示词)" and that the note about the seed exists — both of which pass even
+// if the hash loop ignores the prompt entirely. Confirmed by mutation: replacing
+// `seed ^= uint64(b)` with `seed ^= uint64(0*b)` left the whole suite green, while
+// the card kept promising that editing a character changes the result.
+func TestSeedDependsOnThePromptText(t *testing.T) {
+	seedsFor := func(prompt string) (uint64, int) {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 6
+		probs := a.Trace.Probabilities(a.Temp)
+		d, ok := a.sampleDraw(probs)
+		if !ok {
+			t.Fatalf("prompt %q: no draw", prompt)
+		}
+		return d.seed, d.pick
+	}
+
+	seedA, pickA := seedsFor("hi")
+	seedB, pickB := seedsFor("ho")
+	if seedA == seedB {
+		t.Fatalf("two different prompts hash to the same seed 0x%016X", seedA)
+	}
+	t.Logf("\"hi\" -> 0x%016X picks %d; \"ho\" -> 0x%016X picks %d", seedA, pickA, seedB, pickB)
+
+	// The same prompt must be stable — that is the other half of the promise.
+	again, _ := seedsFor("hi")
+	if again != seedA {
+		t.Fatalf("the same prompt hashed to 0x%016X then 0x%016X", seedA, again)
+	}
+
+	// And the seed must be the hash the card names: FNV-1a over the prompt bytes.
+	var want uint64 = 1469598103934665603
+	for _, b := range []byte("hi") {
+		want ^= uint64(b)
+		want *= 1099511628211
+	}
+	if seedA != want {
+		t.Fatalf("the seed is 0x%016X, but FNV-1a of the prompt is 0x%016X", seedA, want)
+	}
+}
+
+// TestSeedChangesWithEveryCharacter walks a few single-character edits and
+// requires each to produce a different seed, which is what "改一个字，种子和结果
+// 都会变" promises.
+func TestSeedChangesWithEveryCharacter(t *testing.T) {
+	base := newTestApp(t)
+	base.Step = 6
+
+	seedOf := func(prompt string) uint64 {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		d, ok := a.sampleDraw(a.Trace.Probabilities(a.Temp))
+		if !ok {
+			t.Fatalf("prompt %q: no draw", prompt)
+		}
+		return d.seed
+	}
+
+	seen := map[uint64]string{}
+	for _, p := range []string{"a", "b", "aa", "ab", "ba"} {
+		s := seedOf(p)
+		if prev, ok := seen[s]; ok {
+			t.Fatalf("%q and %q hash to the same seed 0x%016X", prev, p, s)
+		}
+		seen[s] = p
+	}
+}
