@@ -1,48 +1,129 @@
 package model
 
-import "math"
+import (
+	"math"
+	"runtime"
+	"sync"
+)
+
+// negInf is the causal mask value stored above the diagonal of the score
+// matrices. Keeping it as a variable avoids a float64 conversion per cell.
+var negInf = float32(math.Inf(-1))
+
+// newMatrix returns rows×cols float32 rows backed by a single allocation.
+// A forward pass records thousands of small rows; one backing array per
+// tensor keeps the allocator and the garbage collector out of the hot path.
+func newMatrix(rows, cols int) [][]float32 {
+	out := make([][]float32, rows)
+	if rows == 0 || cols == 0 {
+		return out
+	}
+	buf := make([]float32, rows*cols)
+	for i := range out {
+		out[i] = buf[i*cols : (i+1)*cols]
+	}
+	return out
+}
+
+// parallelWork is the multiply-add count below which splitting a matmul
+// across goroutines costs more than it saves.
+const parallelWork = 1 << 18
 
 // matMulRows multiplies each row of x (rows×inDim) by w (inDim×outDim, row
-// major) and adds bias b, returning rows×outDim.
+// major) and adds bias b, returning rows×outDim. Large products are split
+// across rows: every row is an independent dot product, so the split is
+// exact and needs no synchronization beyond waiting for the workers.
 func matMulRows(x [][]float32, w []float32, b []float32, outDim int) [][]float32 {
 	if len(x) == 0 {
 		return nil
 	}
 	inDim := len(x[0])
-	out := make([][]float32, len(x))
-	for i := range x {
-		row := make([]float32, outDim)
-		if b != nil {
-			copy(row, b)
+	out := newMatrix(len(x), outDim)
+	if b != nil {
+		for i := range out {
+			copy(out[i], b)
 		}
+	}
+	rows := len(x)
+	workers := 1
+	if rows*inDim*outDim >= parallelWork {
+		workers = runtime.GOMAXPROCS(0)
+		if max := rows / 4; workers > max { // keep at least one 4-row block each
+			workers = max
+		}
+		// Beyond eight workers the per-matmul synchronization and the shared
+		// weight traffic cost more than the extra cores save at this size.
+		if workers > 8 {
+			workers = 8
+		}
+	}
+	if workers <= 1 {
+		matMulRowsRange(out, x, w, outDim, 0, rows)
+		return out
+	}
+	chunk := (rows + workers - 1) / workers
+	chunk = (chunk + 3) / 4 * 4
+	var wg sync.WaitGroup
+	for start := 0; start < rows; start += chunk {
+		end := start + chunk
+		if end > rows {
+			end = rows
+		}
+		wg.Add(1)
+		go func(start, end int) {
+			defer wg.Done()
+			matMulRowsRange(out, x, w, outDim, start, end)
+		}(start, end)
+	}
+	wg.Wait()
+	return out
+}
+
+// matMulRowsRange computes rows [start, end) of out.
+func matMulRowsRange(out, x [][]float32, w []float32, outDim, start, end int) {
+	inDim := len(x[0])
+	// Four rows share one pass over w: each weight row is loaded once for
+	// four accumulators instead of once per row. The wide FFN matrices
+	// (96×384) do not fit in L1, so this cuts the dominant memory traffic.
+	i := start
+	for ; i+4 <= end; i += 4 {
+		x0, x1, x2, x3 := x[i], x[i+1], x[i+2], x[i+3]
+		r0, r1, r2, r3 := out[i], out[i+1], out[i+2], out[i+3]
+		for k := 0; k < inDim; k++ {
+			wk := w[k*outDim : (k+1)*outDim]
+			v0, v1, v2, v3 := x0[k], x1[k], x2[k], x3[k]
+			for j, wv := range wk {
+				r0[j] += v0 * wv
+				r1[j] += v1 * wv
+				r2[j] += v2 * wv
+				r3[j] += v3 * wv
+			}
+		}
+	}
+	for ; i < end; i++ {
 		xi := x[i]
+		row := out[i]
 		for k := 0; k < inDim; k++ {
 			v := xi[k]
-			// Forward inputs are dense after LayerNorm; skipping zero values
-			// costs a branch per element and is slower than a straight loop.
-			// Re-slicing keeps both operands the same length so the bounds
-			// check on wv is provably in range and the loop stays tight.
 			wk := w[k*outDim : (k+1)*outDim]
 			for j, wv := range wk {
 				row[j] += v * wv
 			}
 		}
-		out[i] = row
 	}
-	return out
 }
 
 // layerNorm normalizes each row to zero mean and unit variance, then scales
 // and shifts it with g and b.
 func layerNorm(x [][]float32, g, b []float32) [][]float32 {
-	out := make([][]float32, len(x))
+	out := newMatrix(len(x), len(g))
 	const eps = 1e-5
 	for i, row := range x {
-		var mean float32
+		var sum float32
 		for _, v := range row {
-			mean += v
+			sum += v
 		}
-		mean /= float32(len(row))
+		mean := sum / float32(len(row))
 		var variance float32
 		for _, v := range row {
 			d := v - mean
@@ -50,11 +131,10 @@ func layerNorm(x [][]float32, g, b []float32) [][]float32 {
 		}
 		variance /= float32(len(row))
 		inv := float32(1 / math.Sqrt(float64(variance+eps)))
-		res := make([]float32, len(row))
+		res := out[i]
 		for j, v := range row {
 			res[j] = (v-mean)*inv*g[j] + b[j]
 		}
-		out[i] = res
 	}
 	return out
 }
@@ -64,12 +144,11 @@ func gelu(v float32) float32 {
 	return 0.5 * v * (1 + float32(math.Erf(float64(v)/math.Sqrt2)))
 }
 
-func addRow(a, b []float32) []float32 {
-	out := make([]float32, len(a))
-	for i := range a {
-		out[i] = a[i] + b[i]
+// addInto stores a+b into dst.
+func addInto(dst, a, b []float32) {
+	for i := range dst {
+		dst[i] = a[i] + b[i]
 	}
-	return out
 }
 
 func dot(a, b []float32) float32 {
@@ -103,6 +182,33 @@ func softmaxInPlace(scores []float32) {
 	}
 	for i := range scores {
 		scores[i] /= sum
+	}
+}
+
+// softmaxCausal writes the softmax of the first n scores into dst and zeroes
+// the rest of dst, which is the shape causal attention stores. Only the
+// unmasked entries are visited; the -Inf tail is never exponentiated.
+func softmaxCausal(dst, scores []float32, n int) {
+	max := scores[0]
+	for _, v := range scores[1:n] {
+		if v > max {
+			max = v
+		}
+	}
+	var sum float32
+	for i := 0; i < n; i++ {
+		e := float32(math.Exp(float64(scores[i] - max)))
+		dst[i] = e
+		sum += e
+	}
+	if sum > 0 {
+		inv := 1 / sum
+		for i := 0; i < n; i++ {
+			dst[i] *= inv
+		}
+	}
+	for i := n; i < len(dst); i++ {
+		dst[i] = 0
 	}
 }
 

@@ -2,6 +2,8 @@ package model
 
 import (
 	"math"
+	"runtime"
+	"sync"
 	"unicode/utf8"
 )
 
@@ -61,22 +63,23 @@ func Forward(w *Weights, ids []int) *Trace {
 		tokens = alignTokens(ids, tokens)
 	}
 
-	tr := &Trace{Text: DecodeBytes(ids), Tokens: tokens, Config: c, Logits: make([]float32, c.Vocab)}
+	tr := &Trace{Text: DecodeBytes(ids), Tokens: tokens, Config: c}
 	if T == 0 {
 		tr.Embed, tr.Pos, tr.Input, tr.FinalNorm = [][]float32{}, [][]float32{}, [][]float32{}, [][]float32{}
+		tr.Logits = make([]float32, c.Vocab)
 		tr.Layers = make([]LayerTrace, c.NLayer)
 		return tr
 	}
-	tr.Embed = make([][]float32, T)
-	tr.Pos = make([][]float32, T)
-	tr.Input = make([][]float32, T)
+	tr.Embed = newMatrix(T, d)
+	tr.Pos = newMatrix(T, d)
+	tr.Input = newMatrix(T, d)
 	for i, id := range ids {
 		b := int(byte(id))
-		emb := append([]float32(nil), w.TokEmbed[b*d:(b+1)*d]...)
-		pos := append([]float32(nil), w.PosEmbed[i*d:(i+1)*d]...)
-		tr.Embed[i] = emb
-		tr.Pos[i] = pos
-		tr.Input[i] = addRow(emb, pos)
+		emb := tr.Embed[i]
+		copy(emb, w.TokEmbed[b*d:(b+1)*d])
+		pos := tr.Pos[i]
+		copy(pos, w.PosEmbed[i*d:(i+1)*d])
+		addInto(tr.Input[i], emb, pos)
 	}
 
 	x := tr.Input
@@ -91,55 +94,72 @@ func Forward(w *Weights, ids []int) *Trace {
 
 		lt.Heads = make([]HeadTrace, c.NHead)
 		lt.HeadProj = make([][][]float32, c.NHead)
-		lt.AttnProj = make([][]float32, T)
-		for i := range lt.AttnProj {
-			lt.AttnProj[i] = make([]float32, d)
-		}
+		lt.AttnProj = newMatrix(T, d)
 		scale := float32(1 / math.Sqrt(float64(dh)))
-		for h := 0; h < c.NHead; h++ {
+		runHead := func(h int) {
 			ht := HeadTrace{
 				Q:      sliceCols(q, h*dh, dh),
 				K:      sliceCols(k, h*dh, dh),
 				V:      sliceCols(v, h*dh, dh),
-				Scores: make([][]float32, T),
-				Attn:   make([][]float32, T),
-				Out:    make([][]float32, T),
+				Scores: newMatrix(T, T),
+				Attn:   newMatrix(T, T),
+				Out:    newMatrix(T, dh),
 			}
 			for i := 0; i < T; i++ {
-				scores := make([]float32, T)
-				for j := 0; j < T; j++ {
-					if j > i { // causal mask
-						scores[j] = float32(math.Inf(-1))
-						continue
-					}
-					scores[j] = dot(ht.Q[i], ht.K[j]) * scale
+				scores := ht.Scores[i]
+				qi := ht.Q[i]
+				for j := 0; j <= i; j++ {
+					scores[j] = dot(qi, ht.K[j]) * scale
 				}
-				attn := append([]float32(nil), scores...)
-				softmaxInPlace(attn)
-				ht.Scores[i] = scores
-				ht.Attn[i] = attn
-
-				out := make([]float32, dh)
-				for j := 0; j < T; j++ {
-					w := attn[j]
-					if w == 0 {
-						continue
-					}
+				for j := i + 1; j < T; j++ {
+					scores[j] = negInf
+				}
+				attn := ht.Attn[i]
+				softmaxCausal(attn, scores, i+1)
+				out := ht.Out[i]
+				for j := 0; j <= i; j++ {
+					p := attn[j]
 					vj := ht.V[j]
 					for x := 0; x < dh; x++ {
-						out[x] += w * vj[x]
+						out[x] += p * vj[x]
 					}
 				}
-				ht.Out[i] = out
 			}
 			lt.Heads[h] = ht
 			// Head h only touches the rows of Wo that line up with its own
 			// slice of the concatenation, so AttnProj is exactly the sum of
-			// the per-head projections. Accumulating those avoids computing
-			// the same d×d product a second time while keeping the same
-			// addition order as a full concat·Wo multiply.
+			// the per-head projections.
 			wo := lw.WO[h*dh*d : (h+1)*dh*d]
 			lt.HeadProj[h] = matMulRows(ht.Out, wo, nil, d)
+		}
+		// Heads are independent, so they run concurrently when the attention
+		// work is large enough to pay for the goroutines.
+		workers := 1
+		if work := T * T * dh * c.NHead * 2; work >= parallelWork {
+			workers = runtime.GOMAXPROCS(0)
+			if workers > c.NHead {
+				workers = c.NHead
+			}
+		}
+		if workers <= 1 {
+			for h := 0; h < c.NHead; h++ {
+				runHead(h)
+			}
+		} else {
+			var wg sync.WaitGroup
+			for h := 0; h < c.NHead; h++ {
+				h := h
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					runHead(h)
+				}()
+			}
+			wg.Wait()
+		}
+		// Accumulating the per-head projections into AttnProj keeps the same
+		// addition order as a full concat·Wo multiply; it is only T×d adds.
+		for h := 0; h < c.NHead; h++ {
 			for i := range lt.HeadProj[h] {
 				row := lt.HeadProj[h][i]
 				acc := lt.AttnProj[i]
@@ -148,21 +168,22 @@ func Forward(w *Weights, ids []int) *Trace {
 				}
 			}
 		}
-		lt.AfterAttn = make([][]float32, T)
+		lt.AfterAttn = newMatrix(T, d)
 		for i := 0; i < T; i++ {
-			lt.AfterAttn[i] = addRow(lt.In[i], lt.AttnProj[i])
+			addInto(lt.AfterAttn[i], lt.In[i], lt.AttnProj[i])
 		}
 		lt.Norm2 = layerNorm(lt.AfterAttn, lw.LN2G, lw.LN2B)
 		lt.Hidden = matMulRows(lt.Norm2, lw.W1, nil, c.DFF)
 		for i := range lt.Hidden {
-			for j := range lt.Hidden[i] {
-				lt.Hidden[i][j] = gelu(lt.Hidden[i][j])
+			row := lt.Hidden[i]
+			for j, v := range row {
+				row[j] = gelu(v)
 			}
 		}
 		lt.FFNOut = matMulRows(lt.Hidden, lw.W2, nil, d)
-		lt.AfterFFN = make([][]float32, T)
+		lt.AfterFFN = newMatrix(T, d)
 		for i := 0; i < T; i++ {
-			lt.AfterFFN[i] = addRow(lt.AfterAttn[i], lt.FFNOut[i])
+			addInto(lt.AfterFFN[i], lt.AfterAttn[i], lt.FFNOut[i])
 		}
 
 		tr.Layers = append(tr.Layers, lt)
@@ -184,9 +205,9 @@ func Forward(w *Weights, ids []int) *Trace {
 // head's Q/K/V rows contiguous, which benchmarks noticeably faster than
 // sharing the wider parent rows.
 func sliceCols(m [][]float32, start, width int) [][]float32 {
-	out := make([][]float32, len(m))
+	out := newMatrix(len(m), width)
 	for i, row := range m {
-		out[i] = append([]float32(nil), row[start:start+width]...)
+		copy(out[i], row[start:start+width])
 	}
 	return out
 }
@@ -200,41 +221,12 @@ func alignTokens(ids []int, tokens []Token) []Token {
 	for i, id := range ids {
 		buf[i] = byte(id)
 	}
-	s := string(buf)
-	if utf8.ValidString(s) {
-		// Fast path for the overwhelmingly common valid prompt: range over
-		// the string gives the rune and byte offset directly.
-		runeAt := make([]rune, 0, len(ids))
-		for _, r := range s {
-			runeAt = append(runeAt, r)
-		}
-		byteToRune := map[int]int{}
-		pos := 0
-		runeIdx := 0
-		for _, r := range s {
-			n := len(string(r))
-			for k := 0; k < n; k++ {
-				byteToRune[pos+k] = runeIdx
-			}
-			pos += n
-			runeIdx++
-		}
-		for i := range tokens {
-			if r, ok := byteToRune[i]; ok && r < len(runeAt) {
-				tokens[i].Rune = runeAt[r]
-				tokens[i].Start = r
-			}
-		}
-		return tokens
-	}
 	runeIndex := 0
 	for i := 0; i < len(buf); {
 		r, n := utf8.DecodeRune(buf[i:])
 		if r == utf8.RuneError && n == 1 {
-			if i < len(tokens) {
-				tokens[i].Rune = 0
-				tokens[i].Start = runeIndex
-			}
+			tokens[i].Rune = 0
+			tokens[i].Start = runeIndex
 			i++
 			runeIndex++
 			continue
