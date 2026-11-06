@@ -14,6 +14,21 @@ import (
 
 type modelToken = model.Token
 
+const defaultPrompt = "The transformer reads the tokens and"
+
+// promptPresets are short examples that exercise the tokenizer's edges:
+// ASCII, CJK (three bytes per rune), a prompt past the context window, and
+// the empty state.
+var promptPresets = []struct {
+	name   string
+	prompt string
+}{
+	{"英文", defaultPrompt},
+	{"中文", "注意力就是加权求和"},
+	{"长提示词", strings.Repeat("attention ", 12)},
+	{"空", ""},
+}
+
 // App holds everything the view reads: the weights, the last trace, and the
 // user's place in the lesson.
 type App struct {
@@ -53,7 +68,7 @@ type App struct {
 func New(w *model.Weights) *App {
 	a := &App{
 		W:          w,
-		Prompt:     "The transformer reads the tokens and",
+		Prompt:     defaultPrompt,
 		Step:       0,
 		Temp:       0.8,
 		SelToken:   -1,
@@ -70,6 +85,16 @@ func New(w *model.Weights) *App {
 	}
 	a.recompute()
 	return a
+}
+
+// applyPrompt replaces the prompt and re-runs the forward pass, dropping the
+// sample and autoplay state that belonged to the previous prompt.
+func (a *App) applyPrompt(p string) {
+	a.Prompt = p
+	a.LastSample = ""
+	a.Playing = false
+	a.NextAt = time.Time{}
+	a.recompute()
 }
 
 func (a *App) recompute() {
@@ -183,6 +208,7 @@ func (a *App) layer() *model.LayerTrace {
 }
 
 func (a *App) View(c *ui.Context) {
+	a.handleKeys(c)
 	a.play(c)
 	ui.Themed(c, a.theme).Fill().Children(func() {
 		ui.Row(c).Fill().Background(colBg).AlignItems(ui.Stretch).Children(func() {
@@ -197,6 +223,7 @@ func (a *App) View(c *ui.Context) {
 				// MinHeight(0) lets the scroll view give up height; without it
 				// the fixed rows above are squeezed to nothing at 1180×720.
 				ui.Scroll(c).Grow(1).MinHeight(0).Padding(16, 16, 24).Gap(12).TrackScroll(&a.Scroll).Children(func() {
+					a.stageHeader(c)
 					a.stage(c)
 					a.lesson(c)
 				})
@@ -204,6 +231,56 @@ func (a *App) View(c *ui.Context) {
 			ui.Box(c).Width(1).FillHeight().Background(colBorder)
 			a.inspector(c)
 		})
+	})
+}
+
+// handleKeys wires the shortcuts that work anywhere in the window. A focused
+// text field or button consumes its own keys first, so typing and Space still
+// reach them instead of the lesson.
+func (a *App) handleKeys(c *ui.Context) {
+	switch {
+	case c.Shortcut(0, ui.KeyRight):
+		a.selectStep(a.Step + 1)
+	case c.Shortcut(0, ui.KeyLeft):
+		a.selectStep(a.Step - 1)
+	case c.Shortcut(0, ui.KeySpace):
+		a.togglePlay()
+	case c.Shortcut(0, ui.KeyEscape):
+		a.Playing = false
+		a.NextAt = time.Time{}
+	default:
+		digits := [...]ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7}
+		for i, key := range digits {
+			if i < len(lessons) && c.Shortcut(0, key) {
+				a.selectStep(i)
+				break
+			}
+		}
+	}
+}
+
+func (a *App) togglePlay() {
+	a.Playing = !a.Playing
+	a.NextAt = time.Time{}
+	if a.Playing && a.Step == len(lessons)-1 {
+		a.Step = 0
+		a.Scroll.X, a.Scroll.Y = 0, 0
+		a.clearHover()
+	}
+}
+
+// stageHeader states where the reader is before the figures: the step, what
+// it teaches, and the formula it derives.
+func (a *App) stageHeader(c *ui.Context) {
+	l := lessons[a.Step]
+	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(10).Children(func() {
+		ui.Text(c, fmt.Sprintf("第 %d / %d 步", a.Step+1, len(lessons))).
+			FontSize(10).Bold().TextColor(colBg).
+			Padding(4, 8).Radius(5).Background(colAccent).Shrink(0)
+		ui.Text(c, l.title).FontSize(15).Bold().TextColor(colText)
+		ui.Spacer(c).Grow(1)
+		ui.Text(c, l.formula).FontSize(11).TextColor(colAccent2).
+			Padding(4, 8).Radius(5).Background(colPanel2).Shrink(0)
 	})
 }
 
@@ -294,11 +371,7 @@ func (a *App) topbar(c *ui.Context) {
 				a.recompute()
 			}
 			if ui.Button(c, "重置").Clicked() {
-				a.Prompt = "The transformer reads the tokens and"
-				a.LastSample = ""
-				a.Playing = false
-				a.NextAt = time.Time{}
-				a.recompute()
+				a.applyPrompt(defaultPrompt)
 			}
 			if ui.PrimaryButton(c, "采样下一个 token").Clicked() {
 				a.sampleNext()
@@ -337,40 +410,37 @@ func (a *App) topbar(c *ui.Context) {
 // ---------------------------------------------------------------- step bar
 
 func (a *App) stepbar(c *ui.Context) {
-	ui.Row(c).FillWidth().Padding(16, 8, 12).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
-		// The chips wrap instead of shrinking. Without Wrap and NoWrap a narrow
-		// window squeezes each chip until the label stacks one character per
-		// line and the whole row grows three times taller than the top bar.
-		ui.Row(c).Grow(1).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
-			for i, s := range lessons {
-				i, s := i, s
-				chip := ui.Row(c).Padding(7, 9).Radius(6).Gap(6).AlignItems(ui.Center).
-					Shrink(0).Background(colPanel2).Border(1, colBorder).
-					Children(func() {
-						ui.Text(c, fmt.Sprintf("%d", i+1)).FontSize(9).TextColor(colFaint).NoWrap()
-						ui.Text(c, s.name).FontSize(11.5).TextColor(colMuted).NoWrap()
-					})
-				if i == a.Step {
-					chip = chip.Background(colAccent.Alpha(0.18)).Border(1, colAccent)
+	ui.Row(c).FillWidth().Padding(16, 8, 12).Gap(10).AlignItems(ui.Center).Shrink(0).Children(func() {
+		// A progress trail instead of a second list of lesson names: the
+		// sidebar already names every stage, and at 1180×720 a wrapped chip
+		// row pushed the lesson below the fold.
+		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+			for i := range lessons {
+				i := i
+				var dot ui.Element
+				switch {
+				case i == a.Step:
+					dot = ui.Box(c).Size(18, 6).Radius(3).Background(colAccent)
+				case i < a.Step:
+					dot = ui.Box(c).Size(6, 6).Radius(3).Background(colMuted)
+				default:
+					dot = ui.Box(c).Size(6, 6).Radius(3).Background(colBorder)
 				}
-				if chip.Clicked() {
+				if dot.Clicked() {
 					a.selectStep(i)
 				}
 			}
 		})
+		ui.Text(c, fmt.Sprintf("%d / %d · %s", a.Step+1, len(lessons), lessons[a.Step].name)).
+			FontSize(11).TextColor(colMuted).NoWrap()
+		ui.Spacer(c).Grow(1)
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Children(func() {
 			label := "▶ 自动播放"
 			if a.Playing {
 				label = "⏸ 暂停"
 			}
 			if ui.Button(c, label).Shrink(0).Clicked() {
-				a.Playing = !a.Playing
-				a.NextAt = time.Time{}
-				if a.Playing && a.Step == len(lessons)-1 {
-					a.Step = 0
-					a.Scroll.X, a.Scroll.Y = 0, 0
-					a.clearHover()
-				}
+				a.togglePlay()
 			}
 			if ui.Button(c, "← 上一步").Shrink(0).Clicked() && a.Step > 0 {
 				a.selectStep(a.Step - 1)
@@ -384,98 +454,77 @@ func (a *App) stepbar(c *ui.Context) {
 
 // ---------------------------------------------------------------- inspector
 
+// inspector follows the lesson: each step shows the tensors that step is
+// about, so the right panel never explains attention while the left panel is
+// still tokenizing.
 func (a *App) inspector(c *ui.Context) {
 	ui.Scroll(c).Width(a.InspectorW).FillHeight().Padding(14).Gap(12).Children(func() {
-		ui.Text(c, "检查器").FontSize(12).Bold().TextColor(colMuted)
+		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+			ui.Text(c, "检查器").FontSize(12).Bold().TextColor(colMuted)
+			ui.Text(c, lessons[a.Step].name).FontSize(10).TextColor(colFaint)
+		})
 		ui.Box(c).FillWidth().Height(1).Background(colBorder)
 
 		tr := a.Trace
 		if a.SelToken < 0 || a.SelToken >= len(tr.Tokens) {
-			mutedText(c, "点击上方任意 token 或注意力热力图的格子，这里会显示它的数值。")
+			mutedText(c, "点击 token 或热力图的格子，这里会显示它的数值。")
 			return
 		}
-		tk := tr.Tokens[a.SelToken]
+		a.inspectorToken(c, tr)
+		switch a.Step {
+		case 0:
+			a.inspectorBytes(c, tr)
+		case 1:
+			a.inspectorEmbed(c, tr)
+		case 2:
+			a.inspectorScores(c, tr)
+		case 3:
+			a.inspectorAttention(c, tr)
+		case 4:
+			a.inspectorResidual(c)
+		case 5:
+			a.inspectorFFN(c)
+		case 6:
+			a.inspectorLogits(c, tr)
+		}
+		a.inspectorHoverCell(c)
+	})
+}
 
-		card(c, func() {
-			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-				ui.Box(c).Size(34, 34).Radius(6).Background(colAccent.Alpha(0.16)).Children(func() {
-					ui.Text(c, tk.Text).FontSize(16).Bold().TextColor(colAccent).NoWrap()
-				})
-				ui.Column(c).Gap(1).Children(func() {
-					ui.Text(c, fmt.Sprintf("token #%d", a.SelToken)).FontSize(12).Bold()
-					ui.Text(c, fmt.Sprintf("byte 0x%02X · rune %q", tk.ID, tk.Rune)).FontSize(10).TextColor(colFaint)
-				})
+func (a *App) inspectorToken(c *ui.Context, tr *model.Trace) {
+	tk := tr.Tokens[a.SelToken]
+	card(c, func() {
+		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+			ui.Box(c).Size(34, 34).Radius(6).Background(colAccent.Alpha(0.16)).Children(func() {
+				ui.Text(c, tk.Text).FontSize(16).Bold().TextColor(colAccent).NoWrap()
+			})
+			ui.Column(c).Gap(1).Children(func() {
+				ui.Text(c, fmt.Sprintf("token #%d / %d", a.SelToken, len(tr.Tokens)-1)).FontSize(12).Bold()
+				ui.Text(c, fmt.Sprintf("byte 0x%02X · rune %q", tk.ID, tk.Rune)).FontSize(10).TextColor(colFaint)
 			})
 		})
+	})
+}
 
-		l := a.layer()
-		if l == nil {
-			return
+func (a *App) inspectorHoverCell(c *ui.Context) {
+	tr := a.Trace
+	l := a.layer()
+	if l == nil || a.HoverQ < 0 || a.HoverK < 0 || a.HoverQ >= len(tr.Tokens) || a.HoverK >= len(tr.Tokens) {
+		return
+	}
+	card(c, func() {
+		sectionTitle(c, "注意力格子", "")
+		h := l.Heads[a.Head]
+		score := h.Scores[a.HoverQ][a.HoverK]
+		kv(c, "query", fmt.Sprintf("%d %q", a.HoverQ, tr.Tokens[a.HoverQ].Text))
+		kv(c, "key", fmt.Sprintf("%d %q", a.HoverK, tr.Tokens[a.HoverK].Text))
+		if math.IsInf(float64(score), -1) {
+			kv(c, "分数", "−∞（被因果掩码遮住）")
+			kv(c, "权重", "0")
+		} else {
+			kv(c, "分数", fmt.Sprintf("%+.4f", score))
+			kv(c, "权重", fmt.Sprintf("%.4f", h.Attn[a.HoverQ][a.HoverK]))
 		}
-
-		// The attention the selected token pays to the past.
-		card(c, func() {
-			sectionTitle(c, "注意力分配", fmt.Sprintf("层 %d · 头 %d", a.Layer, a.Head))
-			row := l.Heads[a.Head].Attn[a.SelToken]
-			var max float32
-			rows := make([]barRow, 0, len(row))
-			for _, w := range row {
-				if w > max {
-					max = w
-				}
-			}
-			for j := 0; j <= a.SelToken && j < len(row); j++ {
-				rows = append(rows, barRow{
-					Label:      fmt.Sprintf("%d %s", j, tr.Tokens[j].Text),
-					Value:      row[j],
-					ValueText:  fmt.Sprintf("%.1f%%", row[j]*100),
-					Color:      colAccent,
-					LabelWidth: 66,
-					ValueWidth: 46,
-					Tip:        fmt.Sprintf("q=%q, k=%q, %.4f", tk.Text, tr.Tokens[j].Text, row[j]),
-					Index:      j,
-				})
-			}
-			// Show the strongest few rather than all 64.
-			if len(rows) > 8 {
-				rows = topBars(rows, 8)
-			}
-			bars(c, rows, max, colAccent)
-			ent := model.Entropy(row[:min(len(row), a.SelToken+1)])
-			mutedText(c, fmt.Sprintf("熵 %.2f nats · 越接近 0 越专注，越接近 log(n) 越分散", ent))
-		})
-
-		if a.HoverQ >= 0 && a.HoverK >= 0 && a.HoverQ < len(tr.Tokens) && a.HoverK < len(tr.Tokens) {
-			card(c, func() {
-				sectionTitle(c, "注意力格子", "")
-				h := l.Heads[a.Head]
-				score := h.Scores[a.HoverQ][a.HoverK]
-				kv(c, "query", fmt.Sprintf("%d %q", a.HoverQ, tr.Tokens[a.HoverQ].Text))
-				kv(c, "key", fmt.Sprintf("%d %q", a.HoverK, tr.Tokens[a.HoverK].Text))
-				if math.IsInf(float64(score), -1) {
-					kv(c, "分数", "−∞（被因果掩码遮住）")
-					kv(c, "权重", "0")
-				} else {
-					kv(c, "分数", fmt.Sprintf("%+.4f", score))
-					kv(c, "权重", fmt.Sprintf("%.4f", h.Attn[a.HoverQ][a.HoverK]))
-				}
-			})
-		}
-
-		// Vector statistics of the selected token.
-		card(c, func() {
-			sectionTitle(c, "向量", "残差流")
-			vec := l.AfterFFN[a.SelToken]
-			mean, std := meanStd(vec)
-			kv(c, "维度", fmt.Sprint(len(vec)))
-			kv(c, "均值", fmt.Sprintf("%+.4f", mean))
-			kv(c, "标准差", fmt.Sprintf("%.4f", std))
-			kv(c, "L2", fmt.Sprintf("%.3f", norm(vec)))
-			lo, hi := minMaxFloat(vec)
-			kv(c, "范围", fmt.Sprintf("%+.2f … %+.2f", lo, hi))
-		})
-
-		mutedText(c, "提示：热力图中行是 query，列是 key；右上三角被因果掩码遮住。")
 	})
 }
 

@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"math"
+	"sort"
 	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
@@ -20,43 +21,43 @@ type lesson struct {
 var lessons = []lesson{
 	{
 		name:    "分词",
-		title:   "第 1 步 · 把文字切成 token",
+		title:   "把文字切成 token",
 		body:    "模型不认识字母，只认识整数。这里用最朴素的字节级分词：把提示词的 UTF-8 字节逐个映射成 0–255 的 id。英文一个字符一个 token，一个汉字要占三个 token——右边显示的数字就是 id。真实的 LLM 用 BPE 把高频字节对合并成子词，词表通常三万到十五万条，道理相同：先离散化，再查表。",
 		formula: "id_t = byte(prompt)[t]",
 	},
 	{
 		name:    "嵌入",
-		title:   "第 2 步 · 查表得到向量",
+		title:   "查表得到向量",
 		body:    "嵌入表是一张 vocab × d_model 的矩阵，每一行就是一个 token 的「意思」。查表得到向量后，再加上位置向量：注意力本身对顺序不敏感，位置信息必须显式注入，否则 “dog bites man” 和 “man bites dog” 在模型眼里完全一样。",
 		formula: "x_t = E[token_t] + P[t]",
 	},
 	{
 		name:    "注意力分数",
-		title:   "第 3 步 · Query 与 Key 的点积",
+		title:   "Query 与 Key 的点积",
 		body:    "每个位置的向量被三个矩阵投影成 Query（我在找什么）、Key（我能提供什么）、Value（我携带的内容）。第 t 个位置用它的 Query 去点乘前面每个位置的 Key，得到「相关度」。除以 √d_head 是为了让方差稳定，否则维度一高分数就会爆炸，softmax 直接饱和。注意右上三角是空的：因果掩码让模型看不到未来。",
 		formula: "score[t][s] = (q_t · k_s) / √d_head,  s ≤ t",
 	},
 	{
 		name:    "Softmax",
-		title:   "第 4 步 · 变成权重再混合",
+		title:   "变成权重再混合",
 		body:    "一行分数经过 softmax 变成概率分布，每一行的和恰好是 1。用这些权重去加权求和 Value，就得到这个位置「从上下文里取回的信息」。多个头并行做同一件事，各自学不同的关注模式：有的盯上一个 token，有的盯句首，有的盯标点。",
 		formula: "α = softmax(score),  out_t = Σ_s α[t][s] · v_s",
 	},
 	{
 		name:    "残差 / LN",
-		title:   "第 5 步 · 残差与层归一化",
+		title:   "残差与层归一化",
 		body:    "子层的输出不会覆盖原向量，而是加回去——这就是残差连接，它让梯度有一条高速公路，也让「原始信息」一路保留到最后。加法之前先做 LayerNorm：减均值、除标准差，再乘可学习的 γ、加 β。看直方图会发现归一化后分布被拉回零附近，这就是数值稳定的来源。一个块里有两次这样的加法：一次接注意力，一次接 FFN。",
 		formula: "x ← x + Attn(LN₁(x));  x ← x + FFN(LN₂(x))",
 	},
 	{
 		name:    "FFN",
-		title:   "第 6 步 · 逐位置的前馈网络",
+		title:   "逐位置的前馈网络",
 		body:    "注意力负责在位置之间搬运信息，FFN 负责在每个位置上单独做非线性变换：先升维到 4 倍宽，过 GELU，再降回原维度。参数量的三分之二都在这里。GELU 在负值区不是硬零，而是平滑地趋近零，所以激活会呈现稀疏但连续的分布。",
 		formula: "FFN(x) = W₂ · GELU(W₁ · LN(x))",
 	},
 	{
 		name:    "输出 / 采样",
-		title:   "第 7 步 · 从向量到下一个字",
+		title:   "从向量到下一个字",
 		body:    "最后一层的输出经过最终 LayerNorm，再与嵌入矩阵相乘（权重绑定），得到词表上每个 token 的 logit。logit 不是概率，要除以温度再做 softmax。温度趋近 0 等于贪心，温度大于 1 会让分布变平、输出更随机。",
 		formula: "p = softmax(logits / T)",
 	},
@@ -96,6 +97,22 @@ func (a *App) stageTokens(c *ui.Context) {
 			ui.Text(c, fmt.Sprintf("字符数 %d", utf8.RuneCountInString(tr.Text))).FontSize(11).TextColor(colFaint)
 			ui.Text(c, fmt.Sprintf("上下文上限 %d", tr.Config.Ctx)).FontSize(11).TextColor(colFaint)
 		})
+		ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "试试").FontSize(10).TextColor(colFaint).Shrink(0)
+			for _, p := range promptPresets {
+				p := p
+				chip := ui.Row(c).Padding(4, 8).Radius(5).Gap(4).AlignItems(ui.Center).
+					Background(colPanel2).Border(1, colBorder).Children(func() {
+					ui.Text(c, p.name).FontSize(10.5).TextColor(colMuted).NoWrap()
+				})
+				if a.Prompt == p.prompt {
+					chip = chip.Background(colAccent.Alpha(0.14)).Border(1, colAccent.Alpha(0.6))
+				}
+				if chip.Clicked() {
+					a.applyPrompt(p.prompt)
+				}
+			}
+		})
 	})
 
 	card(c, func() {
@@ -134,22 +151,35 @@ func (a *App) stageTokens(c *ui.Context) {
 	})
 
 	card(c, func() {
-		sectionTitle(c, "全流程一览", "点击任意阶段直接跳转")
+		sectionTitle(c, "数据流与形状", "点击任意阶段跳转")
+		T, d := len(tr.Tokens), tr.Config.DModel
+		rows := []struct {
+			step        int
+			name, shape string
+		}{
+			{0, "分词", fmt.Sprintf("[%d]", T)},
+			{1, "嵌入", fmt.Sprintf("[%d, %d]", T, d)},
+			{2, "注意力", fmt.Sprintf("[%d, %d]", T, d)},
+			{3, "Softmax", fmt.Sprintf("[%d, %d]", T, T)},
+			{4, "残差 / LN", fmt.Sprintf("[%d, %d]", T, d)},
+			{5, "FFN", fmt.Sprintf("[%d, %d]", T, tr.Config.DFF)},
+			{6, "输出", fmt.Sprintf("[%d]", tr.Config.Vocab)},
+		}
 		ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
-			for i, l := range lessons {
-				i, l := i, l
-				chip := ui.Row(c).Padding(6, 9).Radius(6).Gap(5).AlignItems(ui.Center).
+			for i, r := range rows {
+				i, r := i, r
+				chip := ui.Column(c).Gap(1).Padding(5, 9).Radius(6).
 					Background(colPanel2).Border(1, colBorder).Children(func() {
-					ui.Text(c, fmt.Sprintf("%d", i+1)).FontSize(9).TextColor(colFaint)
-					ui.Text(c, l.name).FontSize(11).TextColor(colMuted)
+					ui.Text(c, r.name).FontSize(10).TextColor(colMuted).NoWrap()
+					ui.Text(c, r.shape).FontSize(10.5).TextColor(colAccent2).NoWrap()
 				})
-				if i == a.Step {
-					chip = chip.Background(colAccent.Alpha(0.16)).Border(1, colAccent)
+				if r.step == a.Step {
+					chip = chip.Background(colAccent.Alpha(0.12)).Border(1, colAccent.Alpha(0.6))
 				}
 				if chip.Clicked() {
-					a.selectStep(i)
+					a.selectStep(r.step)
 				}
-				if i < len(lessons)-1 {
+				if i < len(rows)-1 {
 					ui.Text(c, "→").FontSize(11).TextColor(colFaint)
 				}
 			}
@@ -401,13 +431,9 @@ func (a *App) stageOutput(c *ui.Context) {
 func (a *App) lesson(c *ui.Context) {
 	l := lessons[a.Step]
 	card(c, func() {
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			ui.Text(c, l.title).FontSize(14).Bold()
-			ui.Spacer(c).Grow(1)
-			ui.Text(c, l.formula).FontSize(11).TextColor(colAccent2).
-				Padding(4, 8).Radius(5).Background(colPanel2)
-		})
+		sectionTitle(c, "这一段在讲什么", l.name)
 		mutedText(c, l.body)
+		ui.Text(c, "快捷键：← → 切换阶段 · 空格 播放/暂停 · 1–7 跳转").FontSize(10).TextColor(colFaint)
 	})
 }
 
@@ -447,4 +473,188 @@ func LessonNames() []string {
 		names[i] = l.name
 	}
 	return names
+}
+
+// --------------------------------------------------- inspector, per lesson
+
+func (a *App) inspectorBytes(c *ui.Context, tr *model.Trace) {
+	tk := tr.Tokens[a.SelToken]
+	from, to := a.SelToken, a.SelToken
+	for from > 0 && tr.Tokens[from-1].Start == tk.Start {
+		from--
+	}
+	for to+1 < len(tr.Tokens) && tr.Tokens[to+1].Start == tk.Start {
+		to++
+	}
+	card(c, func() {
+		sectionTitle(c, "字节", "UTF-8 编码")
+		ui.Row(c).Gap(4).Children(func() {
+			for i := from; i <= to; i++ {
+				i := i
+				ui.Column(c).Gap(2).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, fmt.Sprintf("%d", tr.Tokens[i].Byte)).FontSize(13).TextColor(colText).
+						Padding(3, 7).Radius(4).Background(colPanel2)
+					ui.Text(c, fmt.Sprintf("#%d", i)).FontSize(9).TextColor(colFaint)
+				})
+			}
+		})
+		kv(c, "rune", fmt.Sprintf("%q", tk.Rune))
+		kv(c, "位置", fmt.Sprintf("%d / %d", a.SelToken, len(tr.Tokens)-1))
+	})
+	card(c, func() {
+		sectionTitle(c, "为什么中文更长", "")
+		mutedText(c, "ASCII 一个字节就是一个 token；一个汉字在 UTF-8 里占 3 个字节，所以是 3 个 token。")
+		kv(c, "提示词", fmt.Sprintf("%d 字节 / %d 字符", len(tr.Text), utf8.RuneCountInString(tr.Text)))
+	})
+}
+
+func (a *App) inspectorEmbed(c *ui.Context, tr *model.Trace) {
+	i := clampIndex(a.SelToken, len(tr.Tokens))
+	card(c, func() {
+		sectionTitle(c, "向量统计", fmt.Sprintf("d_model = %d", tr.Config.DModel))
+		em, es := meanStd(tr.Embed[i])
+		pm, ps := meanStd(tr.Pos[i])
+		xm, xs := meanStd(tr.Input[i])
+		kv(c, "E 均值/σ", fmt.Sprintf("%+.3f / %.3f", em, es))
+		kv(c, "P 均值/σ", fmt.Sprintf("%+.3f / %.3f", pm, ps))
+		kv(c, "x 均值/σ", fmt.Sprintf("%+.3f / %.3f", xm, xs))
+		kv(c, "x L2", fmt.Sprintf("%.3f", norm(tr.Input[i])))
+		kv(c, "位置 t", fmt.Sprint(i))
+	})
+	card(c, func() {
+		sectionTitle(c, "位置向量", "同一维度在不同 t 上的值")
+		mutedText(c, "位置向量是学出来的，每个位置一行；它让注意力能区分先后。")
+	})
+}
+
+func (a *App) inspectorScores(c *ui.Context, tr *model.Trace) {
+	l := a.layer()
+	i := clampIndex(a.SelToken, len(tr.Tokens))
+	h := l.Heads[a.Head]
+	card(c, func() {
+		sectionTitle(c, "分数 top-5", fmt.Sprintf("query = token %d", i))
+		rows := make([]barRow, 0, 8)
+		var maxAbs float32
+		for j := 0; j <= i; j++ {
+			v := h.Scores[i][j]
+			if av := float32(math.Abs(float64(v))); av > maxAbs {
+				maxAbs = av
+			}
+			rows = append(rows, barRow{
+				Label:      fmt.Sprintf("%d %s", j, tr.Tokens[j].Text),
+				Value:      v,
+				ValueText:  fmt.Sprintf("%+.2f", v),
+				Color:      scoreColor(v, maxAbs),
+				LabelWidth: 62,
+				ValueWidth: 48,
+				Index:      j,
+			})
+		}
+		rows = topAbsBars(rows, 5)
+		bars(c, rows, maxAbs, colWarm)
+		kv(c, "可见 key", fmt.Sprintf("%d 个", i+1))
+		kv(c, "缩放", fmt.Sprintf("1/√%d = %.3f", tr.Config.DHead(), 1/math.Sqrt(float64(tr.Config.DHead()))))
+	})
+}
+
+func (a *App) inspectorAttention(c *ui.Context, tr *model.Trace) {
+	l := a.layer()
+	i := clampIndex(a.SelToken, len(tr.Tokens))
+	h := l.Heads[a.Head]
+	card(c, func() {
+		sectionTitle(c, "这一行的统计", fmt.Sprintf("层 %d · 头 %d", a.Layer, a.Head))
+		row := h.Attn[i]
+		var maxW float32
+		best := 0
+		over := 0
+		for j := 0; j <= i; j++ {
+			if row[j] > maxW {
+				maxW, best = row[j], j
+			}
+			if row[j] > 0.05 {
+				over++
+			}
+		}
+		kv(c, "最大权重", fmt.Sprintf("%.3f → token %d %q", maxW, best, tr.Tokens[best].Text))
+		kv(c, "权重 > 5%", fmt.Sprintf("%d 个 key", over))
+		kv(c, "熵", fmt.Sprintf("%.2f nats", model.Entropy(row[:min(len(row), i+1)])))
+		kv(c, "输出 L2", fmt.Sprintf("%.3f", norm(h.Out[i])))
+		mutedText(c, "熵越接近 0 越专注；越接近 log(n) 越分散。")
+	})
+}
+
+func (a *App) inspectorResidual(c *ui.Context) {
+	l := a.layer()
+	i := clampIndex(a.SelToken, len(a.Trace.Tokens))
+	card(c, func() {
+		sectionTitle(c, "向量", "残差流")
+		vec := l.AfterFFN[i]
+		mean, std := meanStd(vec)
+		kv(c, "维度", fmt.Sprint(len(vec)))
+		kv(c, "均值", fmt.Sprintf("%+.4f", mean))
+		kv(c, "标准差", fmt.Sprintf("%.4f", std))
+		kv(c, "L2", fmt.Sprintf("%.3f", norm(vec)))
+		lo, hi := minMaxFloat(vec)
+		kv(c, "范围", fmt.Sprintf("%+.2f … %+.2f", lo, hi))
+	})
+	card(c, func() {
+		sectionTitle(c, "LayerNorm", "进入 FFN 之前")
+		mb, sb := meanStd(l.AfterAttn[i])
+		ma, sa := meanStd(l.Norm2[i])
+		kv(c, "均值", fmt.Sprintf("%+.3f → %+.3f", mb, ma))
+		kv(c, "标准差", fmt.Sprintf("%.3f → %.3f", sb, sa))
+		mutedText(c, "归一化后再乘 γ、加 β，所以最终方差不必恰好为 1。")
+	})
+}
+
+func (a *App) inspectorFFN(c *ui.Context) {
+	l := a.layer()
+	i := clampIndex(a.SelToken, len(a.Trace.Tokens))
+	hidden := l.Hidden[i]
+	active := 0
+	for _, v := range hidden {
+		if v > 0.01 {
+			active++
+		}
+	}
+	mean, std := meanStd(hidden)
+	_, hi := minMaxFloat(hidden)
+	card(c, func() {
+		sectionTitle(c, "隐藏层统计", fmt.Sprintf("d_ff = %d", len(hidden)))
+		kv(c, "激活 > 0.01", fmt.Sprintf("%d / %d (%.0f%%)", active, len(hidden), 100*float64(active)/float64(len(hidden))))
+		kv(c, "峰值", fmt.Sprintf("%+.2f", hi))
+		kv(c, "均值/σ", fmt.Sprintf("%+.3f / %.3f", mean, std))
+		mutedText(c, "GELU 把负值平滑压向 0，所以大部分维度接近零，只有少数被激活。")
+	})
+}
+
+func (a *App) inspectorLogits(c *ui.Context, tr *model.Trace) {
+	probs := tr.Probabilities(a.Temp)
+	top := model.TopK(probs, 2)
+	card(c, func() {
+		sectionTitle(c, "分布统计", fmt.Sprintf("温度 %.2f", a.Temp))
+		if len(top) > 0 {
+			kv(c, "top-1", fmt.Sprintf("%q · %.1f%%", byteText(top[0]), probs[top[0]]*100))
+		}
+		if len(top) > 1 {
+			kv(c, "领先", fmt.Sprintf("%.1f 个百分点", (probs[top[0]]-probs[top[1]])*100))
+		}
+		kv(c, "熵", fmt.Sprintf("%.2f nats", model.Entropy(probs)))
+		mutedText(c, "温度趋近 0 时分布变尖，等于贪心；大于 1 时变平，输出更随机。")
+	})
+}
+
+// topAbsBars keeps the n rows with the largest absolute value, then restores
+// their original order.
+func topAbsBars(rows []barRow, n int) []barRow {
+	sorted := append([]barRow(nil), rows...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		return math.Abs(float64(sorted[i].Value)) > math.Abs(float64(sorted[j].Value))
+	})
+	if n > len(sorted) {
+		n = len(sorted)
+	}
+	out := sorted[:n]
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Index < out[j].Index })
+	return out
 }

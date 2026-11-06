@@ -127,6 +127,87 @@ func TestTesterClicks(t *testing.T) {
 	}
 }
 
+// TestKeyboardNavigation drives the lesson with the shortcuts the footer
+// advertises, without touching the pointer.
+func TestKeyboardNavigation(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	tr.Key(0, ui.KeyRight)
+	tr.Frame()
+	if a.Step != 1 {
+		t.Fatalf("step after right = %d, want 1", a.Step)
+	}
+	tr.Key(0, ui.Key3)
+	tr.Frame()
+	if a.Step != 2 {
+		t.Fatalf("step after 3 = %d, want 2", a.Step)
+	}
+	tr.Key(0, ui.KeyLeft)
+	tr.Frame()
+	if a.Step != 1 {
+		t.Fatalf("step after left = %d, want 1", a.Step)
+	}
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	if !a.Playing {
+		t.Fatal("space did not start autoplay")
+	}
+	tr.Key(0, ui.KeyEscape)
+	tr.Frame()
+	if a.Playing {
+		t.Fatal("escape did not stop autoplay")
+	}
+}
+
+// TestTypingDoesNotTriggerShortcuts checks that the global shortcuts yield to
+// a focused text field: typing a digit or an arrow key edits the prompt
+// instead of jumping between lessons.
+func TestTypingDoesNotTriggerShortcuts(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if err := tr.Click("输入"); err != nil {
+		t.Fatalf("click input: %v", err)
+	}
+	tr.Frame()
+	before := a.Prompt
+	tr.TypeKey(0, ui.Key3, "3")
+	tr.Frame()
+	if a.Step != 0 {
+		t.Fatalf("typing a digit changed the step to %d", a.Step)
+	}
+	if a.Prompt == before {
+		t.Fatalf("typing a digit did not reach the input: %q", a.Prompt)
+	}
+	tr.Key(0, ui.KeyLeft)
+	tr.Frame()
+	if a.Step != 0 {
+		t.Fatalf("left arrow in the input changed the step to %d", a.Step)
+	}
+}
+
+// TestPresetPrompt clicks the long-prompt preset, which should switch the
+// prompt and truncate it to the context window.
+func TestPresetPrompt(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if err := tr.Click("长提示词"); err != nil {
+		t.Fatalf("click preset: %v", err)
+	}
+	want := strings.Repeat("attention ", 12)
+	if a.Prompt != want {
+		t.Fatalf("prompt = %q, want %q", a.Prompt, want)
+	}
+	if got := len(a.Trace.Tokens); got != a.W.Config.Ctx {
+		t.Fatalf("%d tokens, want %d", got, a.W.Config.Ctx)
+	}
+	if !strings.Contains(a.Status, "截断") {
+		t.Fatalf("status = %q", a.Status)
+	}
+}
+
 func TestSelectStepResetsScrollAndStopsPlaying(t *testing.T) {
 	a := newTestApp(t)
 	a.Scroll.Y = 200
