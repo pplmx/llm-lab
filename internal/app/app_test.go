@@ -4652,3 +4652,99 @@ func TestInspectorScopeReturnsWhenTheresAPrompt(t *testing.T) {
 		t.Fatalf("after clearing the prompt %q still appears %d time(s)", scope, n)
 	}
 }
+
+// TestLayerNormClaimMatchesTheActualWeights covers a sentence that was true of
+// the bundled weights and false of the random fallback.
+//
+// Both LayerNorm cards said "γ、β 是训练出来的，不是 1 和 0". model.Random sets
+// γ to ones and β to zeros, so in the untrained state the sentence stated the
+// exact opposite of what the numbers were. Found by running the untrained-state
+// banner through the LN stage rather than assuming the prose held for both.
+func TestLayerNormClaimMatchesTheActualWeights(t *testing.T) {
+	cases := []struct {
+		name string
+		w    *model.Weights
+		// want is a substring the rendered text must contain.
+		want string
+		// wantNot must not appear.
+		wantNot string
+	}{
+		{
+			name:    "bundled",
+			want:    "不是 1 和 0",
+			wantNot: "没有训练过",
+		},
+		{
+			name: "random",
+			w:    model.Random(model.DefaultConfig, 42),
+			// The two notes word the untrained case slightly differently, so
+			// the common substring is what both must contain.
+			want:    "没有训练过",
+			wantNot: "是训练出来的，不是 1 和 0",
+		},
+	}
+	for _, c := range cases {
+		var a *App
+		if c.w == nil {
+			a = newTestApp(t)
+		} else {
+			a = New(c.w)
+		}
+		a.Prompt = "hi"
+		a.recompute()
+
+		// The helper must agree with the weights it is describing.
+		if got, want := lnParamsAreLearned(a.W), c.w != nil; got != !want {
+			t.Fatalf("%s: lnParamsAreLearned = %v, want %v", c.name, got, !want)
+		}
+
+		// Stage 5 carries both notes: the layer-scoped card and the inspector.
+		// Stage 6 mentions neither, so scanning it proves nothing.
+		for _, step := range []int{4} {
+			a.Step = step
+			tr := ui.NewTester(a.View, 1500, 940)
+			tr.Frame()
+			var joined strings.Builder
+			for _, s := range tr.Texts() {
+				joined.WriteString(s)
+				joined.WriteString("\n")
+			}
+			text := joined.String()
+			// Both LayerNorm notes carry the claim — the layer-scoped card and
+			// the inspector's — so require two occurrences rather than one. A
+			// single contains would pass with either copy left unconditional.
+			if n := strings.Count(text, c.want); n != 2 {
+				t.Fatalf("%s stage %d: the claim %q appears %d time(s), want 2",
+					c.name, step+1, c.want, n)
+			}
+			if strings.Contains(text, c.wantNot) {
+				t.Fatalf("%s stage %d: the LayerNorm note still says %q", c.name, step+1, c.wantNot)
+			}
+		}
+	}
+}
+
+// TestLNParamsHelperReadsTheWeights pins the helper against the two shapes it
+// must distinguish, including the mixed case where only β moves.
+func TestLNParamsHelperReadsTheWeights(t *testing.T) {
+	learned := model.Random(model.DefaultConfig, 42)
+	if lnParamsAreLearned(learned) {
+		t.Fatal("random weights report learned LayerNorm parameters")
+	}
+	// A trained γ need not be far from 1 to count.
+	trained := model.Random(model.DefaultConfig, 42)
+	trained.LNFG[3] = 1.01
+	if !lnParamsAreLearned(trained) {
+		t.Fatal("a γ slightly off 1 is not detected")
+	}
+	// β alone is enough.
+	shifted := model.Random(model.DefaultConfig, 42)
+	shifted.LNFB[7] = -0.004
+	if !lnParamsAreLearned(shifted) {
+		t.Fatal("a non-zero β is not detected")
+	}
+	// And nil must not panic.
+	if lnParamsAreLearned(nil) {
+		t.Fatal("nil weights report learned parameters")
+	}
+}

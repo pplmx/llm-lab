@@ -81,6 +81,12 @@ func TestRenderSizes(t *testing.T) {
 	b := New(model.Random(model.DefaultConfig, 42))
 	b.Step = 3
 	writeSnapshot(t, dir, "size-untrained-1180.png", ui.Render(b.View, 1180, 720, 1))
+
+	// The same random weights on the LayerNorm stage, where the untrained case
+	// changes what the prose says: γ is 1 and β is 0, so the notes must not claim
+	// they were learned. Nothing else in the snapshot set reaches that branch.
+	b.Step = 4
+	writeSnapshot(t, dir, "size-untrained-1180-layernorm.png", ui.Render(b.View, 1180, 720, 1))
 }
 
 // writeSnapshot encodes img to dir/name, failing the test on either error.

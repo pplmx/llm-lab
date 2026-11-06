@@ -595,3 +595,28 @@ func activationConcentration(x []float32) (share float64, topN int) {
 	}
 	return top / total, topN
 }
+
+// lnParamsAreLearned reports whether this layer's LayerNorm scale and shift are
+// anything other than the identity (γ = 1, β = 0).
+//
+// The stages say "γ and β are learned, not 1 and 0", which is true of the bundled
+// trained weights and false of the random fallback — model.Random sets γ to ones
+// and β to zeros. Reading the weights is exact; recovering the same answer from
+// the trace is not, because a trained γ can sit close enough to 1 that the
+// normalised row is indistinguishable from the plain one at float32 precision.
+func lnParamsAreLearned(w *model.Weights) bool {
+	if w == nil {
+		return false
+	}
+	for _, g := range w.LNFG {
+		if g != 1 {
+			return true
+		}
+	}
+	for _, b := range w.LNFB {
+		if b != 0 {
+			return true
+		}
+	}
+	return false
+}

@@ -628,8 +628,14 @@ func (a *App) stageResidual(c *ui.Context) {
 		histogramRange(c, before, 32, colWarm, axLo, axHi)
 		ui.Text(c, "归一化后").FontSize(fontMicro).TextColor(colAccent2)
 		histogramRange(c, after, 32, colAccent2, axLo, axHi)
-		mutedText(c, "LayerNorm 先减均值、除标准差，再乘可学习的 γ、加 β；直方图展示最终的 γ/β 输出，所以方差不必恰好为 1。"+
-			"这里的 γ、β 是训练出来的，不是 1 和 0——下面那行算式里的数值就是它们在这个维度上的真实取值。")
+		// "γ 和 β 是训练出来的，不是 1 和 0" is true of the bundled weights and
+		// false of the random fallback, where they are exactly the identity. The
+		// sentence is chosen from the weights rather than asserted.
+		lnNote := "这里的 γ、β 是训练出来的，不是 1 和 0——下面那行算式里的数值就是它们在这个维度上的真实取值。"
+		if !lnParamsAreLearned(a.W) {
+			lnNote = "这份权重没有训练过，γ 恰好是 1、β 恰好是 0，所以这一步的缩放其实没起作用——训练之后它们才会离开 1 和 0。"
+		}
+		mutedText(c, "LayerNorm 先减均值、除标准差，再乘可学习的 γ、加 β；直方图展示最终的 γ/β 输出，所以方差不必恰好为 1。"+lnNote)
 		// The same treatment the attention stage's cell card got: instead of
 		// showing a number and leaving it to be trusted, print the arithmetic
 		// that produced one entry of this row. γ and β are shown because they
@@ -1335,8 +1341,13 @@ func (a *App) inspectorResidual(c *ui.Context) {
 		ma, sa := meanStd(l.Norm2[i])
 		kv(c, "均值", fmt.Sprintf("%+.3f → %+.3f", mb, ma))
 		kv(c, "标准差", fmt.Sprintf("%.3f → %.3f", sb, sa))
-		mutedText(c, "归一化后再乘 γ、加 β，所以最终方差不必恰好为 1。"+
-			"γ、β 是训练出来的，不是 1 和 0；第 5 步的算式会把这个维度上的真实取值和结果一起写出来。")
+		body := "归一化后再乘 γ、加 β，所以最终方差不必恰好为 1。" +
+			"γ、β 是训练出来的，不是 1 和 0；第 5 步的算式会把这个维度上的真实取值和结果一起写出来。"
+		if !lnParamsAreLearned(a.W) {
+			body = "归一化后再乘 γ、加 β，所以最终方差不必恰好为 1。" +
+				"这份权重没有训练过，γ 是 1、β 是 0，所以这一步只是纯归一化；第 5 步的算式里能看到这两个值。"
+		}
+		mutedText(c, body)
 	})
 }
 
