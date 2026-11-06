@@ -177,7 +177,9 @@ func (a *App) recompute() {
 		a.SelToken = -1
 	}
 	a.lastPrompt = a.Prompt
-	a.clearHover()
+	// The pointer's hover belongs to the old layout; the pinned cell does not.
+	a.clearPointer()
+	a.clampPinnedCell()
 	a.Status = fmt.Sprintf("%d tokens · %d 层 × %d 头 · 前向完成", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
 	if len(a.Prompt) > a.W.Config.Ctx {
 		a.Status = fmt.Sprintf("已截断到最近 %d 个 token · %d 层 × %d 头", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
@@ -288,6 +290,49 @@ func (a *App) stepToken(delta int) {
 func (a *App) clearHover() {
 	a.HoverQ, a.HoverK = -1, -1
 	a.KeyQ, a.KeyK = -1, -1
+	a.HoverDimIn = -1
+	a.HoverDimQ, a.HoverDimK = -1, -1
+	a.HoverDimV, a.HoverDimH = -1, -1
+	a.HoverDimOut = -1
+	a.HoverDimHeadOut, a.HoverDimProj = -1, -1
+}
+
+// clampPinnedCell keeps a pinned attention cell inside the triangle after the
+// token count changes. Extending the prompt keeps every existing cell valid, so
+// the pin normally survives untouched; truncation can shrink the matrix under
+// it, and a pin outside the new bounds would draw on a cell that no longer
+// exists.
+func (a *App) clampPinnedCell() {
+	n := 0
+	if a.Trace != nil {
+		n = len(a.Trace.Tokens)
+	}
+	if a.KeyQ < 0 && a.KeyK < 0 {
+		return
+	}
+	if n == 0 {
+		a.KeyQ, a.KeyK = -1, -1
+		return
+	}
+	if a.KeyQ >= n {
+		a.KeyQ = n - 1
+	}
+	if a.KeyK > a.KeyQ {
+		a.KeyK = a.KeyQ
+	}
+	if a.KeyK < 0 {
+		a.KeyK = 0
+	}
+}
+
+// clearPointer is clearHover without the keyboard cursor. Editing the prompt
+// rebuilds the trace but does not move anything the reader chose: the pointer
+// hover is stale by definition (the page reflowed under it), while the pinned
+// cell is a deliberate selection that should survive. Sampling used to drop the
+// pin silently — the reader set it, pressed 采样并续写, and the card under it
+// changed from "已固定" back to nothing.
+func (a *App) clearPointer() {
+	a.HoverQ, a.HoverK = -1, -1
 	a.HoverDimIn = -1
 	a.HoverDimQ, a.HoverDimK = -1, -1
 	a.HoverDimV, a.HoverDimH = -1, -1

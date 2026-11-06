@@ -3091,3 +3091,93 @@ func TestSelectionShiftCountsBothSidesOfTheEdit(t *testing.T) {
 			b.SelToken, len(b.Trace.Tokens)-1)
 	}
 }
+
+// TestPinnedCellSurvivesEditing is the interaction this round fixed. The reader
+// pins a cell, then the prompt changes underneath — by typing or by sampling.
+// The pin is a deliberate choice about a cell that still exists, so it must
+// stay; only the pointer's hover is stale and should be cleared.
+func TestPinnedCellSurvivesEditing(t *testing.T) {
+	// Sampling appends a byte, so every existing cell keeps its indices.
+	a := newTestApp(t)
+	a.Step = 2
+	a.KeyQ, a.KeyK = 20, 5
+	a.sampleNext()
+	if a.KeyQ != 20 || a.KeyK != 5 {
+		t.Fatalf("sampling moved the pin to (%d,%d), want (20,5)", a.KeyQ, a.KeyK)
+	}
+
+	// Typing an extra character likewise only grows the matrix.
+	b := newTestApp(t)
+	b.Step = 2
+	b.KeyQ, b.KeyK = 20, 5
+	b.Prompt += "!"
+	b.recompute()
+	if b.KeyQ != 20 || b.KeyK != 5 {
+		t.Fatalf("typing moved the pin to (%d,%d), want (20,5)", b.KeyQ, b.KeyK)
+	}
+
+	// And the inspector still describes it.
+	tr := ui.NewTester(b.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("已固定") {
+		t.Fatal("the inspector stopped describing the pinned cell")
+	}
+}
+
+// TestPinnedCellClampsWhenTheMatrixShrinks is the other half: a pin outside the
+// new bounds must not be drawn on a cell that no longer exists. Truncating the
+// prompt shrinks the matrix under the selection.
+func TestPinnedCellClampsWhenTheMatrixShrinks(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.KeyQ, a.KeyK = 30, 20
+	a.Prompt = strings.Repeat("a", 10)
+	a.recompute()
+	n := len(a.Trace.Tokens)
+	if n >= 30 {
+		t.Fatalf("expected a small trace, got %d tokens", n)
+	}
+	if a.KeyQ < 0 || a.KeyQ >= n {
+		t.Fatalf("pin row %d is outside 0..%d", a.KeyQ, n-1)
+	}
+	if a.KeyK < 0 || a.KeyK > a.KeyQ {
+		t.Fatalf("pin (%d,%d) is not inside the triangle", a.KeyQ, a.KeyK)
+	}
+
+	// An empty prompt has no matrix at all, so the pin has to go.
+	b := newTestApp(t)
+	b.KeyQ, b.KeyK = 5, 2
+	b.Prompt = ""
+	b.recompute()
+	if b.KeyQ >= 0 || b.KeyK >= 0 {
+		t.Fatalf("empty prompt left the pin at (%d,%d)", b.KeyQ, b.KeyK)
+	}
+}
+
+// TestPointerHoverClearsOnEdit is the part that should still clear: hovering a
+// cell is a statement about where the pointer is, and the page reflows under it.
+func TestPointerHoverClearsOnEdit(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.HoverQ, a.HoverK = 10, 4
+	a.HoverDimIn = 3
+	a.recompute()
+	if a.HoverQ >= 0 || a.HoverK >= 0 {
+		t.Fatalf("pointer hover survived an edit: (%d,%d)", a.HoverQ, a.HoverK)
+	}
+	if a.HoverDimIn >= 0 {
+		t.Fatalf("dimension hover survived an edit: %d", a.HoverDimIn)
+	}
+}
+
+// TestStageSwitchStillClearsThePin checks the distinction holds the other way:
+// changing stage really does invalidate the cell, so selectStep keeps using the
+// full clear.
+func TestStageSwitchStillClearsThePin(t *testing.T) {
+	a := newTestApp(t)
+	a.KeyQ, a.KeyK = 20, 5
+	a.selectStep(2)
+	if a.KeyQ >= 0 || a.KeyK >= 0 {
+		t.Fatalf("stage switch left the pin at (%d,%d)", a.KeyQ, a.KeyK)
+	}
+}
