@@ -46,7 +46,17 @@ type App struct {
 
 	SelToken int
 
-	HoverQ, HoverK       int
+	// HoverQ/HoverK are the cell under the pointer. The heatmap rewrites them
+	// every frame it is drawn — to -1 when the pointer is elsewhere — so they
+	// cannot also carry a keyboard selection, which has to survive the pointer
+	// moving at all.
+	HoverQ, HoverK int
+	// KeyQ/KeyK are the cell chosen with the keyboard, -1 when none. The
+	// heatmap draws them like the hovered cell but in the selection colour, so
+	// a reader who never touches the mouse can still walk the matrix; the
+	// inspector reads whichever pair is live.
+	KeyQ, KeyK int
+
 	HoverDimIn           int
 	HoverDimQ, HoverDimK int
 	HoverDimV, HoverDimH int
@@ -83,6 +93,8 @@ func New(w *model.Weights) *App {
 		SelToken:   -1,
 		HoverQ:     -1,
 		HoverK:     -1,
+		KeyQ:       -1,
+		KeyK:       -1,
 		HoverDimIn: -1,
 		HoverDimQ:  -1,
 		HoverDimK:  -1,
@@ -164,6 +176,74 @@ func promptIDs(s string) []int {
 	return ids
 }
 
+// cellCursor is the attention cell the reader is looking at, keyboard first:
+// a cell walked to with the arrow keys stays put while the pointer moves, and
+// while it is set it is the one the inspector and the strip describe.
+func (a *App) cellCursor() (q, k int) {
+	if a.KeyQ >= 0 && a.KeyK >= 0 {
+		return a.KeyQ, a.KeyK
+	}
+	return a.HoverQ, a.HoverK
+}
+
+// hasMatrix reports whether the current stage draws a heatmap, and so has cells
+// for the keyboard to walk: step 3 (注意力分数) draws the score matrix and step
+// 4 (Softmax) draws the attention matrix. The other five stages have no matrix,
+// so the arrow keys there go on moving the token selection.
+func (a *App) hasMatrix() bool { return a.Step == 2 || a.Step == 3 }
+
+// stepCell moves the keyboard's attention cell by (dq, dk). Only the stages
+// that draw a heatmap have cells; elsewhere the keys do nothing, which is why
+// the caller gates on the same range the strip's q/k marks use.
+//
+// The cell never leaves the causal triangle: the first press enters from
+// wherever the pointer last hovered, or from the selected query's own row, and
+// the key stays at or before the query because everything past it is masked.
+func (a *App) stepCell(dq, dk int) {
+	if a.Step < 2 || a.Step > 3 {
+		return
+	}
+	tr := a.Trace
+	n := len(tr.Tokens)
+	if n == 0 {
+		return
+	}
+	q, k := a.KeyQ, a.KeyK
+	if q < 0 || k < 0 || q >= n || k >= n {
+		// Entering the matrix: start from the pointer if it is on a cell,
+		// else from the selected query at its first key.
+		if a.HoverQ >= 0 && a.HoverK >= 0 && a.HoverQ < n && a.HoverK < n {
+			q, k = a.HoverQ, a.HoverK
+		} else {
+			q = clampIndex(a.SelToken, n)
+			k = 0
+		}
+	}
+	q += dq
+	if dq != 0 {
+		// Moving to another query starts at that row's own diagonal: the row's
+		// most recent key, which is where the interesting weight usually is.
+		if q < 0 {
+			q = 0
+		}
+		if q >= n {
+			q = n - 1
+		}
+		k = q
+	}
+	k += dk
+	if k < 0 {
+		k = 0
+	}
+	if k > q {
+		k = q
+	}
+	a.KeyQ, a.KeyK = q, k
+	// Selecting a cell is also selecting its query: the inspector and the
+	// strip should describe the row the reader is walking.
+	a.selectToken(q, true)
+}
+
 // selectToken moves the selection. reveal asks the next frame to scroll the
 // token strip to it, for selections made from outside the strip (the keyboard,
 // a heatmap cell, a new prompt): the reader's eye is elsewhere, and the strip
@@ -191,6 +271,7 @@ func (a *App) stepToken(delta int) {
 
 func (a *App) clearHover() {
 	a.HoverQ, a.HoverK = -1, -1
+	a.KeyQ, a.KeyK = -1, -1
 	a.HoverDimIn = -1
 	a.HoverDimQ, a.HoverDimK = -1, -1
 	a.HoverDimV, a.HoverDimH = -1, -1
@@ -314,10 +395,36 @@ func (a *App) handleKeys(c *ui.Context) {
 	case c.Shortcut(0, ui.KeyEscape):
 		a.Playing = false
 		a.NextAt = time.Time{}
+	// Shift+arrows. On the two attention stages they walk the matrix, since a
+	// matrix cell is what those stages teach and was the last interaction only
+	// the mouse could reach; everywhere else they move the token selection, as
+	// they always have.
+	//
+	// The two behaviours share one Shortcut call each rather than appearing as
+	// `Shortcut(...) && hasMatrix()` followed by a bare Shortcut. A second call
+	// for the same key in one frame reports false — the first ask used the
+	// press up — so the guarded form silently ate every Shift+arrow outside
+	// the attention stages.
 	case c.Shortcut(ui.Shift, ui.KeyLeft):
-		a.stepToken(-1)
+		if a.hasMatrix() {
+			a.stepCell(0, -1)
+		} else {
+			a.stepToken(-1)
+		}
 	case c.Shortcut(ui.Shift, ui.KeyRight):
-		a.stepToken(1)
+		if a.hasMatrix() {
+			a.stepCell(0, 1)
+		} else {
+			a.stepToken(1)
+		}
+	case c.Shortcut(ui.Shift, ui.KeyUp):
+		if a.hasMatrix() {
+			a.stepCell(-1, 0)
+		}
+	case c.Shortcut(ui.Shift, ui.KeyDown):
+		if a.hasMatrix() {
+			a.stepCell(1, 0)
+		}
 	default:
 		digits := [...]ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7}
 		for i, key := range digits {
@@ -701,21 +808,28 @@ func (a *App) inspectorToken(c *ui.Context, tr *model.Trace) {
 func (a *App) inspectorHoverCell(c *ui.Context) {
 	tr := a.Trace
 	l := a.layer()
-	if l == nil || a.HoverQ < 0 || a.HoverK < 0 || a.HoverQ >= len(tr.Tokens) || a.HoverK >= len(tr.Tokens) {
+	q, k := a.cellCursor()
+	if l == nil || q < 0 || k < 0 || q >= len(tr.Tokens) || k >= len(tr.Tokens) {
 		return
 	}
 	card(c, func() {
-		sectionTitle(c, "注意力格子", "")
+		// Say which of the two cursors this is describing, so a reader who
+		// walked here with the keyboard knows the pointer is not steering it.
+		source := "指针"
+		if a.KeyQ >= 0 && a.KeyK >= 0 {
+			source = "键盘"
+		}
+		sectionTitle(c, "注意力格子", source)
 		h := l.Heads[a.Head]
-		score := h.Scores[a.HoverQ][a.HoverK]
-		kv(c, "query", fmt.Sprintf("%d %q", a.HoverQ, tr.Tokens[a.HoverQ].Text))
-		kv(c, "key", fmt.Sprintf("%d %q", a.HoverK, tr.Tokens[a.HoverK].Text))
+		score := h.Scores[q][k]
+		kv(c, "query", fmt.Sprintf("%d %q", q, tr.Tokens[q].Text))
+		kv(c, "key", fmt.Sprintf("%d %q", k, tr.Tokens[k].Text))
 		if math.IsInf(float64(score), -1) {
 			kv(c, "分数", "−∞（被因果掩码遮住）")
 			kv(c, "权重", "0")
 		} else {
 			kv(c, "分数", fmt.Sprintf("%+.4f", score))
-			kv(c, "权重", fmt.Sprintf("%.4f", h.Attn[a.HoverQ][a.HoverK]))
+			kv(c, "权重", fmt.Sprintf("%.4f", h.Attn[q][k]))
 		}
 	})
 }

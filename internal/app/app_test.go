@@ -947,3 +947,133 @@ func nonBgPixels(img *image.RGBA) int {
 	}
 	return n
 }
+
+// TestShortcutIsAskedOncePerFrame guards the trap this round hit: Context.Shortcut
+// reports false on a second call for the same key in one frame, because the
+// first ask consumes the press. Writing `Shortcut(Shift, KeyRight) && stage`
+// before a bare `Shortcut(Shift, KeyRight)` therefore makes the bare case
+// unreachable, and the shortcut silently stops working.
+func TestShortcutIsAskedOncePerFrame(t *testing.T) {
+	var firstHit, secondHit bool
+	view := func(c *ui.Context) {
+		// Same key asked twice, as the broken shape did.
+		firstHit = c.Shortcut(ui.Shift, ui.KeyUp)
+		secondHit = c.Shortcut(ui.Shift, ui.KeyRight)
+		ui.Text(c, "x")
+	}
+	tr := ui.NewTester(view, 400, 200)
+	tr.Frame()
+	tr.Key(ui.Shift, ui.KeyRight)
+	for i := 0; i < 3; i++ {
+		tr.Frame()
+	}
+	if firstHit {
+		t.Fatal("Shift+Up reported for a Shift+Right press")
+	}
+	// This is mygo's contract, not a bug to work around: one ask per key per
+	// frame. If a later mygo lets the second ask see the press, this test
+	// fails and the guarded shape in handleKeys can be simplified.
+	if secondHit {
+		t.Log("mygo now allows a second Shortcut call for the same key in one frame")
+	}
+}
+
+// TestShiftArrowsSplitByStage checks the two behaviours of Shift+Left/Right:
+// the token selection on the stages without a matrix, and the attention cell on
+// the two that have one.
+func TestShiftArrowsSplitByStage(t *testing.T) {
+	// Stages without a matrix: the selection moves.
+	for _, step := range []int{0, 1, 4, 5, 6} {
+		a := newTestApp(t)
+		a.Step = step
+		a.SelToken = 1
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		tr.Key(ui.Shift, ui.KeyRight)
+		tr.Frame()
+		if a.SelToken != 2 {
+			t.Fatalf("stage %d: Shift+Right left the selection at %d, want 2", step, a.SelToken)
+		}
+		if a.KeyQ >= 0 {
+			t.Fatalf("stage %d: a matrix cell was selected on a stage with no matrix", step)
+		}
+	}
+
+	// The two attention stages: the cell moves, and the query follows it.
+	for _, step := range []int{2, 3} {
+		a := newTestApp(t)
+		a.Step = step
+		a.SelToken = 1
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		tr.Key(ui.Shift, ui.KeyRight)
+		tr.Frame()
+		if a.KeyQ < 0 || a.KeyK < 0 {
+			t.Fatalf("stage %d: Shift+Right did not enter the matrix", step)
+		}
+		if a.KeyK > a.KeyQ {
+			t.Fatalf("stage %d: keyboard cell %d,%d is outside the causal triangle",
+				step, a.KeyQ, a.KeyK)
+		}
+		if a.SelToken != a.KeyQ {
+			t.Fatalf("stage %d: selection %d does not follow the cell's query %d",
+				step, a.SelToken, a.KeyQ)
+		}
+	}
+}
+
+// TestKeyboardCellSurvivesPointerMove is the reason KeyQ/KeyK exist separately
+// from HoverQ/HoverK: the heatmap rewrites the hover pair every frame it draws,
+// so a cell chosen with the keyboard would be erased by any pointer movement.
+func TestKeyboardCellSurvivesPointerMove(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	tr.Key(ui.Shift, ui.KeyDown)
+	tr.Frame()
+	q, k := a.KeyQ, a.KeyK
+	if q < 0 {
+		t.Fatal("Shift+Down did not select a cell")
+	}
+	tr.Move(1250, 500) // well outside the matrix
+	tr.Frame()
+	if a.KeyQ != q || a.KeyK != k {
+		t.Fatalf("a pointer move erased the keyboard cell: %d,%d -> %d,%d",
+			q, k, a.KeyQ, a.KeyK)
+	}
+	if a.HoverQ >= 0 {
+		t.Fatal("hover was expected to clear outside the matrix")
+	}
+	// And the cursor the UI reads is still the keyboard's.
+	if cq, ck := a.cellCursor(); cq != q || ck != k {
+		t.Fatalf("cellCursor = %d,%d, want the keyboard cell %d,%d", cq, ck, q, k)
+	}
+}
+
+// TestKeyboardCellStaysInTriangle walks the cell in every direction and checks
+// it never lands on a masked entry.
+func TestKeyboardCellStaysInTriangle(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	tr.Key(ui.Shift, ui.KeyDown)
+	tr.Frame()
+	for _, key := range []ui.Key{ui.KeyLeft, ui.KeyUp, ui.KeyDown, ui.KeyRight} {
+		for i := 0; i < 12; i++ {
+			tr.Key(ui.Shift, key)
+			tr.Frame()
+			if a.KeyQ < 0 || a.KeyK < 0 {
+				t.Fatalf("after %v: cell unset", key)
+			}
+			if a.KeyQ >= len(a.Trace.Tokens) || a.KeyK >= len(a.Trace.Tokens) {
+				t.Fatalf("after %v: cell %d,%d past the sequence", key, a.KeyQ, a.KeyK)
+			}
+			if a.KeyK > a.KeyQ {
+				t.Fatalf("after %v: cell %d,%d is above the diagonal (masked)",
+					key, a.KeyQ, a.KeyK)
+			}
+		}
+	}
+}

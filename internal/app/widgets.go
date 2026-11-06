@@ -117,14 +117,15 @@ func (a *App) tokenRailChips(c *ui.Context, tokens []modelToken) {
 // railMarks says how the strip marks token i for the attention cell under the
 // pointer: "q" for the query row, "k" for the key column, "qk" when both.
 func (a *App) railMarks(i int) string {
-	if a.Step < 2 || a.Step > 3 {
+	if !a.hasMatrix() {
 		return ""
 	}
+	q, k := a.cellCursor()
 	var m string
-	if i == a.HoverQ {
+	if i == q {
 		m += "q"
 	}
-	if i == a.HoverK {
+	if i == k {
 		m += "k"
 	}
 	return m
@@ -146,14 +147,15 @@ func railMarkColor(marks string) ui.Color {
 func (a *App) tokenRailReadout(c *ui.Context) {
 	tr := a.Trace
 	ui.Row(c).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
+		cq, ck := a.cellCursor()
 		switch {
-		case a.HoverQ >= 0 && a.HoverK >= 0 && a.HoverQ < len(tr.Tokens) && a.HoverK < len(tr.Tokens):
+		case cq >= 0 && ck >= 0 && cq < len(tr.Tokens) && ck < len(tr.Tokens):
 			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
 				markChip(c, "Q", colWarm)
-				ui.Text(c, railTokenText(tr.Tokens, a.HoverQ)).FontSize(fontSmall).TextColor(colText).NoWrap()
+				ui.Text(c, railTokenText(tr.Tokens, cq)).FontSize(fontSmall).TextColor(colText).NoWrap()
 				ui.Text(c, "×").FontSize(fontSmall).TextColor(colFaint)
 				markChip(c, "K", colAccent2)
-				ui.Text(c, railTokenText(tr.Tokens, a.HoverK)).FontSize(fontSmall).TextColor(colText).NoWrap()
+				ui.Text(c, railTokenText(tr.Tokens, ck)).FontSize(fontSmall).TextColor(colText).NoWrap()
 			})
 		case a.SelToken >= 0 && a.SelToken < len(tr.Tokens):
 			tk := tr.Tokens[a.SelToken]
@@ -359,6 +361,16 @@ func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 				p.Stroke(ui.Rect{
 					X: r.X + float32(a.HoverK)*cw, Y: r.Y, W: cw, H: r.H,
 				}, colAccent2, 0, 1)
+			}
+			// The keyboard's cell, as a filled box rather than a crosshair: the
+			// two can be on screen at once, and they have to stay tellable
+			// apart. Only the pointer asks for a frame on move, so this box is
+			// static until the reader presses a key.
+			if q, k := a.cellCursor(); q >= 0 && q < T && k >= 0 && k < T {
+				p.Stroke(ui.Rect{
+					X: r.X + float32(k)*cw - 0.5, Y: r.Y + float32(q)*ch - 0.5,
+					W: cw + 1, H: ch + 1,
+				}, colWarm, 0, 2)
 			}
 			// The selected query row. A stroked rectangle on the last row reads
 			// as a stray underline, so tint the row and mark its left edge.
