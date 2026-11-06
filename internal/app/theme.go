@@ -141,6 +141,51 @@ func mutedText(c *ui.Context, s string) ui.Element {
 	return ui.Text(c, s).FontSize(fontBody).TextColor(colMuted).LineHeight(1.45)
 }
 
+// workingsGap is the space between the lines of one workings block, measured
+// from the layout this helper replaced: the embed, score, LayerNorm and FFN
+// blocks each had their lines two pixels apart, so a 10px line sits 15px below
+// the previous one.
+//
+// The sampling block was the exception — its three lines were separate children
+// of the card, so they inherited the card's 10px gap and sat 23px apart. It
+// asks for workingsGapWide rather than letting the refactor quietly tighten one
+// card while leaving the others alone.
+const (
+	workingsGap     = 2
+	workingsGapWide = 10
+)
+
+// workingsLines renders a multi-line "how this number was computed" block: the
+// working lines first, and the line that lands on the result last in the accent
+// colour.
+//
+// Six stages grew one of these by hand — the embedding sum, the score's dot
+// product, the softmax weights, LayerNorm, the FFN sum, and sampling — and they
+// had drifted: some showed two lines, some three, and the accent rule (last
+// line is the answer) was only followed by accident. One function keeps them
+// the same shape without changing what any of them says.
+//
+// The block is one child of its card, so the card's own gap applies around it
+// rather than between its lines. That matters for heights: before this helper,
+// the sampling block's three lines were three children and picked up the
+// card's gap; wrapping them without accounting for that shortened the page by
+// 16px and moved the scrollbar.
+func workingsLines(c *ui.Context, lines []string, gap ...float32) {
+	g := float32(workingsGap)
+	if len(gap) > 0 {
+		g = gap[0]
+	}
+	ui.Column(c).Gap(g).Children(func() {
+		for i, line := range lines {
+			colour := colFaint
+			if i == len(lines)-1 {
+				colour = colAccent2
+			}
+			ui.Text(c, line).FontSize(fontMicro).TextColor(colour)
+		}
+	})
+}
+
 // misconception is the callout for a reading that the picture invites but that
 // is wrong. Each one quotes the belief a reader is likely to form from what is
 // on screen, then corrects it with a number this model actually produces, so

@@ -1035,12 +1035,10 @@ func (a *App) softmaxWorkings(c *ui.Context, h model.HeadTrace, q, k int) {
 	// Two lines: the row maximum is subtracted first (that is why the exponent
 	// is negative even when the score is not), then the numerator over the
 	// denominator. The result printed here is the weight line above.
-	ui.Column(c).Gap(2).Children(func() {
-		ui.Text(c, fmt.Sprintf("分母 = Σ exp(score − %+.4f) = %.4f", rowMax, denom)).
-			FontSize(fontMicro).TextColor(colFaint)
-		ui.Text(c, fmt.Sprintf("α = exp(%+.4f − %+.4f) ÷ %.4f = %.4f",
-			h.Scores[q][k], rowMax, denom, num/denom)).
-			FontSize(fontMicro).TextColor(colAccent2)
+	workingsLines(c, []string{
+		fmt.Sprintf("分母 = Σ exp(score − %+.4f) = %.4f", rowMax, denom),
+		fmt.Sprintf("α = exp(%+.4f − %+.4f) ÷ %.4f = %.4f",
+			h.Scores[q][k], rowMax, denom, num/denom),
 	})
 }
 

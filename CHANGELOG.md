@@ -36,6 +36,9 @@
 
 ### Changed
 
+- 六处「算式块」抽成 `theme.go` 的 `workingsLines`：嵌入加法、分数点积、softmax 权重、LayerNorm、FFN 求和、采样。此前各自手写 `ui.Column(c).Gap(2)` 与字号颜色字面量，两行/三行不一，末行强调色规则只是碰巧一致
+  - 重构过程中发现它们**本来就不一致**：采样块的三行是卡片的直接子元素，行距 23（继承卡片 10），其余四块行距 15。所以保留了这个差异（`workingsGapWide`），而不是把五处悄悄改成一样
+  - 25 张截图前后**逐字节一致**，证明这是纯重构
 - README 的「七个阶段与代码的对应关系」改成五列：**读哪个字段 → 哪个函数 → 写回哪个字段**，并补三条容易看漏的细节（头是分开算的、`-Inf` 是掩码不是数值、`Logits` 只有最后一个位置一行）
 - 新增 `TestTraceShapesMatchTheStageTable`，把那张表声称的字段形状与不变式（`Input = Embed + Pos`、`AfterFFN = AfterAttn + FFNOut`、`AttnProj = Σ HeadProj`、掩码为 `-Inf`、`Hidden` 宽 `d_ff`）钉成测试，表与模型不能再各说各话
 

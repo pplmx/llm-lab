@@ -273,14 +273,12 @@ func (a *App) stageEmbed(c *ui.Context) {
 			dim = a.HoverDimIn
 		}
 		e, pos, x := tr.Embed[i][dim], tr.Pos[i][dim], tr.Input[i][dim]
-		ui.Column(c).Gap(2).Children(func() {
-			ui.Text(c, fmt.Sprintf("d%d：E[%d][%d] = %+.4f · P[%d] = %+.4f",
-				dim, tr.Tokens[i].ID, dim, e, i, pos)).
-				FontSize(fontMicro).TextColor(colFaint)
-			// Parenthesise a negative so the line reads unambiguously: without
-			// it "+0.5674 + -0.6724" invites a second look.
-			ui.Text(c, fmt.Sprintf("%s + %s = %+.4f", signed(e), signed(pos), x)).
-				FontSize(fontMicro).TextColor(colAccent2)
+		// Parenthesise a negative so the line reads unambiguously: without it
+		// "+0.5674 + -0.6724" invites a second look.
+		workingsLines(c, []string{
+			fmt.Sprintf("d%d：E[%d][%d] = %+.4f · P[%d] = %+.4f",
+				dim, tr.Tokens[i].ID, dim, e, i, pos),
+			fmt.Sprintf("%s + %s = %+.4f", signed(e), signed(pos), x),
 		})
 	})
 
@@ -378,13 +376,10 @@ func scoreWorkings(c *ui.Context, q, k, dHead int, p scoreParts) {
 		terms = append(terms, fmt.Sprintf("d%d %+.3f", t.D, t.V))
 	}
 	scale := 1 / math.Sqrt(float64(dHead))
-	ui.Column(c).Gap(2).Children(func() {
-		ui.Text(c, fmt.Sprintf("q%d · k%d 的三项最大贡献：%s", q, k, strings.Join(terms, "  "))).
-			FontSize(fontMicro).TextColor(colFaint)
-		ui.Text(c, fmt.Sprintf("+ 其余 %d 维 %+.4f = 点积 %.4f", dHead-len(p.Top), p.Rest, p.Dot)).
-			FontSize(fontMicro).TextColor(colFaint)
-		ui.Text(c, fmt.Sprintf("score = 点积 / √%d = %.4f × %.4f = %+.4f", dHead, p.Dot, scale, p.Score)).
-			FontSize(fontMicro).TextColor(colAccent2)
+	workingsLines(c, []string{
+		fmt.Sprintf("q%d · k%d 的三项最大贡献：%s", q, k, strings.Join(terms, "  ")),
+		fmt.Sprintf("+ 其余 %d 维 %+.4f = 点积 %.4f", dHead-len(p.Top), p.Rest, p.Dot),
+		fmt.Sprintf("score = 点积 / √%d = %.4f × %.4f = %+.4f", dHead, p.Dot, scale, p.Score),
 	})
 }
 
@@ -535,12 +530,10 @@ func residualNormMeans(tr *model.Trace) (in, out float64) {
 // a vector strip above changes dim, so the reader can walk the row and watch
 // the same formula produce each value.
 func lnWorkings(c *ui.Context, dim int, p lnParts) {
-	ui.Column(c).Gap(2).Children(func() {
-		ui.Text(c, fmt.Sprintf("d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f", dim, p.mean, 1/p.invStd, p.invStd)).
-			FontSize(fontMicro).TextColor(colFaint)
-		ui.Text(c, fmt.Sprintf("(%.4f − %.4f) × %.4f × γ %.3f + β %.3f = %.4f",
-			p.x, p.mean, p.invStd, p.gamma, p.beta, p.out)).
-			FontSize(fontMicro).TextColor(colAccent2)
+	workingsLines(c, []string{
+		fmt.Sprintf("d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f", dim, p.mean, 1/p.invStd, p.invStd),
+		fmt.Sprintf("(%.4f − %.4f) × %.4f × γ %.3f + β %.3f = %.4f",
+			p.x, p.mean, p.invStd, p.gamma, p.beta, p.out),
 	})
 }
 
@@ -697,11 +690,9 @@ func ffnWorkings(c *ui.Context, dim, dff int, p ffnParts) {
 	for _, t := range p.Top {
 		terms = append(terms, fmt.Sprintf("k%d %+.3f", t.K, t.V))
 	}
-	ui.Column(c).Gap(2).Children(func() {
-		ui.Text(c, fmt.Sprintf("out[%d] 的三项最大贡献：%s", dim, strings.Join(terms, "  "))).
-			FontSize(fontMicro).TextColor(colFaint)
-		ui.Text(c, fmt.Sprintf("+ 其余 %d 项 %+.3f = %+.4f", dff-len(p.Top), p.Rest, p.Out)).
-			FontSize(fontMicro).TextColor(colAccent2)
+	workingsLines(c, []string{
+		fmt.Sprintf("out[%d] 的三项最大贡献：%s", dim, strings.Join(terms, "  ")),
+		fmt.Sprintf("+ 其余 %d 项 %+.3f = %+.4f", dff-len(p.Top), p.Rest, p.Out),
 	})
 	ui.Text(c, fmt.Sprintf("余项是精确补足的和，不是估算值——三个最大项并不主导结果，只占 %.0f%%。",
 		ffnTopShare(p))).FontSize(fontMicro).TextColor(colFaint)
@@ -799,12 +790,13 @@ func (a *App) stageOutput(c *ui.Context) {
 		// the interval it falls in is exactly as wide as the drawn token's
 		// probability.
 		if d, ok := a.sampleDraw(probs); ok {
-			ui.Text(c, fmt.Sprintf("种子 = FNV-1a(提示词) = 0x%016X", d.seed)).
-				FontSize(fontMicro).TextColor(colFaint)
-			ui.Text(c, fmt.Sprintf("x = (种子 mod 1000003) ÷ 1000003 = %d ÷ 1000003 = %.6f",
-				d.seed%1000003, d.x)).FontSize(fontMicro).TextColor(colFaint)
-			ui.Text(c, fmt.Sprintf("x 落在 [%.4f, %.4f) 这一段 → 抽到 id %d %q（这一段宽度 %.4f 就是它的概率）",
-				d.lo, d.hi, d.pick, byteText(d.pick), d.prob)).FontSize(fontMicro).TextColor(colAccent2)
+			workingsLines(c, []string{
+				fmt.Sprintf("种子 = FNV-1a(提示词) = 0x%016X", d.seed),
+				fmt.Sprintf("x = (种子 mod 1000003) ÷ 1000003 = %d ÷ 1000003 = %.6f",
+					d.seed%1000003, d.x),
+				fmt.Sprintf("x 落在 [%.4f, %.4f) 这一段 → 抽到 id %d %q（这一段宽度 %.4f 就是它的概率）",
+					d.lo, d.hi, d.pick, byteText(d.pick), d.prob),
+			}, workingsGapWide)
 			mutedText(c, "种子只来自提示词文字，所以同一句提示词永远抽出同一个 token；改一个字，种子和结果都会变。")
 		}
 	})
