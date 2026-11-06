@@ -33,6 +33,14 @@ func TestRenderSizes(t *testing.T) {
 		}
 	}
 
+	// The layer comparison row: only layer 1 has a previous layer to differ
+	// from, and the default snapshots above all sit on layer 0, so this state
+	// would otherwise be covered by no frame at all.
+	a.Layer = 1
+	a.Step = 3
+	writeSnapshot(t, dir, "size-layer1-1180.png", ui.Render(a.View, 1180, 720, 1))
+	a.Layer = 0
+
 	// Long prompt: chips and the heatmap at the 64-token ceiling.
 	a.Prompt = strings.Repeat("attention is a weighted sum ", 3)
 	a.recompute()

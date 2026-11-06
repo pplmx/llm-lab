@@ -3230,3 +3230,129 @@ func TestPinClaimsInTheReadmeAreTrue(t *testing.T) {
 		t.Fatalf("stage switch left the pin at (%d,%d)", c.KeyQ, c.KeyK)
 	}
 }
+
+// TestLayerDivergenceMatchesABruteForceTV checks the divergence number against
+// the definition, computed independently here.
+func TestLayerDivergenceMatchesABruteForceTV(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	if len(tr.Layers) < 2 {
+		t.Skip("need two layers")
+	}
+	for h := range tr.Layers[0].Heads {
+		for _, row := range []int{5, 20, len(tr.Tokens) - 1} {
+			d := computeLayerDivergence(tr.Layers, 1, h, row)
+			if !d.Ok {
+				t.Fatalf("head %d row %d: no divergence computed", h, row)
+			}
+			var want float64
+			l0 := tr.Layers[0].Heads[h].Attn[row]
+			l1 := tr.Layers[1].Heads[h].Attn[row]
+			for k := 0; k <= row; k++ {
+				want += math.Abs(float64(l0[k]) - float64(l1[k]))
+			}
+			want /= 2
+			if math.Abs(d.TV-want) > 1e-6 {
+				t.Fatalf("head %d row %d: TV %.6f, brute force %.6f", h, row, d.TV, want)
+			}
+			if d.TV < 0 || d.TV > 1+1e-6 {
+				t.Fatalf("head %d row %d: TV %.4f is outside [0,1]", h, row, d.TV)
+			}
+		}
+	}
+}
+
+// TestLayerDivergenceSkipsDegenerateRows is the edge the card must not quote.
+// Row 0 sees a single key, so both layers are forced to weight it 1.0 and the
+// distance is zero for a reason that says nothing about what they learned.
+func TestLayerDivergenceSkipsDegenerateRows(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	if d := computeLayerDivergence(tr.Layers, 1, 0, 0); d.Ok {
+		t.Fatalf("row 0 reported a divergence of %.3f", d.TV)
+	}
+	// Layer 0 has no previous layer to compare against.
+	if d := computeLayerDivergence(tr.Layers, 0, 0, 5); d.Ok {
+		t.Fatalf("layer 0 reported a divergence of %.3f", d.TV)
+	}
+}
+
+// TestLayerDivergenceIsSubstantialEverywhere backs the claim the number makes:
+// the two layers attend differently, on every head and every row that can be
+// compared. If a future weight file made them near-identical the row would be
+// teaching something false.
+func TestLayerDivergenceIsSubstantialEverywhere(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	if len(tr.Layers) < 2 {
+		t.Skip("need two layers")
+	}
+	n := len(tr.Tokens)
+	var lo, sum float64 = math.Inf(1), 0
+	cnt := 0
+	for h := range tr.Layers[1].Heads {
+		for row := 1; row < n; row++ {
+			d := computeLayerDivergence(tr.Layers, 1, h, row)
+			if !d.Ok {
+				continue
+			}
+			sum += d.TV
+			cnt++
+			if d.TV < lo {
+				lo = d.TV
+			}
+		}
+	}
+	if cnt == 0 {
+		t.Fatal("nothing measured")
+	}
+	mean := sum / float64(cnt)
+	t.Logf("layer 0 vs 1: mean TV %.3f, min %.3f over %d rows", mean, lo, cnt)
+	// The callout says the layers are doing different things. Half-overlap would
+	// already justify saying so; anything less would not.
+	if mean < 0.5 {
+		t.Fatalf("mean divergence %.3f is too small to call the layers different", mean)
+	}
+	if lo < 0.01 {
+		t.Fatalf("some comparable row is almost identical (%.4f), so 'they differ' is not universal", lo)
+	}
+}
+
+// TestLayerDivergenceRowNamesThePreviousLayer guards the label. The layer
+// control labels layers from 0, and the comparison is against a.Layer-1; writing
+// a.Layer there produced "与第 1 层之差" while showing layer 1, which reads as a
+// comparison with itself.
+func TestLayerDivergenceRowNamesThePreviousLayer(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.Layer = 1
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	hasPrev, hasSelf := false, false
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, "与第 0 层之差") {
+			hasPrev = true
+		}
+		if strings.HasPrefix(s, "与第 1 层之差") {
+			hasSelf = true
+		}
+	}
+	if hasSelf {
+		t.Fatal("the row names layer 1 while layer 1 is being shown")
+	}
+	if !hasPrev {
+		t.Fatal("the row does not name the previous layer")
+	}
+
+	// On layer 0 there is no previous layer, so the row must be absent.
+	b := newTestApp(t)
+	b.Step = 3
+	b.Layer = 0
+	tr2 := ui.NewTester(b.View, 1500, 940)
+	tr2.Frame()
+	for _, s := range tr2.Texts() {
+		if strings.Contains(s, "之差") {
+			t.Fatalf("layer 0 shows a divergence row: %q", s)
+		}
+	}
+}

@@ -1173,6 +1173,18 @@ func (a *App) inspectorAttention(c *ui.Context, tr *model.Trace) {
 		kv(c, "权重 > 5%", fmt.Sprintf("%d 个 key", over))
 		kv(c, "熵", fmt.Sprintf("%.2f nats", model.Entropy(row[:min(len(row), i+1)])))
 		kv(c, "输出 L2", fmt.Sprintf("%.3f", norm(h.Out[i])))
+		// How far this layer's attention is from the previous layer's for the
+		// same row and head. Switching the layer control redraws the heatmap,
+		// but two successive pictures cannot tell a reader whether the layers
+		// are doing the same thing at a different strength or looking somewhere
+		// else entirely.
+		if d := computeLayerDivergence(tr.Layers, a.Layer, a.Head, i); d.Ok {
+			// The layer control labels layers from 0, so name the previous
+			// layer the same way. Writing a.Layer here would read "与第 1 层之差"
+			// while showing layer 1 — a comparison with itself.
+			kv(c, fmt.Sprintf("与第 %d 层之差", a.Layer-1),
+				fmt.Sprintf("%.2f（0 = 相同，1 = 不重叠）", d.TV))
+		}
 		mutedText(c, "熵越接近 0 越专注；越接近 log(n) 越分散。")
 		// The four heads are a segmented control above the stage, and switching
 		// between them shows different bars but no way to compare. One compact
