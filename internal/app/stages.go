@@ -480,13 +480,13 @@ func (a *App) stageSoftmax(c *ui.Context) {
 	card(c, func() {
 		sectionTitle(c, "加权求和", "本头的输出，以及它在残差里的份额")
 		ui.Text(c, fmt.Sprintf("Σ α·v（头内输出，d_head = %d）", tr.Config.DHead())).FontSize(fontMicro).TextColor(colFaint)
-		vectorStrip(c, h.Out[i], 18, &a.HoverDimH)
+		vectorStrip(c, h.Out[i], 18, &a.HoverDimHeadOut)
 		// Head h only multiplies the rows of Wo that belong to its own slice,
 		// so this is the head's actual contribution, not the sum of all heads.
 		ui.Text(c, "· Wo[h] 切片（本头贡献 Δ_h，d_model 宽）").FontSize(fontMicro).TextColor(colFaint)
-		vectorStrip(c, l.HeadProj[a.Head][i], 18, &a.HoverDimH)
+		vectorStrip(c, l.HeadProj[a.Head][i], 18, &a.HoverDimProj)
 		ui.Text(c, "全部头相加 = 本层注意力输出").FontSize(fontMicro).TextColor(colAccent2)
-		vectorStrip(c, l.AttnProj[i], 18, &a.HoverDimH)
+		vectorStrip(c, l.AttnProj[i], 18, &a.HoverDimProj)
 	})
 }
 
@@ -745,13 +745,16 @@ func (a *App) stageFFN(c *ui.Context) {
 				"这一行里恰好等于 0 的有 %d 个。",
 				len(hidden), negDims(hidden), geluFloor, geluFloor, zeroDims(hidden)))
 		ui.Text(c, "× W₂ 回到 d_model").FontSize(fontMicro).TextColor(colFaint)
-		vectorStrip(c, l.FFNOut[i], 18, &a.HoverDimH)
+		vectorStrip(c, l.FFNOut[i], 18, &a.HoverDimOut)
 		// One output dimension of the sum, with the largest contributions and
-		// the exact remainder. Hovering the strip above picks the dimension.
+		// the exact remainder. The output strip is d_model wide while the
+		// hidden strip above is d_ff wide, so the formula follows its own
+		// cursor: sharing one index meant pointing at hidden d200 (a real
+		// dimension, since d_ff is 384) silently showed out[0] instead.
 		d := a.W.Config.DModel
 		dim := 0
-		if a.HoverDimH >= 0 && a.HoverDimH < d {
-			dim = a.HoverDimH
+		if a.HoverDimOut >= 0 && a.HoverDimOut < d {
+			dim = a.HoverDimOut
 		}
 		if p := computeFFN(hidden, a.W.Layers[a.Layer].W2, len(hidden), d, dim); p.OK {
 			ffnWorkings(c, dim, len(hidden), p)

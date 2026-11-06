@@ -58,9 +58,22 @@ type App struct {
 	// inspector reads whichever pair is live.
 	KeyQ, KeyK int
 
+	// HoverDim* carry the dimension under the pointer for each strip, -1 when
+	// none. They are separate because the strips are not all the same width:
+	// the FFN stage draws the hidden row (d_ff wide) and the output row
+	// (d_model wide) in one card, so one index cannot name a dimension in both.
 	HoverDimIn           int
 	HoverDimQ, HoverDimK int
 	HoverDimV, HoverDimH int
+	// HoverDimOut is the FFN stage's output row, kept apart from HoverDimH so
+	// pointing at d200 of the hidden row does not silently retarget the output
+	// formula to out[0].
+	HoverDimOut int
+	// HoverDimHeadOut and HoverDimProj are the attention stage's head output
+	// (d_head wide) and the two projections (d_model wide). They share a card
+	// the way the FFN card does, so they get the same treatment: one index
+	// cannot be a dimension in a 24-wide row and a 96-wide row at once.
+	HoverDimHeadOut, HoverDimProj int
 
 	SidebarW   float32
 	InspectorW float32
@@ -87,23 +100,26 @@ type App struct {
 // New builds the app with the bundled weights.
 func New(w *model.Weights) *App {
 	a := &App{
-		W:          w,
-		Prompt:     defaultPrompt,
-		Step:       0,
-		Temp:       0.8,
-		SelToken:   -1,
-		HoverQ:     -1,
-		HoverK:     -1,
-		KeyQ:       -1,
-		KeyK:       -1,
-		HoverDimIn: -1,
-		HoverDimQ:  -1,
-		HoverDimK:  -1,
-		HoverDimV:  -1,
-		HoverDimH:  -1,
-		SidebarW:   224,
-		InspectorW: 330,
-		theme:      labTheme(),
+		W:               w,
+		Prompt:          defaultPrompt,
+		Step:            0,
+		Temp:            0.8,
+		SelToken:        -1,
+		HoverQ:          -1,
+		HoverK:          -1,
+		KeyQ:            -1,
+		KeyK:            -1,
+		HoverDimIn:      -1,
+		HoverDimQ:       -1,
+		HoverDimK:       -1,
+		HoverDimV:       -1,
+		HoverDimH:       -1,
+		HoverDimOut:     -1,
+		HoverDimHeadOut: -1,
+		HoverDimProj:    -1,
+		SidebarW:        224,
+		InspectorW:      330,
+		theme:           labTheme(),
 	}
 	a.recompute()
 	// The inspector explains the selected token, so the strip has to show it
@@ -276,6 +292,8 @@ func (a *App) clearHover() {
 	a.HoverDimIn = -1
 	a.HoverDimQ, a.HoverDimK = -1, -1
 	a.HoverDimV, a.HoverDimH = -1, -1
+	a.HoverDimOut = -1
+	a.HoverDimHeadOut, a.HoverDimProj = -1, -1
 }
 
 // stageFade is how a stage switch animates: both panels that describe the stage

@@ -1882,10 +1882,51 @@ func TestFFNWorkingsFollowTheHoveredDimension(t *testing.T) {
 	if first == "" {
 		t.Fatal("no FFN workings line")
 	}
-	a.HoverDimH = 47
+	a.HoverDimOut = 47
 	tr.Frame()
 	if second := line(); second == first || !strings.HasPrefix(second, "out[47]") {
-		t.Fatalf("hovering d47 printed %q", second)
+		t.Fatalf("hovering output d47 printed %q", second)
+	}
+}
+
+// TestFFNOutputFormulaIgnoresTheHiddenStrip is the bug this pair of fields
+// fixes. The hidden strip is d_ff wide (384) and the output strip d_model wide
+// (96), so pointing at hidden d200 is a real dimension that the output formula
+// cannot describe. With one shared index it fell back to out[0] while the strip
+// readout above said d200 — two different dimensions on screen at once.
+func TestFFNOutputFormulaIgnoresTheHiddenStrip(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	a.HoverDimOut = 47 // the output formula's cursor
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	line := func() string {
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "out[") {
+				return s
+			}
+		}
+		return ""
+	}
+	before := line()
+	if !strings.HasPrefix(before, "out[47]") {
+		t.Fatalf("output formula is %q, want out[47]", before)
+	}
+
+	// Now hover a hidden dimension that does not exist in the output.
+	a.HoverDimH = 200
+	tr.Frame()
+	if after := line(); after != before {
+		t.Fatalf("pointing at the hidden strip retargeted the output formula: %q", after)
+	}
+	// And the hidden index must still be in range for d_ff, or the test is
+	// asserting nothing.
+	if dff := a.Trace.Config.DFF; 200 >= dff {
+		t.Fatalf("d_ff is %d, so 200 is not a valid hidden dimension", dff)
+	}
+	if dm := a.Trace.Config.DModel; 200 < dm {
+		t.Fatalf("d_model is %d, so 200 would be valid there too", dm)
 	}
 }
 
@@ -2298,5 +2339,60 @@ func TestResidualWorkingsFollowTheHoveredDimension(t *testing.T) {
 	}
 	if !strings.HasPrefix(second, "d7 ") {
 		t.Fatalf("hovering d7 printed %q", second)
+	}
+}
+
+// TestEachStripWidthHasItsOwnCursor is the general form of the FFN bug: a card
+// that draws rows of different widths must not share one hover index between
+// them, or the index means different dimensions in each row.
+func TestEachStripWidthHasItsOwnCursor(t *testing.T) {
+	a := newTestApp(t)
+	cfg := a.Trace.Config
+	// The two stages that mix widths in one card.
+	if cfg.DFF == cfg.DModel {
+		t.Fatal("d_ff equals d_model, so the FFN case cannot be tested")
+	}
+	if cfg.DHead() == cfg.DModel {
+		t.Fatal("d_head equals d_model, so the attention case cannot be tested")
+	}
+
+	// FFN: hidden row d_ff wide, output row d_model wide.
+	a.Step = 5
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	line := func() string {
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "out[") {
+				return s
+			}
+		}
+		return ""
+	}
+	a.HoverDimOut = 3
+	tr.Frame()
+	pinned := line()
+	if !strings.HasPrefix(pinned, "out[3]") {
+		t.Fatalf("output formula is %q, want out[3]", pinned)
+	}
+	// Every hidden dimension must leave the output formula alone.
+	for _, d := range []int{0, 3, 50, cfg.DFF - 1} {
+		a.HoverDimH = d
+		tr.Frame()
+		if got := line(); got != pinned {
+			t.Fatalf("hidden d%d changed the output formula to %q", d, got)
+		}
+	}
+
+	// Attention: head output d_head wide, projections d_model wide. Neither
+	// drives a formula, so the assertion is that the two fields exist and hold
+	// their own values rather than overwriting each other.
+	a.Step = 3
+	tr2 := ui.NewTester(a.View, 1500, 940)
+	tr2.Frame()
+	a.HoverDimHeadOut = 5
+	a.HoverDimProj = 60
+	tr2.Frame()
+	if a.HoverDimHeadOut != 5 || a.HoverDimProj != 60 {
+		t.Fatalf("cursors merged: headOut=%d proj=%d", a.HoverDimHeadOut, a.HoverDimProj)
 	}
 }
