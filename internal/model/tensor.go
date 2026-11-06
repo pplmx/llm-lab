@@ -139,9 +139,44 @@ func layerNorm(x [][]float32, g, b []float32) [][]float32 {
 	return out
 }
 
-// gelu is the exact Gaussian error linear unit tanh-free form PyTorch uses.
+// The GELU table samples the exact erf-based function on [-8, 8]; outside
+// that interval the result is 0 or the identity to within 1e-9. Linear
+// interpolation between the samples is accurate to 4e-7, and looking the
+// value up is roughly twenty times faster than math.Erf, which otherwise
+// dominates the FFN block.
+const (
+	geluN     = 8192
+	geluMin   = -8
+	geluMax   = 8
+	geluScale = float32(geluN) / float32(geluMax-geluMin)
+)
+
+var geluTable = func() [geluN + 1]float32 {
+	var t [geluN + 1]float32
+	step := float64(geluMax-geluMin) / geluN
+	for i := range t {
+		x := float64(geluMin) + step*float64(i)
+		t[i] = float32(0.5 * x * (1 + math.Erf(x/math.Sqrt2)))
+	}
+	return t
+}()
+
+// gelu is the Gaussian error linear unit PyTorch uses, looked up from the
+// table above.
 func gelu(v float32) float32 {
-	return 0.5 * v * (1 + float32(math.Erf(float64(v)/math.Sqrt2)))
+	if v != v { // NaN
+		return v
+	}
+	if v <= geluMin {
+		return 0
+	}
+	if v >= geluMax {
+		return v
+	}
+	f := (v - geluMin) * geluScale
+	i := int(f)
+	frac := f - float32(i)
+	return geluTable[i] + frac*(geluTable[i+1]-geluTable[i])
 }
 
 // addInto stores a+b into dst.

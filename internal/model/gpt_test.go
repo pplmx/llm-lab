@@ -293,3 +293,29 @@ func TestForwardNormalizesIDsToBytes(t *testing.T) {
 		t.Fatalf("token 1 id = %d, want 255", got)
 	}
 }
+
+// TestGeluMatchesErf pins the lookup table to the exact erf-based GELU: the
+// table is only allowed to differ by rounding, and outside the sampled range
+// the function must fall back to its limits.
+func TestGeluMatchesErf(t *testing.T) {
+	var worst float64
+	for i := -10000; i <= 10000; i++ {
+		x := float32(i) / 1000
+		want := 0.5 * float64(x) * (1 + math.Erf(float64(x)/math.Sqrt2))
+		if d := math.Abs(float64(gelu(x)) - want); d > worst {
+			worst = d
+		}
+	}
+	if worst > 1e-5 {
+		t.Fatalf("gelu max abs error %.3e, want <= 1e-5", worst)
+	}
+	if got := gelu(-9); got != 0 {
+		t.Fatalf("gelu(-9) = %v, want 0", got)
+	}
+	if got := gelu(9); got != 9 {
+		t.Fatalf("gelu(9) = %v, want 9", got)
+	}
+	if got := gelu(float32(math.NaN())); !math.IsNaN(float64(got)) {
+		t.Fatalf("gelu(NaN) = %v, want NaN", got)
+	}
+}
