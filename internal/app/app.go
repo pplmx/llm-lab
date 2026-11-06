@@ -285,15 +285,30 @@ func (a *App) clearHover() {
 // would make that comparison harder, not easier.
 //
 // Enter starts at 0.35 rather than 0 on purpose. At 0 mygo draws one frame of
-// the fade with the content fully transparent, and measured over the stage
-// column that frame is plain background — a visible flash of emptiness on every
-// switch, including for readers who ask for reduced motion, since mygo still
-// plays a fade-only Enter under that preference. Starting part-opaque keeps
-// every frame of the transition readable.
+// the fade with the content fully transparent, which measured over the stage
+// column is plain background — a visible flash of emptiness on every switch.
+// Starting part-opaque keeps every frame of the transition readable.
 var stageFade = ui.ElementTransition{
 	Duration: 160 * time.Millisecond,
 	Ease:     ui.EaseOut,
 	Enter:    &ui.Motion{Opacity: 0.35},
+}
+
+// stageTransition is the fade to use for this frame, or the zero value when the
+// reader has asked for less motion.
+//
+// mygo honours ReduceMotion for moves and size changes but still plays a
+// fade-only Enter: transition.go gates it on `!still || m.fades()`, so a
+// fade-only Enter runs under the preference. That is the right default for the
+// fades mygo applies to dialogs and menus, which are short and convey arrival;
+// here it would leave a reader who turned animation off watching eight frames
+// of fade on every stage switch, so this checks the preference itself and asks
+// for no transition at all.
+func (a *App) stageTransition(c *ui.Context) ui.ElementTransition {
+	if c.Preferences().ReduceMotion {
+		return ui.ElementTransition{}
+	}
+	return stageFade
 }
 
 // selectStep changes the lesson and returns the main scroll area to the top.
@@ -368,7 +383,7 @@ func (a *App) View(c *ui.Context) {
 					// the whole point of the lab is comparing two stages' data,
 					// and content that slides would make that harder to follow.
 					ui.Column(c).Key(a.Step).Gap(12).FillWidth().
-						Transition(stageFade).Children(func() {
+						Transition(a.stageTransition(c)).Children(func() {
 						a.stageHeader(c)
 						a.stage(c)
 						a.lesson(c)
@@ -767,7 +782,7 @@ func (a *App) inspector(c *ui.Context) {
 		// two panels that describe one stage change together instead of one
 		// snapping while the other eases.
 		ui.Column(c).Key(a.Step).Gap(12).FillWidth().
-			Transition(stageFade).Children(func() {
+			Transition(a.stageTransition(c)).Children(func() {
 			a.inspectorToken(c, tr)
 			switch a.Step {
 			case 0:

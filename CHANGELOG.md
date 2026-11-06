@@ -9,6 +9,10 @@
 - 注意力矩阵可以用键盘走了：在第 3、4 步，`Shift+↑/↓` 切换 query、`Shift+←/→` 切换 key，格子用暖色方框标出，检查器显示它的分数与权重并注明来源是「键盘」；其余五步 `Shift+←/→` 仍然是移动 token 选择。至此 README 里「键盘还不能在矩阵里移动格子」这条限制解除
 - 阶段切换时淡入（160ms，只改不透明度、不动位置）：中栏与检查器各自带一个按阶段变化的 `Key`，切换阶段时一起淡入。mygo v0.7.4 的 `Transition`/`Enter` 已确认可用；动效刻意不做位移，因为这个工具的用法就是「同一位置比较两个阶段的数据」
 
+### Fixed
+
+- 系统开启「减少动效」时阶段切换不再淡入：mygo 对位移/尺寸遵守 `ReduceMotion`，但对「纯淡入」的 Enter 仍会播放（`transition.go` 里的 `!still || m.fades()`），实测每次切换走 8 帧。现在应用自己在 `stageTransition` 里读 `Preferences().ReduceMotion`，为真时返回零值 transition，切换瞬间到位
+
 ### Changed
 
 - 对比度审计后修掉三处小字不达标（都不到 WCAG 的 4.5:1）：

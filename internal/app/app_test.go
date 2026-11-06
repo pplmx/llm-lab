@@ -1214,3 +1214,73 @@ func TestResidualCalloutScalesWithPrompt(t *testing.T) {
 		t.Fatal("the residual callout quotes the same numbers for two very different prompts")
 	}
 }
+
+// TestReduceMotionSkipsTheStageFade checks the app honours the desktop's
+// reduced-motion preference itself. mygo honours it for moves and size changes
+// but still plays a fade-only Enter (transition.go gates that on
+// `!still || m.fades()`), which here meant eight frames of fade on every stage
+// switch for a reader who had asked for no animation.
+func TestReduceMotionSkipsTheStageFade(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.SetPreferences(ui.Preferences{ReduceMotion: true})
+	tr.Frame()
+	tr.Frame()
+	a.selectStep(3)
+	tr.Frame()
+	if tr.FramePending() {
+		t.Fatal("a stage switch still animates under ReduceMotion")
+	}
+	// With no animation the frame must be exactly the settled one.
+	plain := ui.Render(a.View, 1180, 720, 1)
+	got := tr.Image()
+	for i := 0; i < len(got.Pix) && i < len(plain.Pix); i++ {
+		if got.Pix[i] != plain.Pix[i] {
+			t.Fatal("under ReduceMotion the frame after a switch is not the settled frame")
+		}
+	}
+}
+
+// TestStageFadeStillRunsWithoutThePreference is the other half: the animation
+// must not have been disabled for everyone while fixing the preference case.
+func TestStageFadeStillRunsWithoutThePreference(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	a.selectStep(3)
+	tr.Frame()
+	if !tr.FramePending() {
+		t.Fatal("a stage switch no longer animates with motion allowed")
+	}
+	tr.Advance(400 * time.Millisecond)
+	tr.Frame()
+	if tr.FramePending() {
+		t.Fatal("the fade never settled")
+	}
+}
+
+// TestStageTransitionReadsThePreference pins the two branches of
+// stageTransition, so the preference is what selects them.
+func TestStageTransitionReadsThePreference(t *testing.T) {
+	a := newTestApp(t)
+	var on, off ui.ElementTransition
+	view := func(c *ui.Context) {
+		on = a.stageTransition(c)
+	}
+	tr := ui.NewTester(view, 400, 200)
+	tr.Frame()
+	if on.Duration == 0 || on.Enter == nil {
+		t.Fatalf("motion allowed but stageTransition returned %+v", on)
+	}
+
+	tr2 := ui.NewTester(view, 400, 200)
+	tr2.SetPreferences(ui.Preferences{ReduceMotion: true})
+	tr2.Frame()
+	off = on
+	tr3 := ui.NewTester(func(c *ui.Context) { off = a.stageTransition(c) }, 400, 200)
+	tr3.SetPreferences(ui.Preferences{ReduceMotion: true})
+	tr3.Frame()
+	if off.Duration != 0 || off.Enter != nil {
+		t.Fatalf("ReduceMotion set but stageTransition returned %+v", off)
+	}
+}
