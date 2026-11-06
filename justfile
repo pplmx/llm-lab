@@ -54,7 +54,8 @@ test:
     go vet ./...
     go test ./...
 
-# CI 同款：gofmt 检查 + vet + 测试
+# 本地门槛：gofmt 检查 + vet + 测试。CI 另外跑 go mod tidy 检查、
+# internal/model 的 -race、以及 GOEXPERIMENT=simd —— 见 .github/workflows/ci.yml
 check:
     @files="$(gofmt -l .)"; if [ -n "$files" ]; then echo "未格式化："; echo "$files"; exit 1; fi
     go vet ./...

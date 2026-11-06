@@ -13,7 +13,7 @@
 just run          # 本机运行
 just dev          # 热重载
 just test         # go vet + go test
-just check        # gofmt 检查 + vet + test（CI 同款）
+just check        # gofmt 检查 + vet + test（CI 的主要门槛）
 just build        # 三端构建
 just fmt          # gofmt -w
 just bench        # 基准测试（前向 + 整帧渲染，多轮）
@@ -33,6 +33,16 @@ just run-simd     # 用实验性 SIMD 本机运行
 | `tools/parity.py` | 导出逐层中间张量，供 Go 侧对拍 |
 
 ## 改动的验证标准
+
+**CI 比 `just check` 多跑三步**，提交前想完全对齐就跑这些：
+
+```bash
+go mod tidy && git diff --exit-code -- go.mod go.sum
+go test -race ./internal/model/     # 只有这个包有 goroutine
+GOEXPERIMENT=simd go test ./...     # 实验性 SIMD 内核
+```
+
+`-race` 只跑 `internal/model`：`internal/app` 是单线程 UI 代码，而在 race 检测器下一次 `ui.Tester.Frame()` 要 24ms（正常 0.8ms），整个包会跑到 11 分钟，超过 Go 默认的 10 分钟测试超时。
 
 **模型或界面数字**：`go test ./internal/model` 必须全绿。动了前向逻辑要重新生成对拍夹具，否则 `TestParityEveryTensor` 会失败：
 

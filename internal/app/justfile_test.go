@@ -48,3 +48,78 @@ func TestArtifactsRecipeSaysWhenThereIsNothing(t *testing.T) {
 		t.Fatal("just artifacts prints nothing")
 	}
 }
+
+// TestCIConfigIsRunnable keeps the workflow's test commands within reach of the
+// timeout they run under.
+//
+// The race step used to be `go test -race ./...`. Only internal/model has
+// goroutines; internal/app is single-threaded UI code, and under the race detector
+// one rendered frame costs 24ms instead of 0.8ms. The app package alone needs about
+// 11 minutes that way, past Go's default 10-minute test timeout — so the step could
+// not pass on a clean checkout. Racing a package with no concurrency bought
+// nothing and cost the whole job.
+func TestCIConfigIsRunnable(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatalf("read ci.yml: %v", err)
+	}
+	ci := string(b)
+
+	// The race step must be scoped to the packages that actually have goroutines,
+	// and must state its timeout rather than inheriting Go's default.
+	if strings.Contains(ci, "go test -race ./...") {
+		t.Fatal("ci.yml still races every package; internal/app has no concurrency " +
+			"and takes ~11 minutes under -race")
+	}
+	if !strings.Contains(ci, "go test -race -timeout") {
+		t.Fatal("the race step does not set an explicit -timeout")
+	}
+	if !strings.Contains(ci, "./internal/model/") {
+		t.Fatal("the race step no longer covers internal/model, which is the only " +
+			"package with goroutines")
+	}
+
+	// Every `go test` step should carry a timeout so a slow machine fails with a
+	// clear message instead of hanging into the job timeout.
+	for _, line := range strings.Split(ci, "\n") {
+		trimmed := strings.TrimSpace(line)
+		// Only the command line, not the step's name or comments.
+		if !strings.HasPrefix(trimmed, "run:") || !strings.Contains(trimmed, "go test") {
+			continue
+		}
+		if !strings.Contains(trimmed, "-timeout") {
+			t.Fatalf("a go test step inherits the default timeout: %q", trimmed)
+		}
+	}
+}
+
+// TestConcurrencyLivesOnlyInModel pins the reason the race scope is what it is.
+func TestConcurrencyLivesOnlyInModel(t *testing.T) {
+	hasConcurrency := func(pattern string) bool {
+		files, err := filepath.Glob(pattern)
+		if err != nil {
+			return false
+		}
+		for _, f := range files {
+			if strings.HasSuffix(f, "_test.go") {
+				continue
+			}
+			b, err := os.ReadFile(f)
+			if err != nil {
+				continue
+			}
+			src := string(b)
+			if strings.Contains(src, "go func(") || strings.Contains(src, "sync.WaitGroup") {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasConcurrency("../model/*.go") {
+		t.Fatal("internal/model no longer has goroutines; the -race step could be " +
+			"dropped or the comment explaining it is stale")
+	}
+	if hasConcurrency("*.go") {
+		t.Fatal("internal/app has goroutines now, so the CI race step should cover it")
+	}
+}

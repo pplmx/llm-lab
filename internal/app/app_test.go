@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -18,13 +19,26 @@ import (
 	"llmlab/internal/model"
 )
 
+// bundledWeights parses weights.json once per test binary. model.Bundled re-reads
+// and re-parses 2.4 MB of JSON on every call, and newTestApp is called by every
+// test in this package — under -race that alone pushed the package past Go's
+// 10-minute default test timeout, which is what CI runs. The tests only read the
+// weights, so one shared copy is safe.
+var bundledWeights struct {
+	once sync.Once
+	w    *model.Weights
+	err  error
+}
+
 func newTestApp(t testing.TB) *App {
 	t.Helper()
-	w, err := model.Bundled()
-	if err != nil {
-		t.Fatalf("bundled weights: %v", err)
+	bundledWeights.once.Do(func() {
+		bundledWeights.w, bundledWeights.err = model.Bundled()
+	})
+	if bundledWeights.err != nil {
+		t.Fatalf("bundled weights: %v", bundledWeights.err)
 	}
-	return New(w)
+	return New(bundledWeights.w)
 }
 
 // TestRenderSteps draws every stage to /tmp so the layout can be inspected

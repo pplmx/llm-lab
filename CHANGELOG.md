@@ -36,6 +36,20 @@
 
 ### Fixed
 
+- CI 的 `go test -race ./...` **在干净检出上会超时失败**
+  - raca 检测器下 `ui.Tester.Frame()` 从 0.8ms 变成 **23.8ms（28 倍）**，而 `internal/app` 有 238 个测试反复渲染帧——单是 app 包就要 **680 秒**，超过 Go 默认的 10 分钟测试超时
+  - 但**并发只存在于 `internal/model`**（矩阵乘与按头注意力用 `sync.WaitGroup` 扇出），`internal/app` 是单线程 UI 代码，对它跑 race 没有任何收益
+  - 现在 race 步骤只跑 `./internal/model/`（**3 秒**），三步 `go test` 都写明 `-timeout 300s`
+- `newTestApp` 每个测试都重新解析 2.4 MB 的 `weights.json`，改为 `sync.Once` 缓存（测试只读不写）——app 包非 race 测试从 50 秒降到 **30 秒**
+- 三处「`just check`（CI 同款）」的说法不准确：CI 还多跑 `go mod tidy` 检查、`-race`、`GOEXPERIMENT=simd`。已改措辞，并在 CONTRIBUTING 列出这三条命令
+
+### Added
+
+- `TestCIConfigIsRunnable`：禁止 `go test -race ./...` 写法，要求每个 `go test` 步骤写明 `-timeout`
+- `TestConcurrencyLivesOnlyInModel`：并发若从 model 消失、或 app 里出现 goroutine，就提醒调整 race 范围
+
+### Fixed
+
 - `just artifacts` 在没有构建产物时**静默退出**，什么都没打印
   - 原写法 `du -sh build/*/* 2>/dev/null | sort -k2 || echo "..."`：`du` 的错误被 `/dev/null` 吃掉，`sort` 对空输入仍返回 0，所以 `||` 的兜底永远不触发
   - 读者无法区分「还没构建」和「命令坏了」

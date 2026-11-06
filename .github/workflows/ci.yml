@@ -59,15 +59,22 @@ jobs:
         run: go vet ./...
 
       - name: go test
-        run: go test ./...
+        run: go test -timeout 300s ./...
 
-      - name: go test -race（Linux）
+      # Only internal/model has goroutines: the matrix multiply and the
+      # per-head attention loop fan out with sync.WaitGroup. internal/app is
+      # single-threaded UI code, and under the race detector one rendered frame
+      # costs 24ms instead of 0.8ms — the app package alone takes 11 minutes,
+      # past Go's 10-minute default test timeout, which is what this step used to
+      # hit. Racing the package that has no concurrency bought nothing and cost
+      # the whole job.
+      - name: go test -race（Linux，仅并发包）
         if: runner.os == 'Linux'
-        run: go test -race ./...
+        run: go test -race -timeout 300s ./internal/model/
 
       - name: go test GOEXPERIMENT=simd（Linux，实验性 SIMD 内核）
         if: runner.os == 'Linux'
-        run: GOEXPERIMENT=simd go test ./...
+        run: GOEXPERIMENT=simd go test -timeout 300s ./...
 
   build:
     name: build (${{ matrix.artifact }})
