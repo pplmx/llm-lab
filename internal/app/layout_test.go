@@ -113,3 +113,98 @@ func hasPrefix(tr *ui.Tester, prefix string) bool {
 	}
 	return false
 }
+
+// TestNoHorizontalClipping covers the other half of "不溢出、不裁切". The other
+// layout tests only check that vertical overflow can be scrolled to; content
+// running off the right edge would be cut off with no scroll to find it, since
+// only the token rail scrolls sideways.
+//
+// Limitation worth stating: I could not construct a break that this catches. A
+// NoWrap text inside the fixed-width panels is clipped by the layout rather than
+// reported past the edge, so the assertion holds trivially for the panels that
+// exist today. It is kept because it costs one render pass per frame and states
+// the constraint, not because it has been shown to fail. The rail's overflow is
+// excluded deliberately and is covered by TestRailScrollsToItsLastToken.
+func TestNoHorizontalClipping(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}, {1920, 1080}} {
+		for step := 0; step < 7; step++ {
+			a := newTestApp(t)
+			a.Step = step
+			tr := ui.NewTester(a.View, size.w, size.h)
+			tr.Frame()
+			for _, s := range tr.Texts() {
+				r, ok := tr.Find(s)
+				if !ok {
+					continue
+				}
+				if r.X+r.W <= float32(size.w)+0.5 {
+					continue
+				}
+				// The token rail scrolls horizontally on purpose: its chips run
+				// past the window and TrackScroll(&a.RailScroll) brings them
+				// back. Anything else past the edge would be cut off with no way
+				// to reach it, since only the rail scrolls sideways.
+				if r.Y < railBottomForTest {
+					continue
+				}
+				label := s
+				if n := len([]rune(label)); n > 24 {
+					label = string([]rune(s)[:24]) + "…"
+				}
+				t.Fatalf("%dx%d step %d: %q ends at x=%.0f, past the %dpx window",
+					size.w, size.h, step+1, label, r.X+r.W, size.w)
+			}
+		}
+	}
+}
+
+// railBottomForTest is below the token strip and its readout: anything in the
+// first ~110 DIPs scrolls horizontally by design.
+const railBottomForTest = 115
+
+// TestRailScrollsToItsLastToken covers the overflow that TestNoHorizontalClipping
+// deliberately skips. The token strip is a horizontal scroller, so its chips
+// legitimately run past the right edge; the promise there is that the last one is
+// reachable, which a long prompt makes non-trivial.
+func TestRailScrollsToItsLastToken(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = strings.Repeat("ab", 40) // 80 bytes, truncated to 64 tokens
+	a.recompute()
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	n := len(a.Trace.Tokens)
+	if n < 40 {
+		t.Fatalf("only %d tokens; the prompt was meant to overflow the rail", n)
+	}
+	// The rail scrolls the selection into view, so a long prompt opens already
+	// offset. Scroll back to the start, then forward again: both directions have
+	// to work, and where it happened to open says nothing either way.
+	//
+	// The pointer has to sit on the strip itself. Wheel events are delivered by
+	// hit test, and a pointer in the empty space below the chips reaches the
+	// vertical scroller instead — which is what made my first attempt at this
+	// look like a broken rail.
+	r, ok := tr.Find("token") // the strip's fixed label, always present
+	if !ok {
+		t.Fatal("the token strip is not on screen")
+	}
+	y := r.Y + r.H/2
+	tr.Move(600, y)
+	tr.Frame()
+	for i := 0; i < 12; i++ {
+		tr.Scroll(600, y, -300, 0)
+		tr.Frame()
+	}
+	tr.Frame()
+	atStart := a.RailScroll.X
+	for i := 0; i < 12; i++ {
+		tr.Scroll(600, y, 300, 0)
+		tr.Frame()
+	}
+	tr.Frame()
+	if a.RailScroll.X <= atStart {
+		t.Fatalf("the rail did not scroll horizontally for a %d-token prompt "+
+			"(stayed at %.0f)", n, a.RailScroll.X)
+	}
+}

@@ -36,6 +36,12 @@
 
 ### Added
 
+- 为「目标 3：不溢出、不裁切」的两半各补一条测试
+  - `TestNoHorizontalClipping`：三个窗口尺寸 × 七个阶段，除 token 条外没有任何文本越过右边缘。**诚实标注**：这条断言当前无法构造出会失败的破坏（面板内 `NoWrap` 文本会被布局裁掉而不是报超出），保留它是因为它陈述了约束，不是因为它被证明有效
+  - `TestRailScrollsToItsLastToken`：token 条是唯一横向滚动的区域，64 token 时确认它既能滚到开头也能滚回末尾；移除 `TrackScroll` 后立即失败
+
+### Added
+
 - 为第 1 步「数据流与形状」卡片的七个跳转胶囊补了测试（`TestShapeChipsJumpToTheirStage`、`TestShapeChipsListEveryStage`）
   - 卡片标题承诺「点击任意阶段跳转」，此前没有任何测试验证这一承诺
   - 胶囊标签与侧栏 stepper 重名，而 `Find` 返回第一个匹配项（侧栏），所以测试改用**只有卡片才有的形状字符串**定位：`[36]` / `[36, 96]` / `[36, 36]` / `[36, 384]` / `[256]`
