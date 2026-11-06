@@ -693,6 +693,19 @@ func (a *App) stageOutput(c *ui.Context) {
 		if a.LastSample != "" {
 			kv(c, "上一次", a.LastSample)
 		}
+		// Show where the draw lands, so "sampling" does not read as an
+		// unreproducible random pick: the position comes from the prompt, and
+		// the interval it falls in is exactly as wide as the drawn token's
+		// probability.
+		if d, ok := a.sampleDraw(probs); ok {
+			ui.Text(c, fmt.Sprintf("种子 = FNV-1a(提示词) = 0x%016X", d.seed)).
+				FontSize(fontMicro).TextColor(colFaint)
+			ui.Text(c, fmt.Sprintf("x = (种子 mod 1000003) ÷ 1000003 = %d ÷ 1000003 = %.6f",
+				d.seed%1000003, d.x)).FontSize(fontMicro).TextColor(colFaint)
+			ui.Text(c, fmt.Sprintf("x 落在 [%.4f, %.4f) 这一段 → 抽到 id %d %q（这一段宽度 %.4f 就是它的概率）",
+				d.lo, d.hi, d.pick, byteText(d.pick), d.prob)).FontSize(fontMicro).TextColor(colAccent2)
+			mutedText(c, "种子只来自提示词文字，所以同一句提示词永远抽出同一个 token；改一个字，种子和结果都会变。")
+		}
 	})
 }
 

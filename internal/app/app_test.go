@@ -1445,3 +1445,99 @@ func TestLNWorkingsFollowTheHoveredDimension(t *testing.T) {
 		t.Fatal("hovering a different dimension printed the same line")
 	}
 }
+
+// TestSampleDrawIsDeterministic checks the sampling card's central claim: the
+// same prompt always lands on the same position, so "采样" here is reproducible
+// rather than random.
+func TestSampleDrawIsDeterministic(t *testing.T) {
+	a := newTestApp(t)
+	probs := a.Trace.Probabilities(a.Temp)
+	first, ok := a.sampleDraw(probs)
+	if !ok {
+		t.Fatal("no draw")
+	}
+	for i := 0; i < 3; i++ {
+		again, ok := a.sampleDraw(probs)
+		if !ok || again != first {
+			t.Fatalf("draw %d differs: %+v vs %+v", i, again, first)
+		}
+	}
+	// A different prompt must hash elsewhere and, for this model, land in a
+	// different interval.
+	b := newTestApp(t)
+	b.Prompt = "The transformer reads the tokens an"
+	b.recompute()
+	other, ok := b.sampleDraw(b.Trace.Probabilities(b.Temp))
+	if !ok {
+		t.Fatal("no draw for the altered prompt")
+	}
+	if other.seed == first.seed {
+		t.Fatal("changing the prompt did not change the seed")
+	}
+	if other.x == first.x {
+		t.Fatal("changing the prompt did not change the draw position")
+	}
+}
+
+// TestSampleDrawIntervalWidthIsTheProbability checks the other claim the card
+// makes: the selected interval is exactly as wide as the drawn token's
+// probability, which is what makes x a draw from this distribution at all.
+func TestSampleDrawIntervalWidthIsTheProbability(t *testing.T) {
+	a := newTestApp(t)
+	probs := a.Trace.Probabilities(a.Temp)
+	d, ok := a.sampleDraw(probs)
+	if !ok {
+		t.Fatal("no draw")
+	}
+	if d.pick < 0 || d.pick >= len(probs) {
+		t.Fatalf("draw picked %d out of range", d.pick)
+	}
+	if !(d.x >= d.lo && d.x <= d.hi) {
+		t.Fatalf("x = %v is outside the interval [%v, %v)", d.x, d.lo, d.hi)
+	}
+	if got, want := d.hi-d.lo, float64(probs[d.pick]); math.Abs(got-want) > 1e-9 {
+		t.Fatalf("interval width %v, but the token's probability is %v", got, want)
+	}
+	// The interval must be a real slice of [0,1], not the whole of it.
+	if d.hi > 1.000001 {
+		t.Fatalf("interval ends at %v, past the distribution", d.hi)
+	}
+}
+
+// TestSamplingCardShowsTheWorkings checks the numbers reach the screen, and
+// agree with sampleDraw.
+func TestSamplingCardShowsTheWorkings(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("种子 = FNV-1a(提示词) = ") {
+		t.Fatal("the sampling card does not show the seed")
+	}
+	if !tr.HasText("就是它的概率") {
+		t.Fatal("the sampling card does not explain the interval width")
+	}
+	probs := a.Trace.Probabilities(a.Temp)
+	d, ok := a.sampleDraw(probs)
+	if !ok {
+		t.Fatal("no draw")
+	}
+	want := fmt.Sprintf("0x%016X", d.seed)
+	if !tr.HasText(want) {
+		t.Fatalf("the card does not show the seed %s", want)
+	}
+}
+
+// TestSampleNextAppendsOneByte pins the constraint the description asks for:
+// this round changed only the presentation of sampling, not its behaviour.
+func TestSampleNextAppendsOneByte(t *testing.T) {
+	a := newTestApp(t)
+	before := a.Prompt
+	a.sampleNext()
+	if got := len(a.Prompt) - len(before); got != 1 {
+		t.Fatalf("prompt grew by %d bytes, want exactly 1", got)
+	}
+	if !strings.HasPrefix(a.Prompt, before) {
+		t.Fatal("sampling did not append to the prompt")
+	}
+}

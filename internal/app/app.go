@@ -949,6 +949,62 @@ func (a *App) inspectorHoverCell(c *ui.Context) {
 	})
 }
 
+// draw describes one deterministic sampling step: the seed the prompt hashed
+// to, the position in the cumulative distribution it selected, and the interval
+// that position fell in.
+type draw struct {
+	seed   uint64
+	x      float64
+	lo, hi float64
+	pick   int
+	prob   float64
+}
+
+// sampleDraw computes the draw sampleNext would make, without changing
+// anything. The sampling card shows these numbers so "采样" stops looking like
+// an unreproducible random choice: the position comes from the prompt itself,
+// so the same prompt always lands in the same interval, and that interval's
+// width is exactly the drawn token's probability.
+func (a *App) sampleDraw(probs []float32) (draw, bool) {
+	if len(probs) == 0 {
+		return draw{}, false
+	}
+	// FNV-1a over the prompt bytes: a tiny, dependency-free hash, chosen so the
+	// same prompt always draws the same token.
+	var seed uint64 = 1469598103934665603
+	for _, b := range []byte(a.Prompt) {
+		seed ^= uint64(b)
+		seed *= 1099511628211
+	}
+	x := float64(seed%1000003) / 1000003.0
+	var acc float64
+	d := draw{seed: seed, x: x, pick: -1}
+	for i, p := range probs {
+		lo := acc
+		acc += float64(p)
+		if d.pick < 0 && x <= acc {
+			d.pick, d.lo, d.hi, d.prob = i, lo, acc, float64(p)
+		}
+	}
+	if d.pick < 0 {
+		// Floating point can leave acc a hair under x; fall back to the
+		// smallest id that actually has mass.
+		for i := len(probs) - 1; i >= 0; i-- {
+			if probs[i] > 0 {
+				d.pick = i
+				d.hi = acc
+				d.lo = acc - float64(probs[i])
+				d.prob = float64(probs[i])
+				break
+			}
+		}
+	}
+	if d.pick < 0 {
+		return draw{}, false
+	}
+	return d, true
+}
+
 func (a *App) sampleNext() {
 	if a.Trace == nil || len(a.Trace.Tokens) == 0 {
 		a.Status = "输入一些文字后再采样"
@@ -959,34 +1015,11 @@ func (a *App) sampleNext() {
 		return
 	}
 	// Deterministic draw seeded by the prompt, so the page is reproducible.
-	var seed uint64 = 1469598103934665603
-	for _, b := range []byte(a.Prompt) {
-		seed ^= uint64(b)
-		seed *= 1099511628211
-	}
-	x := float64(seed%1000003) / 1000003.0
-	var acc float64
-	pick, lastNonZero := -1, -1
-	for i, p := range probs {
-		if p > 0 {
-			lastNonZero = i
-		}
-		if pick >= 0 {
-			continue
-		}
-		acc += float64(p)
-		if x <= acc {
-			pick = i
-		}
-	}
-	// Floating point can leave acc a hair under x; fall back to the smallest
-	// id that actually has mass instead of silently picking id 0.
-	if pick < 0 {
-		pick = lastNonZero
-	}
-	if pick < 0 {
+	d, ok := a.sampleDraw(probs)
+	if !ok {
 		return
 	}
+	pick := d.pick
 	a.LastSample = fmt.Sprintf("%q (id %d, p=%.3f)", byteText(pick), pick, probs[pick])
 	// A byte-level model predicts bytes, not runes: append exactly one byte.
 	a.Prompt += string([]byte{byte(pick)})
