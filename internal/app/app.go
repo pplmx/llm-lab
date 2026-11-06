@@ -402,33 +402,99 @@ func (a *App) topbar(c *ui.Context) {
 			}
 		})
 
+		// Each group is dimmed and disabled outside the stages that read it:
+		// the layer and head select nothing while tokenising, and the
+		// temperature only enters at the output's softmax. A live control that
+		// changes no pixel tells the reader the pipeline depends on it
+		// everywhere, which is the opposite of what the stages show.
 		ui.Row(c).Gap(12).Wrap().AlignItems(ui.Center).Children(func() {
-			ui.Text(c, "层").FontSize(11).TextColor(colFaint).Shrink(0)
-			labels := make([]string, a.W.Config.NLayer)
-			for i := range labels {
-				labels[i] = fmt.Sprintf("%d", i)
-			}
-			cur := a.Layer
-			if ui.Segmented(c, &cur, labels...).Changed() {
-				a.Layer = cur
-				a.clearHover()
-			}
-			ui.Text(c, "头").FontSize(11).TextColor(colFaint).Shrink(0)
-			heads := make([]string, a.W.Config.NHead)
-			for i := range heads {
-				heads[i] = fmt.Sprintf("H%d", i)
-			}
-			h := a.Head
-			if ui.Segmented(c, &h, heads...).Changed() {
-				a.Head = h
-				a.clearHover()
-			}
-			ui.Text(c, fmt.Sprintf("温度 %.2f", a.Temp)).FontSize(11).TextColor(colFaint).Width(64).Shrink(0)
-			if ui.Slider(c, &a.Temp, 0.1, 2.0).Width(130).Shrink(0).Changed() {
-				a.LastSample = ""
-			}
+			a.layerControl(c)
+			a.headControl(c)
+			a.tempControl(c)
 		})
 	})
+}
+
+// ------------------------------------------------------- stage-scoped controls
+
+// Which stages read which control. The layer and the head select nothing before
+// the attention stages and nothing after them; the temperature enters only at
+// the output, where softmax divides the logits by it. Dimming the controls that
+// do nothing is part of the lesson: it shows the reader where in the pipeline a
+// knob starts to matter.
+const (
+	layerFrom, layerTo = 2, 5 // 注意力分数 … FFN reads a layer
+	headFrom, headTo   = 2, 3 // 注意力分数 / Softmax are the stages with heads
+	tempFrom, tempTo   = 6, 6 // 输出 / 采样
+)
+
+func inStages(step, from, to int) bool { return step >= from && step <= to }
+
+// dimmed is the opacity of a control outside the current stage. MyGo's
+// Disabled removes the interaction but paints the widget as usual, so the
+// dimming is the only visible cue; 0.55 keeps the widget's shape readable while
+// taking the labels to about 2.5:1, which reads as "off" without hiding that
+// the control is there.
+const dimmed = 0.55
+
+// controlGroup lays out one knob of the top bar: a label, its widget and the
+// rule that scopes them to a range of stages. A control outside its stages is
+// dimmed and disabled; MyGo's Disabled takes the pointer and the keyboard away
+// but paints the widget as usual, so Opacity is what actually says "off". The
+// tip goes on the wrapper because a disabled element hides its own tip, and the
+// wrapper is what stays under the pointer.
+func (a *App) controlGroup(c *ui.Context, label string, from, to int, tip string, build func(disabled bool)) {
+	enabled := inStages(a.Step, from, to)
+	group := ui.Row(c).Gap(6).AlignItems(ui.Center).Shrink(0).Tooltip(tip)
+	if !enabled {
+		group = group.Opacity(dimmed)
+	}
+	group.Children(func() {
+		ui.Text(c, label).FontSize(11).TextColor(colFaint).Shrink(0)
+		build(!enabled)
+	})
+}
+
+func (a *App) layerControl(c *ui.Context) {
+	labels := make([]string, a.W.Config.NLayer)
+	for i := range labels {
+		labels[i] = fmt.Sprintf("%d", i)
+	}
+	build := func(disabled bool) {
+		cur := a.Layer
+		if ui.Segmented(c, &cur, labels...).Disabled(disabled).Changed() {
+			a.Layer = cur
+			a.clearHover()
+		}
+	}
+	a.controlGroup(c, "层", layerFrom, layerTo,
+		fmt.Sprintf("第 %d–%d 步读这一层的权重", layerFrom+1, layerTo+1), build)
+}
+
+func (a *App) headControl(c *ui.Context) {
+	heads := make([]string, a.W.Config.NHead)
+	for i := range heads {
+		heads[i] = fmt.Sprintf("H%d", i)
+	}
+	build := func(disabled bool) {
+		h := a.Head
+		if ui.Segmented(c, &h, heads...).Disabled(disabled).Changed() {
+			a.Head = h
+			a.clearHover()
+		}
+	}
+	a.controlGroup(c, "头", headFrom, headTo,
+		fmt.Sprintf("第 %d–%d 步按头拆开注意力", headFrom+1, headTo+1), build)
+}
+
+func (a *App) tempControl(c *ui.Context) {
+	build := func(disabled bool) {
+		if ui.Slider(c, &a.Temp, 0.1, 2.0).Width(130).Shrink(0).Disabled(disabled).Changed() {
+			a.LastSample = ""
+		}
+	}
+	a.controlGroup(c, fmt.Sprintf("温度 %.2f", a.Temp), tempFrom, tempTo,
+		"只有第 7 步的 softmax 除以温度", build)
 }
 
 // ---------------------------------------------------------------- step bar
@@ -466,10 +532,22 @@ func (a *App) stepbar(c *ui.Context) {
 			if ui.Button(c, label).Shrink(0).Clicked() {
 				a.togglePlay()
 			}
-			if ui.Button(c, "← 上一步").Shrink(0).Clicked() && a.Step > 0 {
+			// The step buttons dim at the ends of the lesson, like the stage
+			// controls: a button that cannot move the reader should not look
+			// like it can, and the dimming also says "this is the first step".
+			atStart, atEnd := a.Step == 0, a.Step == len(lessons)-1
+			prev := ui.Button(c, "← 上一步").Shrink(0).Disabled(atStart)
+			if atStart {
+				prev = prev.Opacity(dimmed)
+			}
+			if prev.Clicked() {
 				a.selectStep(a.Step - 1)
 			}
-			if ui.Button(c, "下一步 →").Shrink(0).Clicked() && a.Step < len(lessons)-1 {
+			next := ui.Button(c, "下一步 →").Shrink(0).Disabled(atEnd)
+			if atEnd {
+				next = next.Opacity(dimmed)
+			}
+			if next.Clicked() {
 				a.selectStep(a.Step + 1)
 			}
 		})

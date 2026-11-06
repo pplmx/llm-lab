@@ -377,3 +377,81 @@ func TestHoverCellMarksRailTokens(t *testing.T) {
 		t.Fatalf("railMarks on the FFN stage = %q, want no mark", got)
 	}
 }
+
+// TestStageScopedControls checks that each top-bar control is live only on the
+// stages that read it: a control that changes no pixels must not look live.
+func TestStageScopedControls(t *testing.T) {
+	if layerFrom > headFrom || headFrom > tempFrom {
+		t.Fatalf("control ranges out of order: layer %d head %d temp %d", layerFrom, headFrom, tempFrom)
+	}
+	for step := range lessons {
+		enabled := map[string]bool{
+			"层":  inStages(step, layerFrom, layerTo),
+			"头":  inStages(step, headFrom, headTo),
+			"温度": inStages(step, tempFrom, tempTo),
+		}
+		// The ranges must be contiguous and cover exactly the stages that read
+		// the value, otherwise a dimmed control still changes what is drawn or
+		// a live one changes nothing.
+		wantLayer := step >= 2 && step <= 5
+		wantHead := step == 2 || step == 3
+		wantTemp := step == 6
+		if enabled["层"] != wantLayer || enabled["头"] != wantHead || enabled["温度"] != wantTemp {
+			t.Fatalf("stage %d: controls %v, want 层=%v 头=%v 温度=%v",
+				step, enabled, wantLayer, wantHead, wantTemp)
+		}
+	}
+}
+
+// TestDimmedControlIgnoresClicks proves the dimming is not cosmetic: at a stage
+// that ignores the layer, clicking a layer segment must not move it.
+func TestDimmedControlIgnoresClicks(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 0
+	a.Layer = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if err := tr.Click("1"); err != nil {
+		t.Fatalf("click layer segment: %v", err)
+	}
+	tr.Frame()
+	if a.Layer != 0 {
+		t.Fatalf("dimmed layer control moved to %d", a.Layer)
+	}
+	// On the attention stage the same click does move it.
+	a.Step = 3
+	tr.Frame()
+	if err := tr.Click("1"); err != nil {
+		t.Fatalf("click layer segment on stage 3: %v", err)
+	}
+	tr.Frame()
+	if a.Layer != 1 {
+		t.Fatalf("live layer control did not move: %d", a.Layer)
+	}
+}
+
+// TestStepButtonsDimAtEnds checks the two ends of the lesson: the button that
+// cannot move the reader is disabled, the other one is not.
+func TestStepButtonsDimAtEnds(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	// "← 上一步" at the first step: a click leaves the lesson where it is.
+	if err := tr.Click("← 上一步"); err != nil {
+		t.Fatalf("click prev: %v", err)
+	}
+	tr.Frame()
+	if a.Step != 0 {
+		t.Fatalf("prev moved past the first step: %d", a.Step)
+	}
+	a.Step = len(lessons) - 1
+	tr.Frame()
+	if err := tr.Click("下一步 →"); err != nil {
+		t.Fatalf("click next: %v", err)
+	}
+	tr.Frame()
+	if a.Step != len(lessons)-1 {
+		t.Fatalf("next moved past the last step: %d", a.Step)
+	}
+}

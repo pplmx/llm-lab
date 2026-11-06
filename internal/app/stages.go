@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/egoist/mygo/ui"
@@ -440,8 +441,44 @@ func (a *App) lesson(c *ui.Context) {
 	card(c, func() {
 		sectionTitle(c, "这一段在讲什么", l.name)
 		mutedText(c, l.body)
-		ui.Text(c, "快捷键：← → 切换阶段 · 空格 播放/暂停 · 1–7 跳转").FontSize(10).TextColor(colFaint)
+		// The top bar dims the controls this stage does not read; this line
+		// says where they do apply, so the dimming is a signpost instead of a
+		// dead end. Only the knobs that are off are named.
+		var off []string
+		if !inStages(a.Step, layerFrom, layerTo) {
+			off = append(off, "层")
+		}
+		if !inStages(a.Step, headFrom, headTo) {
+			off = append(off, "头")
+		}
+		if !inStages(a.Step, tempFrom, tempTo) {
+			off = append(off, "温度")
+		}
+		if len(off) > 0 {
+			ui.Text(c, fmt.Sprintf("顶部「%s」在这一步不生效：%s",
+				strings.Join(off, " / "), controlScopeNote(off))).
+				FontSize(10).TextColor(colFaint).LineHeight(1.4)
+		}
+		ui.Text(c, "快捷键：← → 切换阶段 · Shift+← → 切换 token · 空格 播放/暂停 · 1–7 跳转").
+			FontSize(10).TextColor(colFaint)
 	})
+}
+
+// controlScopeNote says where the controls a stage does not read take effect,
+// measured in steps so it matches the numbered header above.
+func controlScopeNote(off []string) string {
+	var parts []string
+	for _, name := range off {
+		switch name {
+		case "层":
+			parts = append(parts, fmt.Sprintf("第 %d–%d 步选层", layerFrom+1, layerTo+1))
+		case "头":
+			parts = append(parts, fmt.Sprintf("第 %d–%d 步选头", headFrom+1, headTo+1))
+		case "温度":
+			parts = append(parts, fmt.Sprintf("第 %d 步改温度", tempFrom+1))
+		}
+	}
+	return strings.Join(parts, " · ")
 }
 
 func clampIndex(i, n int) int {
