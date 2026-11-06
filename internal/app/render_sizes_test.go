@@ -60,4 +60,20 @@ func TestRenderSizes(t *testing.T) {
 		}
 	}
 	t.Logf("tokens=%d", len(a.Trace.Tokens))
+
+	// Empty prompt: the strip's empty state and the lessons with no trace.
+	a.Prompt = ""
+	a.recompute()
+	a.Step = 0
+	img := ui.Render(a.View, 1180, 720, 1)
+	f, err := os.Create(dir + "/size-emptyprompt-1180.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := png.Encode(f, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 }

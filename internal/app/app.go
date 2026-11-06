@@ -52,6 +52,12 @@ type App struct {
 	InspectorW float32
 
 	Scroll ui.ScrollState
+	// RailScroll keeps the prompt strip's horizontal offset across stages.
+	RailScroll ui.ScrollState
+	// RevealRail asks the next frame to scroll the selected chip into view,
+	// once. It is set when the selection moves without the pointer, so that
+	// the strip never steals the scroll back from a reader browsing it.
+	RevealRail bool
 
 	LastSample string
 	Status     string
@@ -84,6 +90,10 @@ func New(w *model.Weights) *App {
 		theme:      labTheme(),
 	}
 	a.recompute()
+	// The inspector explains the selected token, so the strip has to show it
+	// from the first frame. ScrollIntoView moves as little as it can, so a
+	// prompt that fits is not scrolled at all.
+	a.RevealRail = true
 	return a
 }
 
@@ -149,6 +159,31 @@ func promptIDs(s string) []int {
 		ids = append(ids, int(s[i]))
 	}
 	return ids
+}
+
+// selectToken moves the selection. reveal asks the next frame to scroll the
+// token strip to it, for selections made from outside the strip (the keyboard,
+// a heatmap cell, a new prompt): the reader's eye is elsewhere, and the strip
+// has to follow.
+func (a *App) selectToken(i int, reveal bool) {
+	a.SelToken = i
+	if reveal {
+		a.RevealRail = true
+	}
+}
+
+// stepToken moves the selection by delta, clamped to the sequence, for the
+// Shift+Left/Right shortcuts.
+func (a *App) stepToken(delta int) {
+	n := len(a.Trace.Tokens)
+	if n == 0 {
+		return
+	}
+	i := a.SelToken
+	if i < 0 {
+		i = 0
+	}
+	a.selectToken(clampIndex(i+delta, n), true)
 }
 
 func (a *App) clearHover() {
@@ -219,6 +254,7 @@ func (a *App) View(c *ui.Context) {
 			// which cut the top bar off the top of a 720px window.
 			ui.Column(c).Grow(1).FillHeight().Children(func() {
 				a.topbar(c)
+				a.tokenRail(c)
 				a.stepbar(c)
 				// MinHeight(0) lets the scroll view give up height; without it
 				// the fixed rows above are squeezed to nothing at 1180×720.
@@ -248,6 +284,10 @@ func (a *App) handleKeys(c *ui.Context) {
 	case c.Shortcut(0, ui.KeyEscape):
 		a.Playing = false
 		a.NextAt = time.Time{}
+	case c.Shortcut(ui.Shift, ui.KeyLeft):
+		a.stepToken(-1)
+	case c.Shortcut(ui.Shift, ui.KeyRight):
+		a.stepToken(1)
 	default:
 		digits := [...]ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7}
 		for i, key := range digits {
@@ -300,23 +340,7 @@ func (a *App) sidebar(c *ui.Context) {
 
 		ui.Box(c).FillWidth().Height(1).Background(colBorder)
 
-		ui.Column(c).Gap(2).Children(func() {
-			for i, s := range lessons {
-				i, s := i, s
-				row := ui.Row(c).FillWidth().Padding(9, 10).Radius(7).Gap(8).AlignItems(ui.Center).
-					Children(func() {
-						ui.Text(c, fmt.Sprintf("%d", i+1)).FontSize(10).TextColor(colFaint).Width(12)
-						ui.Text(c, s.name).FontSize(12.5).TextColor(colMuted)
-					})
-				if i == a.Step {
-					row.Background(colAccent.Alpha(0.14)).Border(1, colAccent.Alpha(0.5))
-					row.Children(func() {}) // keep element stable
-				}
-				if row.Clicked() {
-					a.selectStep(i)
-				}
-			}
-		})
+		a.stepper(c)
 
 		ui.Spacer(c).Grow(1)
 

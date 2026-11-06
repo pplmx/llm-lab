@@ -89,14 +89,21 @@ func (a *App) stage(c *ui.Context) {
 
 func (a *App) stageTokens(c *ui.Context) {
 	tr := a.Trace
+	// The chip grid that used to open this stage now lives in the strip above
+	// every stage, so this card states the counts and leaves the reading of
+	// the sequence itself to that strip.
 	card(c, func() {
-		sectionTitle(c, "Token 序列", fmt.Sprintf("T = %d", len(tr.Tokens)))
-		a.tokenChips(c, tr.Tokens)
-		ui.Row(c).Gap(16).Children(func() {
+		sectionTitle(c, "提示词变成 token 序列", fmt.Sprintf("T = %d", len(tr.Tokens)))
+		ui.Row(c).Gap(16).Wrap().Children(func() {
 			ui.Text(c, fmt.Sprintf("字节数 %d", len(tr.Tokens))).FontSize(11).TextColor(colFaint)
 			ui.Text(c, fmt.Sprintf("字符数 %d", utf8.RuneCountInString(tr.Text))).FontSize(11).TextColor(colFaint)
 			ui.Text(c, fmt.Sprintf("上下文上限 %d", tr.Config.Ctx)).FontSize(11).TextColor(colFaint)
+			if extra := len(tr.Tokens) - utf8.RuneCountInString(tr.Text); extra > 0 {
+				ui.Text(c, fmt.Sprintf("多字节字符多占 %d 个 token", extra)).FontSize(11).TextColor(colAccent2)
+			}
 		})
+		mutedText(c, "窗口顶部的 token 条就是这条序列：每个格子是一个 token，上面的字是它的字面形态，"+
+			"下面的数字是它的 id。点任意一格，右侧检查器会显示这个 token 在当前阶段的数值。")
 		ui.Row(c).Gap(6).Wrap().AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "试试").FontSize(10).TextColor(colFaint).Shrink(0)
 			for _, p := range promptPresets {

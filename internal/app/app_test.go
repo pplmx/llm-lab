@@ -269,3 +269,111 @@ func BenchmarkRecomputeLong(b *testing.B) {
 		a.recompute()
 	}
 }
+
+// TestTokenRailSelectsToken clicks a chip in the strip that is visible on every
+// stage, and checks that the inspector follows the new selection.
+func TestTokenRailSelectsToken(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	// The strip opens scrolled to the selected token, which is the last one;
+	// a reader scrolled back to the start would see the earlier chips. Put it
+	// there before clicking one, so the click lands on a chip in view.
+	a.RailScroll.X = 0
+	a.RevealRail = false
+	tr.Frame()
+	if err := tr.Click("token 2"); err != nil {
+		t.Fatalf("click rail chip: %v", err)
+	}
+	tr.Frame()
+	if a.SelToken != 2 {
+		t.Fatalf("selection = %d, want 2", a.SelToken)
+	}
+}
+
+// TestTokenRailStaysAcrossStages checks that the strip is drawn on every stage,
+// not only while tokenising: the token sequence is the input of all seven.
+func TestTokenRailStaysAcrossStages(t *testing.T) {
+	a := newTestApp(t)
+	for step := range lessons {
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		if _, ok := tr.Find("token 0"); !ok {
+			t.Fatalf("stage %d: the token strip is missing", step)
+		}
+	}
+}
+
+// TestShiftArrowMovesTokenSelection drives the keyboard shortcut the strip
+// advertises, including its clamp at both ends of the sequence.
+func TestShiftArrowMovesTokenSelection(t *testing.T) {
+	a := newTestApp(t)
+	a.SelToken = 1
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	tr.Key(ui.Shift, ui.KeyRight)
+	tr.Frame()
+	if a.SelToken != 2 {
+		t.Fatalf("after Shift+Right: selection = %d, want 2", a.SelToken)
+	}
+	tr.Key(ui.Shift, ui.KeyLeft)
+	tr.Frame()
+	if a.SelToken != 1 {
+		t.Fatalf("after Shift+Left: selection = %d, want 1", a.SelToken)
+	}
+	a.SelToken = 0
+	tr.Frame()
+	tr.Key(ui.Shift, ui.KeyLeft)
+	tr.Frame()
+	if a.SelToken != 0 {
+		t.Fatalf("Shift+Left at the first token moved to %d", a.SelToken)
+	}
+}
+
+// TestHoverCellMarksRailTokens checks the cross-view link: pointing at an
+// attention cell marks its query and key on the strip. The heatmap draws no
+// text, so the pointer finds it the way a reader does — by moving over the
+// matrix until a cell reports in — which keeps the assertion on behaviour
+// rather than on exact pixel coordinates.
+func TestHoverCellMarksRailTokens(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	// Scan from the matrix's bottom-left, where the causal mask hides nothing:
+	// every cell there has a key far below its query, which is the pair the
+	// strip has to tell apart. The diagonal would mark one chip twice.
+	found := false
+	for y := float32(700); y > 240 && !found; y -= 6 {
+		for x := float32(240); x < 420 && !found; x += 6 {
+			tr.Move(x, y)
+			tr.Frame()
+			found = a.HoverQ >= 0 && a.HoverK >= 0 && a.HoverQ != a.HoverK
+		}
+	}
+	if !found {
+		t.Fatal("moving over the attention matrix never set an off-diagonal cell")
+	}
+	q, k := a.HoverQ, a.HoverK
+	if got := a.railMarks(q); got != "q" {
+		t.Fatalf("railMarks(query %d) = %q, want %q", q, got, "q")
+	}
+	if got := a.railMarks(k); got != "k" {
+		t.Fatalf("railMarks(key %d) = %q, want %q", k, got, "k")
+	}
+	// Moving off the matrix clears the marks.
+	tr.Move(1250, 500)
+	tr.Frame()
+	if a.HoverQ >= 0 || a.HoverK >= 0 {
+		t.Fatalf("hover persisted after leaving the matrix: q=%d k=%d", a.HoverQ, a.HoverK)
+	}
+	// And the strip marks cells only on the two attention stages, so a
+	// crosshair cannot leak into a stage that draws no matrix.
+	a.HoverQ, a.HoverK = q, k
+	a.selectStep(5)
+	if got := a.railMarks(q); got != "" {
+		t.Fatalf("railMarks on the FFN stage = %q, want no mark", got)
+	}
+}

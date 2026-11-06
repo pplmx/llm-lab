@@ -7,35 +7,6 @@ import (
 	"github.com/egoist/mygo/ui"
 )
 
-// tokenChips draws the prompt as one chip per byte token.
-func (a *App) tokenChips(c *ui.Context, tokens []modelToken) {
-	ui.Row(c).Wrap().Gap(4).Children(func() {
-		for i, tk := range tokens {
-			i := i
-			chip := ui.Box(c).Height(44).MinWidth(26).Padding(6, 7, 5, 8).Radius(7).
-				Background(colPanel2).
-				Border(1, colBorder)
-			if i == a.SelToken {
-				chip = chip.Border(1.5, colAccent).Background(colAccent.Alpha(0.12))
-			}
-			chip.Children(func() {
-				ui.Column(c).Gap(1).Center().Children(func() {
-					ui.Text(c, tk.Text).FontSize(15).TextColor(colText)
-					ui.Text(c, fmt.Sprint(tk.ID)).FontSize(9).TextColor(colFaint)
-				})
-			})
-			if chip.Clicked() {
-				if a.SelToken == i {
-					a.SelToken = -1
-				} else {
-					a.SelToken = i
-				}
-			}
-			chip.Tooltip(fmt.Sprintf("token %d · byte 0x%02X · %q", i, tk.ID, tk.Rune))
-		}
-	})
-}
-
 // vectorStrip paints a row of cells, one per dimension, colored by sign.
 func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 	if len(v) == 0 {
@@ -70,7 +41,253 @@ func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 	})
 }
 
-// heatmap draws a T×T attention matrix, with the causal mask left empty.
+// ------------------------------------------------------------ token rail
+
+// tokenRail is the prompt strip that stays above the lesson on every stage.
+// The token sequence is the input of all seven stages, yet it used to live
+// inside the tokenising stage only: from stage 2 on, the reader saw a
+// highlighted heatmap row without knowing which token it was.
+func (a *App) tokenRail(c *ui.Context) {
+	tr := a.Trace
+	ui.Column(c).FillWidth().Padding(16, 8, 6).Shrink(0).Children(func() {
+		ui.Row(c).FillWidth().Gap(10).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "token").FontSize(10).TextColor(colFaint).Shrink(0).Width(34)
+			if len(tr.Tokens) == 0 {
+				ui.Text(c, "空提示词 · 在上面输入文字，整条流水线会从这里开始").
+					FontSize(11).TextColor(colFaint)
+				return
+			}
+			// Grow(1) plus MinWidth(0) lets the strip give up width to the
+			// readout instead of pushing it out of the window at 1180px.
+			ui.ScrollHorizontal(c).Grow(1).MinWidth(0).Scrollbars(false).
+				TrackScroll(&a.RailScroll).Children(func() {
+				ui.Row(c).Gap(3).AlignItems(ui.Center).Children(func() {
+					a.tokenRailChips(c, tr.Tokens)
+				})
+			})
+			a.tokenRailReadout(c)
+		})
+	})
+	if a.RevealRail {
+		a.RevealRail = false
+	}
+}
+
+func (a *App) tokenRailChips(c *ui.Context, tokens []modelToken) {
+	for i, tk := range tokens {
+		i, tk := i, tk
+		chip := ui.Box(c).Size(0, 32).MinWidth(24).Padding(2, 5, 12, 5).Radius(5).
+			Background(colPanel).Border(1, colBorder).
+			Justify(ui.Center).AlignItems(ui.Center).Label(fmt.Sprintf("token %d", i))
+		marks := a.railMarks(i)
+		if i == a.SelToken {
+			chip = chip.Background(colAccent.Alpha(0.16)).Border(1, colAccent)
+		} else if chip.Hovered() {
+			chip = chip.Background(colPanel2)
+		}
+		if marks != "" {
+			// The heatmap under the pointer names its row and column here,
+			// so a crosshair in the matrix reads as two tokens.
+			chip = chip.BorderWidth(1, 1, 2, 1).BorderColor(railMarkColor(marks))
+		}
+		// Only the glyph is a layout element: the byte id below it is painted,
+		// because a second Text per chip costs about a third of a frame at 64
+		// tokens and the id is a caption, not something the reader interacts
+		// with.
+		chip.Children(func() {
+			ui.Text(c, tk.Text).FontSize(12.5).TextColor(colText).NoWrap()
+		})
+		chip.Draw(func(p *ui.Painter, r ui.Rect) {
+			id := ui.Span{Text: fmt.Sprint(tk.ID), Size: 9, Color: colFaint}
+			w, _ := p.MeasureText(0, id)
+			p.RichText(r.X+(r.W-w)/2, r.Y+r.H-13, 0, id)
+		})
+		if chip.Clicked() {
+			// A chip the pointer reached is already on screen: do not queue a
+			// reveal that would scroll the strip under the reader's hand.
+			a.SelToken = i
+		}
+		chip.Tooltip(fmt.Sprintf("token %d · byte 0x%02X · %q", i, tk.ID, tk.Rune))
+		if i == a.SelToken && a.RevealRail {
+			chip.ScrollIntoView()
+		}
+	}
+}
+
+// railMarks says how the strip marks token i for the attention cell under the
+// pointer: "q" for the query row, "k" for the key column, "qk" when both.
+func (a *App) railMarks(i int) string {
+	if a.Step < 2 || a.Step > 3 {
+		return ""
+	}
+	var m string
+	if i == a.HoverQ {
+		m += "q"
+	}
+	if i == a.HoverK {
+		m += "k"
+	}
+	return m
+}
+
+func railMarkColor(marks string) ui.Color {
+	switch marks {
+	case "q":
+		return colWarm
+	case "k":
+		return colAccent2
+	}
+	return colGreen
+}
+
+// tokenRailReadout answers "which token is this, and why" for whatever the
+// reader is pointing at: the hovered attention cell first, the selection
+// otherwise.
+func (a *App) tokenRailReadout(c *ui.Context) {
+	tr := a.Trace
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Shrink(0).Children(func() {
+		switch {
+		case a.HoverQ >= 0 && a.HoverK >= 0 && a.HoverQ < len(tr.Tokens) && a.HoverK < len(tr.Tokens):
+			ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
+				markChip(c, "Q", colWarm)
+				ui.Text(c, railTokenText(tr.Tokens, a.HoverQ)).FontSize(11).TextColor(colText).NoWrap()
+				ui.Text(c, "×").FontSize(11).TextColor(colFaint)
+				markChip(c, "K", colAccent2)
+				ui.Text(c, railTokenText(tr.Tokens, a.HoverK)).FontSize(11).TextColor(colText).NoWrap()
+			})
+		case a.SelToken >= 0 && a.SelToken < len(tr.Tokens):
+			tk := tr.Tokens[a.SelToken]
+			ui.Text(c, fmt.Sprintf("#%d %q · byte %d", a.SelToken, tk.Rune, tk.ID)).
+				FontSize(11).TextColor(colMuted).NoWrap()
+			ui.Text(c, fmt.Sprintf("位置 %d / %d", a.SelToken, len(tr.Tokens)-1)).
+				FontSize(10).TextColor(colFaint).NoWrap()
+		default:
+			ui.Text(c, "点一个 token 看数值").FontSize(10).TextColor(colFaint).NoWrap()
+		}
+	})
+}
+
+func markChip(c *ui.Context, label string, color ui.Color) {
+	ui.Text(c, label).FontSize(9).Bold().TextColor(colBg).
+		Padding(2, 4).Radius(3).Background(color).Shrink(0)
+}
+
+func railTokenText(tokens []modelToken, i int) string {
+	if i < 0 || i >= len(tokens) {
+		return "?"
+	}
+	return fmt.Sprintf("#%d %q", i, tokens[i].Rune)
+}
+
+// ------------------------------------------------------------ stepper
+
+// stepper is the lesson as one vertical pipeline: a connecting rail, a dot
+// per stage, and three states — done, current, still to come. The old list
+// gave every row the same weight, so the seven stages read as a menu rather
+// than as the sequence of a forward pass.
+func (a *App) stepper(c *ui.Context) {
+	const railW, rowH = 22, 32
+	ui.Column(c).Gap(0).Children(func() {
+		for i, s := range lessons {
+			i, s := i, s
+			state := 0 // 0 = done, 1 = current, 2 = ahead
+			switch {
+			case i == a.Step:
+				state = 1
+			case i > a.Step:
+				state = 2
+			}
+			row := ui.Row(c).FillWidth().Height(rowH).Radius(6).Gap(8).
+				AlignItems(ui.Center).Padding(0, 6).Label(fmt.Sprintf("步骤 %d %s", i+1, s.name))
+			switch state {
+			case 1:
+				row = row.Background(colAccent.Alpha(0.14))
+			default:
+				if row.Hovered() {
+					row = row.Background(colPanel2)
+				}
+			}
+			row.Children(func() {
+				ui.Box(c).Width(railW).Height(rowH).Shrink(0).
+					Draw(func(p *ui.Painter, r ui.Rect) {
+						drawStepDot(p, r, i, len(lessons), state, a.Step)
+					})
+				name := ui.Text(c, s.name).FontSize(12.5).TextColor(stepTextColor(state))
+				if state == 1 {
+					name = name.Bold()
+				}
+			})
+			if row.Clicked() {
+				a.selectStep(i)
+			}
+			row.Tooltip(fmt.Sprintf("第 %d / %d 步 · %s", i+1, len(lessons), s.title))
+		}
+	})
+}
+
+func stepTextColor(state int) ui.Color {
+	switch state {
+	case 1:
+		return colText
+	case 0:
+		return colMuted
+	}
+	return colFaint
+}
+
+// drawStepDot paints the dot of stage i and the rail segments around it. The
+// segment above a dot carries the accent once the reader has passed it, so
+// the rail shows how far the pass has travelled.
+func drawStepDot(p *ui.Painter, r ui.Rect, i, n, state, current int) {
+	cx, cy := r.X+r.W/2, r.Y+r.H/2
+	const radius, lineW = 7, 2
+	// Segments run to the row's edges and the rows have no gap, so the rail is
+	// continuous through the dots. The segment above carries the accent once
+	// the reader has passed the stage, so the rail fills up as the pass goes.
+	if i > 0 {
+		c := colBorder
+		if i <= current {
+			c = colMuted.Alpha(0.7)
+		}
+		top := r.Y
+		bot := cy - radius - 2
+		p.Fill(ui.Rect{X: cx - lineW/2, Y: top, W: lineW, H: bot - top}, c, lineW/2)
+	}
+	if i < n-1 {
+		c := colBorder
+		if i < current {
+			c = colMuted.Alpha(0.7)
+		}
+		top := cy + radius + 2
+		bot := r.Y + r.H
+		p.Fill(ui.Rect{X: cx - lineW/2, Y: top, W: lineW, H: bot - top}, c, lineW/2)
+	}
+
+	num := fmt.Sprint(i + 1)
+	label := ui.Span{Text: num, Size: 9, Weight: 600}
+	tw, th := p.MeasureText(0, label)
+	switch state {
+	case 1:
+		p.Fill(ui.Rect{X: cx - radius, Y: cy - radius, W: 2 * radius, H: 2 * radius}, colAccent, radius)
+		p.Fill(ui.Rect{X: cx - radius - 3, Y: cy - radius - 3, W: 2*radius + 6, H: 2*radius + 6},
+			colAccent.Alpha(0.18), radius+3)
+		label.Color = colBg
+	case 0:
+		// Opaque, not half-transparent: a 9px digit on a 50% fill of colBg
+		// lands near 2.7:1, which is unreadable, and the number is the stage's
+		// keyboard shortcut as much as its name.
+		p.Fill(ui.Rect{X: cx - radius, Y: cy - radius, W: 2 * radius, H: 2 * radius}, colMuted, radius)
+		label.Color = colBg
+	default:
+		p.Fill(ui.Rect{X: cx - radius, Y: cy - radius, W: 2 * radius, H: 2 * radius}, colBg, radius)
+		p.Stroke(ui.Rect{X: cx - radius, Y: cy - radius, W: 2 * radius, H: 2 * radius}, colBorder, radius, 1.5)
+		label.Color = colFaint
+	}
+	p.RichText(cx-tw/2, cy-th/2, 0, label)
+}
+
+// ------------------------------------------------------------ heatmap
+
 // kind "attn" colors probabilities, "score" colors raw logits after scaling.
 func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 	T := len(attn)
@@ -170,7 +387,9 @@ func (a *App) heatmap(c *ui.Context, attn [][]float32, kind string) {
 		}
 	}
 	if el.Clicked() && q >= 0 && k >= 0 {
-		a.SelToken = q
+		// The click landed on the matrix, not the strip: pull the strip to the
+		// query row so the highlighted heatmap row and the rail agree.
+		a.selectToken(q, true)
 	}
 }
 
