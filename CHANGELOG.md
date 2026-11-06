@@ -34,6 +34,14 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Changed
+
+- 六个「算式」的纯计算抽到新文件 `internal/app/workings.go`：`computeSoftmaxParts`、`computeScore`、`computeFFN`、`computeWeighted`、`computeLN`、`residualChain`，以及 `runeAt` 与 UTF-8 位运算辅助
+  - `app.go` 从 1374 行降到 1016 行，只剩状态、布局、交互；`workings.go` 的 381 行不引用 `ui`、不引用 `App`，可以脱离界面单独阅读与测试
+  - 这六个函数形状一致（`compute<X> → <X>Parts → <X>Workings`），放在一起才看得出它们共享的三个决定：取绝对值最大项、余项是精确补足、占比分母用 `Σ|term|`
+  - 新增守卫测试：`workings.go` 一旦引入 `mygo/ui` 或声明 `App` 方法就失败；另一个测试要求每个 `compute*` 都被测试点名
+  - 纯移动，25 张截图逐字节一致
+
 ### Added
 
 - 第 4 步显示出 `Out[q][d] = Σ α·V` 的一维展开：三项最大贡献 + 精确余项 + 一行占比说明
