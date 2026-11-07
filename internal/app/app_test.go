@@ -8719,3 +8719,39 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 		}
 	}
 }
+
+// TestCardsAndTitlesGoThroughOneBuilder keeps the visual hierarchy from drifting piecemeal.
+//
+// Twenty-seven cards across the seven stages and seven inspectors, all built by card(), which fixes the padding,
+// gap, radius, background and border. Thirty headings, all built by sectionTitle(), which fixes the size, weight
+// and colour and omits the note when there is none. That is why the cards look like one family: there is one place
+// the style can come from.
+//
+// The guarantee holds only while nothing draws a card or a heading by hand. A Box with the same radius and a
+// Text at fontTitle would look identical today and diverge at the next restyle, so this checks the source rather
+// than the pixels.
+func TestCardsAndTitlesGoThroughOneBuilder(t *testing.T) {
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+
+	// A hand-rolled card: a column with a panel background and a corner radius.
+	if strings.Contains(text, "Background(colPanel).Radius(") {
+		t.Fatal("a card is drawn by hand instead of through card(); its padding and gap will drift")
+	}
+	// A hand-rolled heading: fontTitle applied directly to a Text.
+	if strings.Contains(text, "FontSize(fontTitle)") {
+		t.Fatal("a heading sets fontTitle directly instead of going through sectionTitle(); " +
+			"its note and colour will drift")
+	}
+
+	// And both builders have to still be the ones in use.
+	if n := strings.Count(text, "card(c, func()"); n < 20 {
+		t.Fatalf("only %d cards go through card(); the screenshot set shows far more", n)
+	}
+	if n := strings.Count(text, "sectionTitle(c,"); n < 25 {
+		t.Fatalf("only %d headings go through sectionTitle()", n)
+	}
+}

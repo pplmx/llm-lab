@@ -36,6 +36,14 @@
 
 ### Added
 
+- 检查**卡片与标题是否都走同一构造函数**。七个阶段 + 七个检查器共 27 张卡片全部由 `card()` 建（固定 padding 14 / gap 10 / radius 10 / 背景 / 边框），30 个标题全部由 `sectionTitle()` 建（固定字号、粗细、颜色，note 为空时省略）——**这就是它们看起来像同一族的原因：样式只有一个来源**
+  - 这条保证只在「没人手工画卡片」时成立：一个手写的 `Box` 加相同圆角和 `fontTitle` 的 `Text` 今天看起来一模一样，下次改样式就会分叉
+  - 补 `TestCardsAndTitlesGoThroughOneBuilder`：源码里不得出现 `Background(colPanel).Radius(`（手绘卡片）或 `FontSize(fontTitle)`（手绘标题），并断言两个构造函数的调用数仍 ≥20 / ≥25
+  - 已验证手工加一张卡片会报 `a card is drawn by hand instead of through card()`
+  - 顺带核查：字号阶梯文档写明 `fontTitle 15 → card and section titles`，而阶段标题也用 `fontTitle`——**这属于 section title，不算越界**；卡片内的 `Gap` 有 12 种值但都在 `theme_test.go` 允许的 14 个步进内，且分属不同语义层级
+
+### Added
+
 - 测了**悬停反馈在七个阶段是否一致**（在阶段栏上扫一遍网格，看文本变化量）。结果分成两组，**差异是设计而非缺陷**，已记录成测试：
   - 第 2–5 步会变（36–98 条）：这些元素是「从很多值里指一个」——96 维向量的一维、36×36 矩阵的一格——不改变什么读者就分不清指的是哪个
   - 第 1、6、7 步不变：这些元素**自带标签**（token chip 有字形和 id、Top-12 柱有字节和百分比、GELU 直方图的柱子对着坐标轴读），再加高亮只增加颜色不增加信息，细节已经由 tooltip 承担
