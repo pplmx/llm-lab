@@ -8515,3 +8515,44 @@ func TestCausalMaskIsStatedToBeArchitecture(t *testing.T) {
 			truncateForTest(body, 160))
 	}
 }
+
+// TestGeluIsStatedToBeAFixedFunction completes the account of where each number in the pipeline comes from.
+//
+// By round 217 the app had classified the trained parameters (embedding table, projection matrices, gamma and
+// beta), the inference-time knob (temperature) and the architecture's own constant (the causal mask). GELU was
+// the remaining piece: the stage names it and explains its shape, but never says it carries no parameters at all,
+// so a reader can mistake it for something the model learned.
+func TestGeluIsStatedToBeAFixedFunction(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	a.SelToken = 20
+	tr := ui.NewTester(a.View, 1500, 2600)
+	tr.Frame()
+
+	var body string
+	for i, s := range tr.Texts() {
+		if s == "这一段在讲什么" && i+2 < len(tr.Texts()) {
+			body = tr.Texts()[i+2]
+		}
+	}
+	if body == "" {
+		t.Fatal("step 6 has no body prose")
+	}
+	if !strings.Contains(body, "固定的数学函数") {
+		t.Fatalf("the body does not say GELU is a fixed function: %q", truncateForTest(body, 160))
+	}
+	if !strings.Contains(body, "不含任何可学参数") {
+		t.Fatalf("the body does not rule out learned parameters in GELU: %q",
+			truncateForTest(body, 160))
+	}
+	// It must also name what *is* trained, or the clarification leaves the reader without the positive half.
+	if !strings.Contains(body, "W₁") || !strings.Contains(body, "W₂") {
+		t.Fatalf("the body does not point at the matrices that are trained: %q",
+			truncateForTest(body, 160))
+	}
+	// And the existing explanation of its shape has to survive.
+	if !strings.Contains(body, "平滑地趋近零") {
+		t.Fatalf("the body lost the explanation of GELU's negative region: %q",
+			truncateForTest(body, 160))
+	}
+}
