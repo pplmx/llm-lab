@@ -55,11 +55,20 @@ test:
     go test ./...
 
 # 本地门槛：gofmt 检查 + vet + 测试。CI 另外跑 go mod tidy 检查、
-# internal/model 的 -race、以及 GOEXPERIMENT=simd —— 见 .github/workflows/ci.yml
+# internal/model 的 -race、以及 GOEXPERIMENT=simd —— 想一次对齐跑 just check-ci
 check:
     @files="$(gofmt -l .)"; if [ -n "$files" ]; then echo "未格式化："; echo "$files"; exit 1; fi
     go vet ./...
     go test ./...
+
+# CI 的全部检查，逐条对应 .github/workflows/ci.yml。比 check 慢大约一分钟
+# （SIMD 一遍要重跑整个测试集），所以两者分开：日常提交用 check，动到模块依赖、
+# 并发或 SIMD 内核时用这个，避免「本地全绿、CI 变红」。
+check-ci: check
+    go mod tidy
+    git diff --exit-code -- go.mod go.sum
+    go test -race -timeout 300s ./internal/model/
+    GOEXPERIMENT=simd go test -timeout 300s ./...
 
 # 格式化全部 Go 代码
 fmt:

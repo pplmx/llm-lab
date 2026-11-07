@@ -123,3 +123,51 @@ func TestConcurrencyLivesOnlyInModel(t *testing.T) {
 		t.Fatal("internal/app has goroutines now, so the CI race step should cover it")
 	}
 }
+
+// TestCheckCIRecipeMatchesTheWorkflow keeps the local full gate in step with CI.
+//
+// `just check` deliberately stops at gofmt, vet and test — about 35 seconds — while CI also
+// verifies go.mod is tidy, races the concurrent package and re-runs everything under
+// GOEXPERIMENT=simd. That split was already documented as a known difference, but the
+// alignment had to be done by hand from a list in CONTRIBUTING.md, which is the kind of list
+// that goes stale the first time CI gains a step.
+//
+// check-ci runs all of it. This test requires the recipe to exist and to run exactly the
+// commands the workflow runs, so adding a CI step without teaching the recipe fails here
+// rather than surprising a contributor with a red build.
+func TestCheckCIRecipeMatchesTheWorkflow(t *testing.T) {
+	read := func(name string) string {
+		b, err := os.ReadFile(filepath.Join("..", "..", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		return string(b)
+	}
+	recipe := read("justfile")
+	workflow := read(".github/workflows/ci.yml")
+
+	const target = "check-ci: check\n"
+	i := strings.Index(recipe, target)
+	if i < 0 {
+		t.Fatal("the justfile has no check-ci recipe")
+	}
+	// The recipe body runs to the next blank line.
+	body := recipe[i+len(target):]
+	if j := strings.Index(body, "\n\n"); j >= 0 {
+		body = body[:j]
+	}
+
+	for _, want := range []string{
+		"go mod tidy",
+		"git diff --exit-code -- go.mod go.sum",
+		"go test -race -timeout 300s ./internal/model/",
+		"GOEXPERIMENT=simd go test -timeout 300s ./...",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("check-ci does not run %q", want)
+		}
+		if !strings.Contains(workflow, want) {
+			t.Errorf("the workflow does not run %q either; this list is stale", want)
+		}
+	}
+}

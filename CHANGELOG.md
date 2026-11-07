@@ -41,6 +41,16 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Added
+
+- `just check-ci`：一条命令跑完 CI 的全部检查
+  - 背景核查：`just check` 只做 gofmt/vet/test，CI 还多跑 `go mod tidy` 检查、`internal/model` 的 `-race`、`GOEXPERIMENT=simd` 三遍测试。**这三项当前都通过**（实测 race 3.0s、SIMD 34.4s、tidy 干净），所以没有隐藏失败
+  - 但这个差异此前只在 CONTRIBUTING 里以命令清单形式记录，**每次都要手工照抄**——新增一个 CI 步骤时这份清单必然会过期
+  - 加 `check-ci: check` 配方，逐条对应 workflow；实测 39 秒（缓存命中）
+  - 补测试 `TestCheckCIRecipeMatchesTheWorkflow`：配方里必须出现那四条命令，**且 workflow 里也必须出现**——任一侧改动都会失败，避免清单悄悄过期
+  - 已验证：从配方里删掉 SIMD 那条，测试报 `check-ci does not run "GOEXPERIMENT=simd go test -timeout 300s ./..."`
+  - 写这个配方时先手滑加了重复的 `check-extras`，与 `check-ci` 后半段完全一样，已删
+
 ### Fixed
 
 - 两条**最核心的正确性检查会在缺少数据时静默跳过**：

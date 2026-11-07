@@ -34,13 +34,17 @@ just run-simd     # 用实验性 SIMD 本机运行
 
 ## 改动的验证标准
 
-**CI 比 `just check` 多跑三步**，提交前想完全对齐就跑这些：
+**CI 比 `just check` 多跑三步**，提交前想完全对齐就跑 `just check-ci`，它逐条对应 `.github/workflows/ci.yml`：
 
 ```bash
+just check-ci                      # check + 下面三条
+
 go mod tidy && git diff --exit-code -- go.mod go.sum
 go test -race ./internal/model/     # 只有这个包有 goroutine
 GOEXPERIMENT=simd go test ./...     # 实验性 SIMD 内核
 ```
+
+两个门槛分开是有意的：`just check` 约 35 秒，`just check-ci` 冷缓存约 75 秒（SIMD 要把整个测试集再跑一遍）。日常提交跑前者；动到模块依赖、并发或 SIMD 内核时跑后者。
 
 `-race` 只跑 `internal/model`：`internal/app` 是单线程 UI 代码，而在 race 检测器下一次 `ui.Tester.Frame()` 要 24ms（正常 0.8ms），整个包会跑到 11 分钟，超过 Go 默认的 10 分钟测试超时。
 

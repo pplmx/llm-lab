@@ -61,7 +61,7 @@ go tool mygo build -platform linux/amd64,linux/arm64,windows/amd64,darwin/univer
 
 ```bash
 just fmt      # gofmt -w
-just check    # gofmt 检查 + go vet + go test（CI 的主要门槛，另有 `-race` 与 SIMD 两步）
+just check    # gofmt 检查 + go vet + go test（CI 的主要门槛；要完全对齐 CI 用 just check-ci）
 ```
 
 改模型或界面后的验证标准（对拍、无窗口截图）见 [CONTRIBUTING.md](CONTRIBUTING.md)，版本变更见 [CHANGELOG.md](CHANGELOG.md)。CI 在 Linux/macOS/Windows 三个平台跑测试并各打一次包；推 `v*` tag 会自动建 release 并上传三端安装包。
