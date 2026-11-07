@@ -7067,3 +7067,72 @@ func TestDataColoursAreNotUsedOnText(t *testing.T) {
 		}
 	}
 }
+
+// TestStepperHighlightFollowsTheStage reads the current row out of the pixels.
+//
+// The three states of a stepper row are dot fill, background tint and text weight. A test that
+// recomputes "which one is current" from a.Step checks its own arithmetic, not what was drawn —
+// an earlier draft did exactly that and would have passed with the highlight removed.
+//
+// This one samples the sidebar's background colour at each row and requires the brightest row
+// to be the stage that is selected, for all seven.
+func TestStepperHighlightFollowsTheStage(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	// Rows are laid out from the top of the sidebar. Take the first row's y from the label
+	// rather than hard-coding it, so a padding change does not silently sample the gap
+	// between rows.
+	var rowY int
+	seed := newTestApp(t)
+	seed.Step = 0
+	st := ui.NewTester(seed.View, 1500, 940)
+	st.Frame()
+	r0, ok := st.Find("步骤 1 分词")
+	if !ok {
+		t.Fatal("cannot locate the first stepper row")
+	}
+	r1, ok := st.Find("步骤 2 嵌入")
+	if !ok {
+		t.Fatal("cannot locate the second stepper row")
+	}
+	rowY = int(r0.Y)
+	rowH := int(r1.Y - r0.Y)
+	if rowH <= 0 {
+		t.Fatalf("the stepper rows report a height of %d", rowH)
+	}
+
+	for step := 0; step < len(lessons); step++ {
+		b := newTestApp(t)
+		b.Step = step
+		bt := ui.NewTester(b.View, 1500, 940)
+		bt.Frame()
+		img := bt.Image()
+		stride := img.Bounds().Dx()
+		brightest, brightestRow := -1, -1
+		for row := 0; row < len(lessons); row++ {
+			// Sample across the row's empty right-hand end. One point is not enough: the
+			// highlight is a rounded rect, so a sample at its corner reads as background
+			// and the row looks unselected.
+			best := -1
+			for _, inset := range []int{30, 60, 90} {
+				x := int(b.SidebarW) - inset
+				y := rowY + row*rowH + rowH/3
+				idx := (y*stride + x) * 4
+				if idx+2 >= len(img.Pix) {
+					continue
+				}
+				if sum := int(img.Pix[idx]) + int(img.Pix[idx+1]) + int(img.Pix[idx+2]); sum > best {
+					best = sum
+				}
+			}
+			if best > brightest {
+				brightest, brightestRow = best, row
+			}
+		}
+		if brightestRow != step {
+			t.Fatalf("stage %d is selected but the brightest stepper row is %d", step, brightestRow)
+		}
+	}
+}
