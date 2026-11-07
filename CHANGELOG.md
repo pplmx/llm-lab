@@ -36,6 +36,14 @@
 
 ### Added
 
+- 把「控件在哪一步生效」的**口径表与画面绑定起来**。此前 `layerFrom/layerTo`、`headFrom/headTo`、`tempFrom/tempTo` 只决定控件是否变暗，以及正文底部那句「第 3–6 步选层 · 第 3–4 步选头 · 第 7 步改温度」；**没有任何东西验证画面真的照着这张表响应**
+  - 实测七个阶段（选中 token 20）：层 → 第 3–6 步各影响 15–48 条文本；头 → 第 3–4 步各影响 15–30 条；温度 → 只有第 7 步影响 23 条。**范围之外只变 1 条**，就是顶栏自己的「温度 0.80」标签
+  - 补 `TestEachControlChangesOnlyItsOwnStages`：范围内改动必须影响 ≥2 条文本，范围外**不得**超过 1 条（那 1 条是控件标签本身）
+  - 已验证把 `tempFrom` 从 6 改成 0（宣称温度在第 1 步生效），测试报 `stage 0 (分词) is inside temperature's range 0–6, but changing it moves only 1 text(s)`
+  - 顺带确认：温度在第 1–6 步拖动时**只有标签数字变**，这是对的（那六步不读温度），而且控件本身是变暗的、正文也写明了原因，两重提示都在
+
+### Added
+
 - 检查**卡片与标题是否都走同一构造函数**。七个阶段 + 七个检查器共 27 张卡片全部由 `card()` 建（固定 padding 14 / gap 10 / radius 10 / 背景 / 边框），30 个标题全部由 `sectionTitle()` 建（固定字号、粗细、颜色，note 为空时省略）——**这就是它们看起来像同一族的原因：样式只有一个来源**
   - 这条保证只在「没人手工画卡片」时成立：一个手写的 `Box` 加相同圆角和 `fontTitle` 的 `Text` 今天看起来一模一样，下次改样式就会分叉
   - 补 `TestCardsAndTitlesGoThroughOneBuilder`：源码里不得出现 `Background(colPanel).Radius(`（手绘卡片）或 `FontSize(fontTitle)`（手绘标题），并断言两个构造函数的调用数仍 ≥20 / ≥25

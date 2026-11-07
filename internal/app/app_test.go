@@ -8755,3 +8755,60 @@ func TestCardsAndTitlesGoThroughOneBuilder(t *testing.T) {
 		t.Fatalf("only %d headings go through sectionTitle()", n)
 	}
 }
+
+// TestEachControlChangesOnlyItsOwnStages ties the response to the scope table the top bar advertises.
+//
+// layerFrom..layerTo, headFrom..headTo and tempFrom..tempTo decide which controls are dimmed on which stage, and
+// the note under the lesson says so in words. Nothing checked that the picture agrees: a control could be enabled on
+// a stage that does not read it, or disabled on a stage that does.
+//
+// Inside a control's range, changing it must move something other than its own label. Outside the range the only
+// text that may change is that label — the numbers shown are "温度 0.80" in the top bar itself.
+func TestEachControlChangesOnlyItsOwnStages(t *testing.T) {
+	read := func(step int, set func(a *App)) []string {
+		a := newTestApp(t)
+		a.Step = step
+		a.SelToken = 20
+		set(a)
+		tr := ui.NewTester(a.View, 1500, 2600)
+		tr.Frame()
+		return tr.Texts()
+	}
+	changed := func(a, b []string) int {
+		n := len(a)
+		if len(b) < n {
+			n = len(b)
+		}
+		d := 0
+		for i := 0; i < n; i++ {
+			if a[i] != b[i] {
+				d++
+			}
+		}
+		return d
+	}
+
+	controls := []struct {
+		name     string
+		from, to int
+		apply    func(a *App)
+	}{
+		{"layer", layerFrom, layerTo, func(a *App) { a.Layer = 1 }},
+		{"head", headFrom, headTo, func(a *App) { a.Head = 3 }},
+		{"temperature", tempFrom, tempTo, func(a *App) { a.Temp = 2.0 }},
+	}
+	for _, c := range controls {
+		for step := 0; step < len(lessons); step++ {
+			n := changed(read(step, func(a *App) {}), read(step, c.apply))
+			inRange := inStages(step, c.from, c.to)
+			switch {
+			case inRange && n < 2:
+				t.Fatalf("stage %d (%s) is inside %s's range %d–%d, but changing it moves only %d text(s)",
+					step, lessons[step].name, c.name, c.from, c.to, n)
+			case !inRange && n > 1:
+				t.Fatalf("stage %d (%s) is outside %s's range %d–%d, but changing it moves %d texts",
+					step, lessons[step].name, c.name, c.from, c.to, n)
+			}
+		}
+	}
+}
