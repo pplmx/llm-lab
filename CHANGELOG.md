@@ -41,6 +41,13 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Added
+
+- 自动播放的两个端点行为**都没有测试**：
+  - **在最后一步按播放**：`togglePlay` 会把步骤归零、滚动归零、清悬停，否则播放器会在最后一页启动并立刻停住（`play` 越过末尾时会停），按播放键看起来什么都没发生
+  - **播放到末尾**：`play` 停下来并留在最后一步，而不是回绕
+  - 两者必须并存且不矛盾；补两条测试分别锁定，并验证删掉归零后第一条会失败（`playing from stage 7 stayed on 6; it should wrap to the first`）
+
 ### Fixed
 
 - token chip 上那段对比度注释里**引用的数字不准**：写的是「4.46:1 和 3.84:1」，而从注释的措辞看只核过 `16% 叠在 colPanel` 这一种

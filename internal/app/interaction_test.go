@@ -367,3 +367,75 @@ func TestPlayIntervalIsTheSameForTheFirstStepAndTheRest(t *testing.T) {
 			"playStepInterval (%v)", sinceStart, sinceMid, playStepInterval)
 	}
 }
+
+// TestPlayingFromTheLastStageWrapsToTheStart pins what pressing play at the end does.
+//
+// togglePlay resets the step to 0 when playback starts from the final stage, along with
+// the scroll offset and the hover state — otherwise the lesson would start on its last
+// page and stop there, since play() halts when it cannot advance past the end. The
+// behaviour is deliberate and had no test: removing the reset would leave the play
+// button doing nothing visible on the last stage.
+func TestPlayingFromTheLastStageWrapsToTheStart(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = len(lessons) - 1
+	a.Scroll.Y = 320
+	a.HoverQ, a.HoverK = 3, 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+
+	if a.Step != 0 {
+		t.Fatalf("playing from stage %d stayed on %d; it should wrap to the first",
+			len(lessons), a.Step)
+	}
+	if !a.Playing {
+		t.Fatal("playback did not start")
+	}
+	if a.Scroll.Y != 0 {
+		t.Fatalf("the scroll offset of the last stage carried over as %v", a.Scroll.Y)
+	}
+	if a.HoverQ >= 0 || a.HoverK >= 0 {
+		t.Fatalf("a hover from the last stage survived the wrap: (%d,%d)", a.HoverQ, a.HoverK)
+	}
+
+	// And stopping there must leave the reader on the first stage rather than
+	// jumping back.
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	if a.Playing {
+		t.Fatal("the second press did not stop playback")
+	}
+	if a.Step != 0 {
+		t.Fatalf("stopping moved the reader to stage %d", a.Step)
+	}
+}
+
+// TestPlaybackStopsAtTheEnd is the other half: play() must halt rather than wrap, or
+// the two behaviours would contradict each other.
+func TestPlaybackStopsAtTheEnd(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = len(lessons) - 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	if !a.Playing {
+		t.Fatal("playback did not start")
+	}
+
+	// Walk the clock forward until it reaches the last stage, then past it.
+	const tick = 200 * time.Millisecond
+	for i := 0; i < 40 && a.Playing; i++ {
+		tr.Advance(tick)
+		tr.Frame()
+	}
+	if a.Playing {
+		t.Fatal("playback never stopped at the end of the lesson")
+	}
+	if a.Step != len(lessons)-1 {
+		t.Fatalf("playback stopped on stage %d, not the last one", a.Step)
+	}
+}
