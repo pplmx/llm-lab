@@ -5743,3 +5743,69 @@ func TestTop12TailSwitchesFormatBySize(t *testing.T) {
 		t.Fatalf("the tail line does not carry a percentage: %q", bigText)
 	}
 }
+
+// TestStripCaretDoesNotOutliveThePointer separates the two things a hovered
+// vector strip keeps.
+//
+// vectorStrip's comment already draws the line: the *value* of HoverDimIn survives
+// the pointer leaving, because the formulas under the strip follow it and clearing
+// would snap them back to d0 the moment the reader moved towards the working they
+// were reading. What must not survive is the caret, which says "this is the cell
+// under your cursor".
+//
+// It did survive. Only the value was ever written; nothing reset or gated the
+// highlight, so the last hovered dimension stayed outlined after the pointer left —
+// 37 pixels of outline inside the strip band. The caret is now drawn only on the
+// frame the pointer is actually on the row.
+func TestStripCaretDoesNotOutliveThePointer(t *testing.T) {
+	capture := func(hoverThenLeave bool) *image.RGBA {
+		a := newTestApp(t)
+		a.Step = 1
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		if hoverThenLeave {
+			tr.Move(600, 408) // on the embedding strip
+			tr.Frame()
+		}
+		tr.Move(1490, 930) // away from every strip
+		tr.Frame()
+		return tr.Image()
+	}
+	never := capture(false)
+	afterLeave := capture(true)
+
+	// The strip row itself must be identical.
+	const bandTop, bandBottom = 396, 420
+	for py := bandTop; py < bandBottom; py++ {
+		for px := 260; px < 1150; px++ {
+			i := (py*never.Rect.Dx() + px) * 4
+			if never.Pix[i] != afterLeave.Pix[i] ||
+				never.Pix[i+1] != afterLeave.Pix[i+1] ||
+				never.Pix[i+2] != afterLeave.Pix[i+2] {
+				t.Fatalf("the strip still differs at (%d,%d) after the pointer left — "+
+					"the caret outlived it", px, py)
+			}
+		}
+	}
+
+	// And the readout below must still follow the last hovered dimension: that is
+	// the behaviour the comment protects, and it is what makes clearing the value
+	// the wrong fix.
+	a := newTestApp(t)
+	a.Step = 1
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	tr.Move(600, 408)
+	tr.Frame()
+	hovered := a.HoverDimIn
+	if hovered < 0 {
+		t.Skip("the probe position is not on a strip in this layout")
+	}
+	tr.Move(1490, 930)
+	tr.Frame()
+	if a.HoverDimIn != hovered {
+		t.Fatalf("the readout dimension reset from %d to %d on leaving; the "+
+			"formulas below the strip are meant to keep following it",
+			hovered, a.HoverDimIn)
+	}
+}

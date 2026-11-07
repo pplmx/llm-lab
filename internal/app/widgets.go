@@ -18,6 +18,12 @@ func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 	lo, hi := minMaxFloat(v)
 	maxAbs := maxAbsFloat(v)
 	label := fmt.Sprintf("min %+.2f · max %+.2f · ‖v‖ %.2f", lo, hi, norm(v))
+	// pointerOn is filled in after layout and read by Draw, which runs later in the
+	// same frame. It exists because the caret below must not outlive the pointer
+	// while the *value* of *hover must: the formulas under the strip follow the last
+	// hovered dimension on purpose, so clearing it on leave would snap them to d0
+	// the moment the reader moved towards the working they were reading.
+	pointerOn := false
 	el := ui.Box(c).FillWidth().Height(height).Radius(4).
 		Draw(func(p *ui.Painter, r ui.Rect) {
 			cell := r.W / float32(len(v))
@@ -25,7 +31,7 @@ func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 				p.Fill(ui.Rect{X: r.X + float32(i)*cell, Y: r.Y, W: cell - 0.6, H: r.H},
 					valueColor(x, maxAbs), 0)
 			}
-			if *hover >= 0 && *hover < len(v) {
+			if pointerOn && *hover >= 0 && *hover < len(v) {
 				hx := r.X + float32(*hover)*cell
 				p.Stroke(ui.Rect{X: hx, Y: r.Y, W: cell, H: r.H}, colText, 0, 1.4)
 			}
@@ -37,6 +43,7 @@ func vectorStrip(c *ui.Context, v []float32, height float32, hover *int) {
 	// outlive the pointer is the readout, which claims "this is the cell under
 	// your cursor" and would be a lie.
 	x, _, onStrip := el.PointerPosition()
+	pointerOn = onStrip
 	if onStrip {
 		*hover = int(x / (el.Bounds().W) * float32(len(v)))
 		if *hover >= len(v) {
