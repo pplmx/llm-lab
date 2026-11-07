@@ -169,3 +169,46 @@ func TestShortPromptsRenderWithoutNaNAcrossEveryStage(t *testing.T) {
 		}
 	}
 }
+
+// TestFixedChromeStaysInsideTheWindow checks the parts that do not scroll.
+//
+// The snapshot suite is looked at by eye, and the goal asks for "不溢出、不裁切" at every
+// supported size. Nothing asserted it: a stage whose header ran off the bottom would appear
+// in a PNG and nobody would notice until they opened the file.
+//
+// The test uses Tester.Find, which returns an element's layout rect, and checks the anchors
+// that must be visible on every stage at every size — the app title, the sidebar's model
+// block, the inspector's header and the play button. Scrollable stage content is deliberately
+// excluded: it is allowed to sit below the fold, which is what the scroll view is for.
+//
+// Five sizes spanning the supported range, including two that are not in the snapshot set.
+func TestFixedChromeStaysInsideTheWindow(t *testing.T) {
+	anchors := []string{
+		"LLM Lab", // the app title in the sidebar
+		"vocab",   // the sidebar's model block
+		"参数",      // the model block's parameter row
+		"检查器",     // the inspector's header
+		"▶ 自动播放",  // the stage bar's play button
+	}
+	for _, size := range [][2]int{
+		{1180, 720}, {1280, 800}, {1500, 940}, {1700, 1000}, {1920, 1080},
+	} {
+		for step := 0; step < len(lessons); step++ {
+			a := newTestApp(t)
+			a.Step = step
+			tr := ui.NewTester(a.View, size[0], size[1])
+			tr.Frame()
+			for _, s := range anchors {
+				r, ok := tr.Find(s)
+				if !ok {
+					t.Fatalf("%dx%d stage %d: %q is not rendered", size[0], size[1], step, s)
+				}
+				if r.X < 0 || r.Y < 0 ||
+					r.X+r.W > float32(size[0]) || r.Y+r.H > float32(size[1]) {
+					t.Fatalf("%dx%d stage %d: %q sits at (%.0f,%.0f) %.0fx%.0f, outside the "+
+						"window", size[0], size[1], step, s, r.X, r.Y, r.W, r.H)
+				}
+			}
+		}
+	}
+}
