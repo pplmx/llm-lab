@@ -7770,3 +7770,109 @@ func TestRowZeroCalloutDoesNotClaimARowComparison(t *testing.T) {
 		t.Fatalf("row 10's callout no longer argues with its own count: %q", later)
 	}
 }
+
+// TestNumbersShownTwiceAgree cross-checks the figures the UI prints in more than one place.
+//
+// The other tests recompute a printed number from the trace. That catches a stale figure only if the
+// recomputation is right; it cannot catch two on-screen figures disagreeing with each other, which is
+// what a reader notices first — the inspector says one entropy and the chart beside it says another.
+//
+// Three pairs are checked, each across several inputs:
+//   - the attention inspector's entropy against the bar for the selected head, which is the one marked ◂
+//   - the "最大权重" line's value and key against the row's actual argmax
+//   - the output stage's entropy in the card and in the inspector
+func TestNumbersShownTwiceAgree(t *testing.T) {
+	// Pair 1: entropy in the attention inspector versus the marked bar.
+	for _, head := range []int{0, 2} {
+		a := newTestApp(t)
+		a.Step = 3
+		a.SelToken = 20
+		a.Head = head
+		tr := ui.NewTester(a.View, 1500, 1800)
+		tr.Frame()
+		texts := tr.Texts()
+		var inspector, marked string
+		for i, s := range texts {
+			if i+1 >= len(texts) {
+				continue
+			}
+			if s == "熵" {
+				inspector = texts[i+1]
+			}
+			if strings.HasPrefix(s, "H") && strings.Contains(s, "◂") {
+				marked = texts[i+1]
+			}
+		}
+		if inspector == "" || marked == "" {
+			t.Fatalf("head %d: missing the entropy in the inspector (%q) or the bar (%q)",
+				head, inspector, marked)
+		}
+		// The inspector writes "1.19 nats", the bar writes "1.19".
+		if got := strings.TrimSuffix(inspector, " nats"); got != marked {
+			t.Fatalf("head %d: the inspector says %q and the marked bar says %q",
+				head, inspector, marked)
+		}
+	}
+
+	// Pair 2: the "最大权重" line's value and key versus the row's argmax.
+	for _, token := range []int{0, 1, 20, 35} {
+		for _, head := range []int{0, 3} {
+			a := newTestApp(t)
+			a.Step = 3
+			a.SelToken = token
+			a.Head = head
+			tr := ui.NewTester(a.View, 1500, 1800)
+			tr.Frame()
+			texts := tr.Texts()
+			var line string
+			for i, s := range texts {
+				if s == "最大权重" && i+1 < len(texts) {
+					line = texts[i+1]
+				}
+			}
+			row := a.layer().Heads[head].Attn[token]
+			var maxW float32
+			best := 0
+			for j := 0; j <= token; j++ {
+				if row[j] > maxW {
+					maxW, best = row[j], j
+				}
+			}
+			want := fmt.Sprintf("%.3f → token %d", maxW, best)
+			if !strings.HasPrefix(line, want) {
+				t.Fatalf("token %d head %d: the line reads %q, the row's maximum is %q",
+					token, head, line, want)
+			}
+		}
+	}
+
+	// Pair 3: the output stage's entropy, stated on the card and in the inspector.
+	for _, temp := range []float64{0.1, 0.8, 1.5, 2.0} {
+		a := newTestApp(t)
+		a.Temp = temp
+		a.Step = 6
+		tr := ui.NewTester(a.View, 1500, 1800)
+		tr.Frame()
+		texts := tr.Texts()
+		var card, inspector string
+		for i, s := range texts {
+			if i+1 >= len(texts) {
+				continue
+			}
+			if strings.Contains(s, "温度") && strings.Contains(s, "熵") {
+				card = s
+			}
+			if s == "熵" {
+				inspector = texts[i+1]
+			}
+		}
+		if card == "" || inspector == "" {
+			t.Fatalf("temp %.1f: missing the entropy on the card (%q) or in the inspector (%q)",
+				temp, card, inspector)
+		}
+		if !strings.Contains(card, inspector) {
+			t.Fatalf("temp %.1f: the card says %q while the inspector says %q",
+				temp, card, inspector)
+		}
+	}
+}
