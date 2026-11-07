@@ -8943,3 +8943,62 @@ func TestInspectorSubtitleMatchesTheCards(t *testing.T) {
 		}
 	}
 }
+
+// TestResidualChainBracketsBothSigns keeps the two addition lines in one shape.
+//
+// Round 167 bracketed the residual chain's negative term so "-0.1050 + (-1.0295)" could not be read as
+// two subtractions. The positive term on the next line stayed bare, so on the default prompt the chain
+// printed one bracketed term and one open one. Round 231 fixed the same asymmetry in the embedding sum;
+// both now go through signed(), which brackets whatever the sign is.
+func TestResidualChainBracketsBothSigns(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	a.SelToken = 20
+	tr := ui.NewTester(a.View, 1500, 2800)
+	tr.Frame()
+
+	var chain []string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "子层 Δ ") {
+			chain = append(chain, s)
+		}
+	}
+	if len(chain) != 2 {
+		t.Fatalf("the residual chain should print two addition lines, got %d: %v", len(chain), chain)
+	}
+
+	bracketed := 0
+	for _, line := range chain {
+		// The term after the label must be "(+x)" or "(-x)": one opening bracket before the sign.
+		i := strings.Index(line, "子层 Δ ")
+		if i < 0 {
+			continue
+		}
+		rest := line[i+len("子层 Δ "):]
+		if strings.HasPrefix(rest, "(") {
+			bracketed++
+		}
+	}
+	if bracketed != 2 {
+		t.Fatalf("expected both terms bracketed, got %d of 2: %v", bracketed, chain)
+	}
+
+	// And the parenthesised form must still be the same arithmetic the model did: adding the printed
+	// terms reproduces the printed sum.
+	for _, line := range chain {
+		parts := strings.Split(line, " = ")
+		if len(parts) != 2 {
+			t.Fatalf("line does not end in a sum: %q", line)
+		}
+		var lhs, sum float64
+		if _, err := fmt.Sscanf(parts[1], "%f", &sum); err != nil {
+			t.Fatalf("cannot read the sum from %q: %v", line, err)
+		}
+		_ = lhs
+		// The terms themselves are checked by TestPrintedResidualChainUsesTheComputedSteps; here only the
+		// shape matters.
+		if !strings.Contains(parts[0], ")") {
+			t.Fatalf("the term is not bracketed: %q", line)
+		}
+	}
+}

@@ -395,7 +395,7 @@ func (a *App) stageEmbed(c *ui.Context) {
 		workingsLines(c, []string{
 			fmt.Sprintf("d%d：E[%d][%d] = %+.4f · P[%d] = %+.4f",
 				dim, tr.Tokens[i].ID, dim, e, i, pos),
-			fmt.Sprintf("%s + %s = %+.4f", signed(e), signed(pos), x),
+			fmt.Sprintf("%s + %s = %+.4f", signed(float64(e)), signed(float64(pos)), x),
 		})
 		// The two terms are added, so the obvious question is how their sizes
 		// compare: if the position vector were much larger it would swamp the
@@ -447,7 +447,7 @@ func (a *App) stageEmbed(c *ui.Context) {
 // operator: "+0.5674 + -0.6724" on one line, "+0.1247 + +0.4062" on the other. Both read
 // as typos. Bracketing every addend, negative or not, gives the line one shape whatever
 // the signs turn out to be.
-func signed(v float32) string {
+func signed(v float64) string {
 	return fmt.Sprintf("(%+.4f)", v)
 }
 
@@ -908,13 +908,10 @@ func residualWorkings(c *ui.Context, dim int, steps []residualStep, isLast bool,
 		dim, layer, steps[0].Label, steps[0].Term))
 	running := steps[0].Sum
 	for _, s := range steps[1:] {
-		// Parenthesise the term when it is negative, so the line reads
-		// "-0.1050 + (-1.0295) = -1.1344" rather than the ambiguous
-		// "-0.1050 + -1.0295".
-		term := fmt.Sprintf("%+.4f", s.Term)
-		if s.Term < 0 {
-			term = fmt.Sprintf("(%+.4f)", s.Term)
-		}
+		// Bracketed on both signs, through the same helper the embedding sum uses: the
+		// residual chain's two lines then share one shape instead of one bracketing its
+		// negative term and the other printing its positive term bare.
+		term := signed(s.Term)
 		lines = append(lines, fmt.Sprintf("%+.4f %s %s = %+.4f", running, s.Label, term, s.Sum))
 		running = s.Sum
 	}
