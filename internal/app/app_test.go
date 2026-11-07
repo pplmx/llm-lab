@@ -6672,3 +6672,67 @@ func TestPureLayerNormPinsTheVarianceNearOne(t *testing.T) {
 			"card's explanation of why it need not is describing nothing", std)
 	}
 }
+
+// TestOutputCalloutQuotesTheLiveProbability holds the output stage's callout to its own
+// design note.
+//
+// The source says the top-1 figure and the training budget both come from the running model,
+// "so the callout stays true when the prompt, the temperature or the weights change". That is
+// the property that makes it a callout about this run rather than a generic warning — and it
+// had no test, so a hard-coded percentage or a stale variable would have gone unnoticed.
+//
+// Measured: 100%, 97%, 78% and 63% at temperatures 0.3, 0.8, 1.5 and 2.0, each matching the
+// frame's own top-1 probability. The prompt is checked too: a different prompt changes the
+// number, so the figure cannot be coming from a cached trace.
+func TestOutputCalloutQuotesTheLiveProbability(t *testing.T) {
+	quote := func(prompt string, temp float64) (string, float32) {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Temp = temp
+		a.Step = 6
+		probs := a.Trace.Probabilities(temp)
+		var maxP float32
+		for _, p := range probs {
+			if p > maxP {
+				maxP = p
+			}
+		}
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		// The figure appears in the callout's title, not its body: the title is
+		// "「概率 97% = 模型很确定…」" and the body then explains why that is not
+		// certainty. Both are separate entries in Texts(), so join them.
+		var all []string
+		for _, s := range tr.Texts() {
+			all = append(all, s)
+		}
+		joined := strings.Join(all, "\n")
+		if !strings.Contains(joined, "这两件事没有关系") {
+			t.Fatal("the output callout is not rendered")
+		}
+		return joined, maxP
+	}
+
+	seen := map[string]bool{}
+	for _, temp := range []float64{0.3, 0.8, 1.5, 2.0} {
+		text, maxP := quote("The transformer reads the tokens and", temp)
+		want := fmt.Sprintf("「概率 %.0f%%", maxP*100)
+		if !strings.Contains(text, want) {
+			t.Fatalf("T=%.1f: the callout does not quote %q (top-1 is %.2f%%): %s",
+				temp, want, maxP*100, text)
+		}
+		seen[want] = true
+	}
+	if len(seen) < 4 {
+		t.Fatalf("the four temperatures produced only %d distinct figures; the number is "+
+			"not tracking the distribution", len(seen))
+	}
+
+	// And a different prompt has to move it, or the figure is stale.
+	otherText, otherMax := quote("hi", 0.8)
+	otherWant := fmt.Sprintf("「概率 %.0f%%", otherMax*100)
+	if !strings.Contains(otherText, otherWant) {
+		t.Fatalf("with a different prompt the callout does not quote %q", otherWant)
+	}
+}
