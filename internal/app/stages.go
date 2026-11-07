@@ -386,8 +386,12 @@ func (a *App) stageEmbed(c *ui.Context) {
 			dim = a.HoverDimIn
 		}
 		e, pos, x := tr.Embed[i][dim], tr.Pos[i][dim], tr.Input[i][dim]
-		// Parenthesise a negative so the line reads unambiguously: without it
-		// "+0.5674 + -0.6724" invites a second look.
+		// Both terms are parenthesised, not just the negative one. Round 167 fixed
+		// "+0.5674 + -0.6724"; the positive case has the same problem the other way round,
+		// printing "+0.1247 + +0.4062" — two plus signs in a row that read as a typo. With
+		// both bracketed the two lines share one shape:
+		//   (+0.1247) + (+0.4062) = +0.5309
+		//   (+0.5674) + (-0.6724) = -0.1050
 		workingsLines(c, []string{
 			fmt.Sprintf("d%d：E[%d][%d] = %+.4f · P[%d] = %+.4f",
 				dim, tr.Tokens[i].ID, dim, e, i, pos),
@@ -437,11 +441,14 @@ func (a *App) stageEmbed(c *ui.Context) {
 
 // signed formats v with its sign, wrapping a negative in parentheses so a sum
 // reads as "+0.5674 + (-0.6724)" rather than the easily misread "+0.5674 + -0.6724".
+// signed formats one addend of the embedding sum, always in parentheses.
+//
+// The sign is part of the number, so printing it bare puts two signs next to the
+// operator: "+0.5674 + -0.6724" on one line, "+0.1247 + +0.4062" on the other. Both read
+// as typos. Bracketing every addend, negative or not, gives the line one shape whatever
+// the signs turn out to be.
 func signed(v float32) string {
-	if v < 0 {
-		return fmt.Sprintf("(%+.4f)", v)
-	}
-	return fmt.Sprintf("%+.4f", v)
+	return fmt.Sprintf("(%+.4f)", v)
 }
 
 // kvScale states the 1/sqrt(d_head) scaling, which both the score stage's legend and

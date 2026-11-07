@@ -1806,14 +1806,21 @@ func TestEmbedLineFollowsTheHoveredDimension(t *testing.T) {
 	}
 }
 
-// TestSignedFormatsNegativeTermsForReading guards the parentheses: "+0.5674 +
-// -0.6724" invites a second look, "+0.5674 + (-0.6724)" does not.
-func TestSignedFormatsNegativeTermsForReading(t *testing.T) {
+// TestSignedFormatsTermsForReading guards the parentheses on both signs.
+//
+// Round 167 fixed "+0.5674 + -0.6724" by bracketing the negative. The positive case has
+// the same flaw the other way round — "+0.1247 + +0.4062", printed on the default prompt —
+// where the second plus reads as a typo. Every addend is bracketed now, so the line has one
+// shape whichever way the signs fall.
+func TestSignedFormatsTermsForReading(t *testing.T) {
 	if got := signed(-0.6724); got != "(-0.6724)" {
 		t.Fatalf("signed(-0.6724) = %q", got)
 	}
-	if got := signed(0.5674); got != "+0.5674" {
-		t.Fatalf("signed(0.5674) = %q", got)
+	if got := signed(0.5674); got != "(+0.5674)" {
+		t.Fatalf("signed(0.5674) = %q, want the sign bracketed too", got)
+	}
+	if got := signed(0); got != "(+0.0000)" {
+		t.Fatalf("signed(0) = %q", got)
 	}
 }
 
