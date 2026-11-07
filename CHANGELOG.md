@@ -34,6 +34,14 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Added
+
+- 把 README 截图的重新生成做成 `just docs`（`RENDER_DOCS=1 go test ./internal/app -run TestRenderDocs`）
+  - 上一轮发现六张 `docs/` 截图全在展示不存在的界面，处理时是**手写一个临时测试文件**渲出来的——那种事情不该每次重演一遍
+  - `TestRenderDocs` 与现有的 `TestRenderSizes` 用同一套 `writeSnapshot` 机制，只是输出目录是 `docs/`、且只渲这 6 张；默认跳过，避免污染常规测试
+  - **已验证它能精确复现**：用它重新渲染后与已提交的 6 张逐字节相同（`cmp` 全部 identical）
+  - `CONTRIBUTING.md` 补一句说明：这些图是仓库资产、不随运行更新，**改了界面或文案后要跑一次**
+
 ### Fixed
 
 - **`docs/` 里的截图全是过期界面**，升级 MyGo 后一并重渲染

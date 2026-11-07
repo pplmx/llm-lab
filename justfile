@@ -108,6 +108,15 @@ snapshots dir="/tmp/llm-lab-shots":
     RENDER=1 RENDER_DIR="{{dir}}" go test ./internal/app -run 'TestRenderSteps|TestRenderSizes' -count=1
     @echo "截图已写入 {{dir}}（$(ls {{dir}}/*.png | wc -l) 张）"
 
+# 重新生成 README 引用的 6 张截图（写进 docs/）
+#
+# 它们是仓库资产，不是每次运行现生成的，所以界面变了没人更新——第 229 轮发现六张
+# 全在展示一个已经不存在的界面：侧栏从 0 编号、没有数据流卡片、没有常见误解块。
+# 改完界面后跑一次这个。
+docs:
+    RENDER_DOCS=1 go test ./internal/app -run TestRenderDocs -count=1
+    @echo "docs/ 已更新（$(ls docs/*.png | wc -l) 张）"
+
 # 与另一份截图逐字节对比：just snapshots-diff <基线目录> [新目录]
 #
 # 改界面时先说清楚预期：不改变视觉的改动应当 0 差异，故意改视觉的应当只差在

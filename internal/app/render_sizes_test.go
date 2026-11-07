@@ -156,3 +156,40 @@ func writeSnapshot(t *testing.T, dir, name string, img *image.RGBA) {
 	}
 	t.Logf("wrote %s", name)
 }
+
+// TestRenderDocs refreshes the screenshots the README embeds.
+//
+// They are part of the repository rather than generated per run, so nothing updates them when the interface changes —
+// and in round 229 all six were found to be showing an interface that no longer existed: the sidebar numbered stages
+// from 0, there was no data-flow card and no misconception block, and the hero image predated the heatmap's axis
+// labels. Rendering them by hand took a throwaway test; this makes it `just docs`.
+//
+// The four stage shots use the default window, and `window` uses the minimum the app supports, so the gallery answers
+// both "what does this look like" and "does it still fit on a small screen".
+func TestRenderDocs(t *testing.T) {
+	if os.Getenv("RENDER_DOCS") == "" {
+		t.Skip("set RENDER_DOCS=1 to refresh docs/")
+	}
+	dir := "../../docs"
+	if d := os.Getenv("RENDER_DIR"); d != "" {
+		dir = d
+	}
+	for _, s := range []struct {
+		name string
+		step int
+		w, h int
+	}{
+		{"tokens", 0, 1500, 940},
+		{"scores", 2, 1500, 940},
+		{"residual", 4, 1500, 940},
+		{"output", 6, 1500, 940},
+		{"window", 0, 1180, 720},
+		// The hero image is the guide's first of six: the softmax stage, where the heatmap and the
+		// weighted-sum card are both on screen.
+		{"attention", 3, 1500, 940},
+	} {
+		a := newTestApp(t)
+		a.Step = s.step
+		writeSnapshot(t, dir, s.name+".png", ui.Render(a.View, s.w, s.h, 1))
+	}
+}
