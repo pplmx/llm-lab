@@ -272,7 +272,8 @@ func TestBothUntrainedPathsAreSnapshot(t *testing.T) {
 		"size-untrained-1180.png",        // bundled file missing
 		"size-untrained-custom-1180.png", // -weights with steps = 0
 	} {
-		if !strings.Contains(text, name) {
+		// Quoted, so renaming the file to "anything-size-untrained-custom-1180.png" still fails.
+		if !strings.Contains(text, `"`+name+`"`) {
 			t.Fatalf("the snapshot set no longer renders %q", name)
 		}
 	}
@@ -295,7 +296,7 @@ func TestAllNegativeMatrixIsSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(src)
-	if !strings.Contains(text, "size-allnegative-1180.png") {
+	if !strings.Contains(text, `"size-allnegative-1180.png"`) {
 		t.Fatal("no snapshot renders a matrix whose scores are all negative")
 	}
 	if !strings.Contains(text, `neg.Prompt = "hi"`) {
@@ -320,12 +321,15 @@ func TestEdgeCaseBranchesAreSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(src)
+	// Match the quoted filename, not the bare one: ""size-rowzero-1180.png"" fails to match
+	// "DELETED-size-rowzero-1180.png" while a substring test for the bare name would pass, which
+	// is how all four of these fences read as toothless when mutated.
 	for _, c := range []struct{ name, setup string }{
 		{"size-onetoken-1180.png", `one.Prompt = "a"`},
 		{"size-allnegative-1180.png", `neg.Prompt = "hi"`},
 		{"size-rowzero-1180.png", `row0.SelToken = 0`},
 	} {
-		if !strings.Contains(text, c.name) {
+		if !strings.Contains(text, `"`+c.name+`"`) {
 			t.Fatalf("the snapshot set no longer renders %q", c.name)
 		}
 		if !strings.Contains(text, c.setup) {
