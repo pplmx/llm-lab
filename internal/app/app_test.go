@@ -7656,3 +7656,103 @@ func TestStatusLineHasThreeStates(t *testing.T) {
 		t.Fatalf("the truncated status also claims a full pass: %q", truncated)
 	}
 }
+
+// TestNoMalformedTextAcrossTheSweep walks every stage under several prompts, layers, heads and
+// temperatures looking for text that should never reach a reader.
+//
+// The defects of the previous several rounds were each found by hand, by guessing which extreme input
+// to try. This does the opposite: it renders the grid and looks for the shapes a broken formatter
+// leaves behind — NaN, a signed zero, a nil, a Go formatting error like %!d(int=0), scientific notation
+// for what is really zero.
+//
+// -Inf is deliberately allowed: the causal mask sets the upper triangle to negative infinity and the
+// stage explains it in words, so it is content rather than a formatting failure.
+func TestNoMalformedTextAcrossTheSweep(t *testing.T) {
+	bad := []string{"NaN", "0.0e+00", "null", "%!", "<nil>", "-0.0000", "+0.0000", "e+308"}
+	prompts := []string{"", "a", "hi", "The transformer reads the tokens and", "注意力就是加权求和"}
+	temps := []float64{0.1, 0.8, 2.0}
+
+	for _, prompt := range prompts {
+		for step := 0; step < len(lessons); step++ {
+			for _, layer := range []int{0, 1} {
+				for _, head := range []int{0, 3} {
+					for _, temp := range temps {
+						a := newTestApp(t)
+						a.Prompt = prompt
+						a.recompute()
+						a.Step, a.Layer, a.Head, a.Temp = step, layer, head, temp
+						if n := len(a.Trace.Tokens); n > 0 {
+							a.SelToken = n / 2
+						}
+						tr := ui.NewTester(a.View, 1500, 1400)
+						tr.Frame()
+						for _, s := range tr.Texts() {
+							for _, b := range bad {
+								if strings.Contains(s, b) {
+									t.Fatalf("stage %d, prompt %q, layer %d, head %d, temp %.1f: "+
+										"the text %q contains %q", step, prompt, layer, head, temp,
+										truncateForTest(s, 90), b)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// truncateForTest shortens a failure message without cutting a multibyte rune in half.
+func truncateForTest(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
+// TestRowZeroCalloutDoesNotClaimARowComparison checks the score stage's callout on row 0.
+//
+// The callout argues that absolute scores do not matter, using the example "把这一行 N 个分数统统减去
+// 5". Row 0 holds exactly one score — the causal mask leaves it nothing else — so on that row the
+// sentence is arithmetic on a set of one, and "同一行内的大小关系" has nothing to order.
+//
+// Row 0 now gets the half of the point that does apply: only the mask makes a key truly impossible.
+func TestRowZeroCalloutDoesNotClaimARowComparison(t *testing.T) {
+	readCallout := func(token int) string {
+		a := newTestApp(t)
+		a.Step = 2
+		a.SelToken = token
+		tr := ui.NewTester(a.View, 1500, 1400)
+		tr.Frame()
+		// The belief and the correction are one entry here; step 6's callout splits them. Read the
+		// entry after the heading either way.
+		texts := tr.Texts()
+		for i, s := range texts {
+			if s == "「负分就是把这个 key 屏蔽掉了」" && i+1 < len(texts) {
+				return texts[i+1]
+			}
+		}
+		return ""
+	}
+
+	row0 := readCallout(0)
+	if row0 == "" {
+		t.Fatal("row 0 lost the misconception callout")
+	}
+	if strings.Contains(row0, "统统减去") {
+		t.Fatalf("row 0 still offers a row-wide subtraction with one score in the row: %q", row0)
+	}
+	if !strings.Contains(row0, "只有一个分数") {
+		t.Fatalf("row 0's callout does not say why the comparison does not apply: %q", row0)
+	}
+
+	// A later row has several scores and keeps the original argument.
+	later := readCallout(10)
+	if later == "" {
+		t.Fatal("row 10 lost the misconception callout")
+	}
+	if !strings.Contains(later, "统统减去") || !strings.Contains(later, "11 个分数") {
+		t.Fatalf("row 10's callout no longer argues with its own count: %q", later)
+	}
+}

@@ -526,12 +526,22 @@ func (a *App) stageScores(c *ui.Context) {
 		} else {
 			mutedText(c, "把指针移到矩阵的某个格子上（或点一下固定它），这里会写出这一格的分数是怎么算出来的。")
 		}
-		misconception(c,
-			"「负分就是把这个 key 屏蔽掉了」",
-			fmt.Sprintf("分数的绝对值不重要，只有同一行内的大小关系重要。把这一行 %d 个分数"+
-				"统统减去 5，哪怕全部变成负数，softmax 之后的权重一模一样。"+
-				"真正让 key 彻底出局的只有右上角的因果掩码，那里是 -Inf，softmax 之后才是 0。",
-				i+1))
+		if i == 0 {
+			// Row 0 holds a single score, so "compare the scores inside this row" has nothing to
+			// compare — the callout claimed "把这一行 1 个分数统统减去 5", which is arithmetic on a
+			// set of one. Only the mask half of the point applies here.
+			misconception(c,
+				"「负分就是把这个 key 屏蔽掉了」",
+				"第 0 行只有一个分数，行内比较还谈不上。真正让 key 彻底出局的只有右上角的因果掩码："+
+					"那里是 -Inf，softmax 之后才是 0。选中后面的 token 就能看到负分与权重并不对应。")
+		} else {
+			misconception(c,
+				"「负分就是把这个 key 屏蔽掉了」",
+				fmt.Sprintf("分数的绝对值不重要，只有同一行内的大小关系重要。把这一行 %d 个分数"+
+					"统统减去 5，哪怕全部变成负数，softmax 之后的权重一模一样。"+
+					"真正让 key 彻底出局的只有右上角的因果掩码，那里是 -Inf，softmax 之后才是 0。",
+					i+1))
+		}
 	})
 }
 
