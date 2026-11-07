@@ -34,6 +34,14 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Added
+
+- 补 `TestAutoplayWalksThePipelineOnTheClock`：**自动播放此前只测了状态位，没测它会真的推进**
+  - 现有断言全是「空格把 `Playing` 置真、Esc 置假、选阶段会停止」。**把 `play()` 里的 `a.Step++` 删掉，整套测试仍然是绿的**——标志位照常翻转、按钮照常显示「播放中」，只是什么都不动
+  - `ui.Tester` 的时钟可以显式推进，所以间隔是精确的，不用 sleep
+  - 覆盖四件事：空格开始播放；每过一个 `playStepInterval` 前进一个阶段并保持播放中；每个新阶段都从顶部开始（`Scroll.Y == 0`）；**播到第 7 步自动停止，不环绕也不越界**；Esc 中断后阶段停在原处，时间继续走也不动
+  - 已验证两种破坏都能被抓到：删掉 `a.Step++` 报 `after 1 intervals the reader is on stage 1, want 2`；去掉末尾的停止判断报 `autoplay never stopped at the last stage`
+
 ### Fixed
 
 - **采样之后没有选中新生成的那个 token**，导致在七个阶段里的六个**几乎看不到采样发生了什么**

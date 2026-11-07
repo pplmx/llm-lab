@@ -484,3 +484,76 @@ func TestSamplingSelectsWhatItProduced(t *testing.T) {
 	check("mid stage", "The transformer", 2)
 	check("at the ceiling", strings.Repeat("x", 64), 6)
 }
+
+// TestAutoplayWalksThePipelineOnTheClock checks that autoplay actually advances.
+//
+// Every existing assertion about it checks the Playing flag: space sets it, escape clears it, selecting a stage clears it.
+// None checked that time passing moves the reader, so the a.Step++ inside play() could have been dropped and the suite would
+// still be green — the flag would flip, the button would say "playing", and nothing would move.
+//
+// The tester's clock is driven explicitly, so the interval is exact rather than slept through.
+func TestAutoplayWalksThePipelineOnTheClock(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	if !a.Playing {
+		t.Fatal("space did not start autoplay")
+	}
+
+	// One interval, one stage.
+	for want := 1; want <= 3; want++ {
+		tr.Advance(playStepInterval)
+		tr.Frame()
+		if a.Step != want {
+			t.Fatalf("after %d intervals the reader is on stage %d, want %d", want, a.Step+1, want+1)
+		}
+		if !a.Playing {
+			t.Fatalf("autoplay stopped on its own after %d intervals, at stage %d", want, a.Step+1)
+		}
+	}
+
+	// Every stage a switch lands on starts at its top, exactly as a manual switch does.
+	if a.Scroll.Y != 0 {
+		t.Fatalf("autoplay left the stage scrolled to Y=%.0f", a.Scroll.Y)
+	}
+
+	// Run to the end: it must stop, not wrap, and not overshoot.
+	for i := 0; i < len(lessons)+2 && a.Playing; i++ {
+		tr.Advance(playStepInterval)
+		tr.Frame()
+	}
+	if a.Playing {
+		t.Fatal("autoplay never stopped at the last stage")
+	}
+	if a.Step != len(lessons)-1 {
+		t.Fatalf("autoplay stopped on stage %d, want the last (%d)", a.Step+1, len(lessons))
+	}
+
+	// Escape interrupts mid-play, and the reader keeps the stage they had reached.
+	b := newTestApp(t)
+	b.Step = 0
+	tr2 := ui.NewTester(b.View, 1180, 720)
+	tr2.Frame()
+	tr2.Key(0, ui.KeySpace)
+	tr2.Frame()
+	tr2.Advance(playStepInterval)
+	tr2.Frame()
+	reached := b.Step
+	if reached == 0 {
+		t.Fatal("autoplay advanced nothing before the interrupt")
+	}
+	tr2.Key(0, ui.KeyEscape)
+	tr2.Frame()
+	if b.Playing {
+		t.Fatal("escape did not stop autoplay")
+	}
+	tr2.Advance(2 * playStepInterval)
+	tr2.Frame()
+	if b.Step != reached {
+		t.Fatalf("the stage moved from %d to %d after stopping", reached+1, b.Step+1)
+	}
+}
