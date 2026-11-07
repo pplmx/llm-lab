@@ -5873,3 +5873,65 @@ func TestCardsAllComeFromOneHelper(t *testing.T) {
 			shape, occurrences, where)
 	}
 }
+
+// TestCJKTruncationKeepsWholeCharacters checks the truncation path that only a
+// multi-byte prompt reaches.
+//
+// Truncate walks `start` forward past UTF-8 continuation bytes so a character is never
+// cut in half. That means a CJK prompt can land below the context limit: 264 bytes of
+// hanzi is 88 characters, and taking the last 64 bytes can begin mid-character, so the
+// result is 63 tokens. Every truncation test before this one used ASCII, where the
+// limit is exact and the walk never runs.
+//
+// The app must therefore report what it kept (63), not the limit (64) — a reader who
+// sees "上限 64" and "T = 63" with no explanation has found a contradiction.
+func TestCJKTruncationKeepsWholeCharacters(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = strings.Repeat("注意力机制就是加权求和", 8)
+	a.recompute()
+
+	got := len(a.Trace.Tokens)
+	ctx := a.W.Config.Ctx
+	if got >= ctx {
+		t.Fatalf("this prompt was meant to land below the limit (got %d of %d); "+
+			"the multi-byte walk was not exercised", got, ctx)
+	}
+	if got != ctx-1 {
+		t.Fatalf("kept %d tokens; a 3-byte-per-character prompt cut at the limit "+
+			"should lose exactly one to the whole-character rule", got)
+	}
+
+	// The first kept token must start a character, not continue one.
+	ids := promptIDs(a.Prompt)
+	dropped := len(ids) - got
+	if dropped <= 0 || dropped >= len(ids) {
+		t.Fatalf("dropped %d of %d bytes", dropped, len(ids))
+	}
+	if first := byte(ids[dropped]); first&0xC0 == 0x80 {
+		t.Fatalf("the first kept byte 0x%02X is a UTF-8 continuation, so a "+
+			"character was cut", first)
+	}
+
+	// And the card must say what was kept, not what was allowed.
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	want := fmt.Sprintf("已截断到最近 %d 个 token", got)
+	var saw bool
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, want) {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Fatalf("the card does not report %q", want)
+	}
+
+	// The dropped-byte figure must be the real prefix length.
+	wantDropped := fmt.Sprintf("丢弃前 %d 字节", dropped)
+	for _, s := range tr.Texts() {
+		if s == wantDropped {
+			return
+		}
+	}
+	t.Fatalf("the card does not report %q", wantDropped)
+}
