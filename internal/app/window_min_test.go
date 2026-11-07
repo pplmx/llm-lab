@@ -22,23 +22,44 @@ import (
 // The pairing is what this asserts: the smallest rendered size and the window floor
 // are the same numbers.
 func TestWindowMinimumMatchesTheSmallestSnapshot(t *testing.T) {
-	root := filepath.Join("..", "..")
+	// The floor lives in app now, so it can be checked as a value rather than as a string
+	// in a source file. The old version matched "MinWidth:  1180" against main.go's text,
+	// which broke on a whitespace change and could not see the flag clamp at all — the
+	// two places that enforce the floor are main.go's window options and its -w/-h
+	// handling, and the string match only knew about the first.
+	if MinWindowWidth != 1180 || MinWindowHeight != 720 {
+		t.Fatalf("the window floor is %d×%d; the layouts are only verified down to 1180×720",
+			MinWindowWidth, MinWindowHeight)
+	}
+	for _, c := range []struct{ w, h, wantW, wantH int }{
+		{900, 600, 1180, 720},    // below both
+		{1180, 720, 1180, 720},   // exactly at the floor: unchanged
+		{1920, 1080, 1920, 1080}, // above: unchanged
+		{1180, 400, 1180, 720},   // one axis below
+	} {
+		if gotW, gotH := ClampWindowSize(c.w, c.h); gotW != c.wantW || gotH != c.wantH {
+			t.Fatalf("ClampWindowSize(%d, %d) = (%d, %d), want (%d, %d)",
+				c.w, c.h, gotW, gotH, c.wantW, c.wantH)
+		}
+	}
 
-	main, err := os.ReadFile(filepath.Join(root, "main.go"))
+	// The value test above proves ClampWindowSize works; it does not prove main.go calls
+	// it. That was the one thing the old string match did cover, so it stays — main.go is
+	// package main and cannot be linked into this test, leaving the source as the only
+	// handle on it.
+	main, err := os.ReadFile(filepath.Join("..", "..", "main.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	const minW, minH = 1180, 720
-	if !strings.Contains(string(main), "MinWidth:") {
-		t.Fatal("main.go no longer sets a minimum window width; the layout is only " +
-			"verified down to 1180×720, so the window must not go below it")
-	}
-	if !strings.Contains(string(main), "MinWidth:  1180") &&
-		!strings.Contains(string(main), "MinWidth: 1180") {
-		t.Fatalf("the window's minimum width is no longer %d", minW)
-	}
-	if !strings.Contains(string(main), "MinHeight: 720") {
-		t.Fatalf("the window's minimum height is no longer %d", minH)
+	for _, want := range []string{
+		"app.ClampWindowSize(*width, *height)",
+		"MinWidth:  app.MinWindowWidth",
+		"MinHeight: app.MinWindowHeight",
+	} {
+		if !strings.Contains(string(main), want) {
+			t.Fatalf("main.go no longer contains %q, so the window can be opened below the "+
+				"size the layouts are verified at", want)
+		}
 	}
 
 	// And the snapshot suite must still render at exactly that size, so the

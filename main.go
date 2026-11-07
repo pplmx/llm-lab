@@ -20,12 +20,7 @@ func main() {
 	step := flag.Int("step", 0, "lesson to open on (0-6)")
 	flag.Parse()
 
-	if *width < 1180 {
-		*width = 1180
-	}
-	if *height < 720 {
-		*height = 720
-	}
+	*width, *height = app.ClampWindowSize(*width, *height)
 
 	var (
 		w   *model.Weights
@@ -54,8 +49,8 @@ func main() {
 			Title:     "LLM Lab — Transformer 解剖台",
 			Width:     *width,
 			Height:    *height,
-			MinWidth:  1180,
-			MinHeight: 720,
+			MinWidth:  app.MinWindowWidth,
+			MinHeight: app.MinWindowHeight,
 			Content:   ui.View(a.View),
 		})
 	})

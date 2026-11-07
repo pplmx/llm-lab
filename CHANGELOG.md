@@ -41,6 +41,14 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Changed
+
+- 窗口最小尺寸此前**只靠字符串匹配验证**：测试去 `main.go` 里找 `"MinWidth:  1180"`，改一个空格就会失败，而它证明不了运行时会夹取
+  - 提取 `app.MinWindowWidth / MinWindowHeight` 与 `ClampWindowSize()`，`main.go` 的窗口选项和 `-w/-h` 参数都改用它们——**一处定义，两处执行**
+  - 测试从「源码里有没有这串字符」改为**行为断言**：`ClampWindowSize` 在 900×600 / 1180×720 边界 / 1920×1080 / 单轴越界四种输入下的结果
+  - 保留一处源码检查：`main` 包无法被链接进测试，所以「main.go 确实调用了它」仍只能从源码确认——但范围从「找常量」缩小到了「找三处调用」
+  - 两个方向都验证过：改 `MinWindowWidth` 会报 `the window floor is 1100×720`；把 `main.go` 改回硬编码会报 `no longer contains "app.ClampWindowSize..."`
+
 ### Added
 
 - `just snapshots` / `just snapshots-diff`：把截图渲染与逐字节比对变成配方
