@@ -561,3 +561,69 @@ func TestDragCannotPinAMaskedCell(t *testing.T) {
 		t.Fatalf("a click pinned (%d,%d), above the diagonal", b.KeyQ, b.KeyK)
 	}
 }
+
+// TestBothPromptPathsLeaveTheSameState pins that the preset chips and the text field
+// cannot drift apart.
+//
+// Both change the prompt and both have to drop the state belonging to the old one: the
+// last sample, the pending playback clock, the playing flag. They were written twice —
+// applyPrompt as a function, the field's Changed() handler inline — with identical
+// bodies, so nothing kept them in step. That is the same shape as the drag-versus-keyboard
+// gap fixed last round: one invariant, two implementations.
+//
+// Both now go through promptChanged. This compares the resulting state field by field,
+// which is what would have caught a divergence before the refactor.
+func TestBothPromptPathsLeaveTheSameState(t *testing.T) {
+	type snapshot struct {
+		tokens, sel, keyQ, keyK int
+		lastSample              string
+		playing                 bool
+		nextAtZero              bool
+	}
+	read := func(a *App) snapshot {
+		return snapshot{
+			tokens:     len(a.Trace.Tokens),
+			sel:        a.SelToken,
+			keyQ:       a.KeyQ,
+			keyK:       a.KeyK,
+			lastSample: a.LastSample,
+			playing:    a.Playing,
+			nextAtZero: a.NextAt.IsZero(),
+		}
+	}
+
+	// Path A: a preset, through applyPrompt.
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 10, 5
+	a.LastSample = `"d" (id 100, p=0.5)`
+	a.Playing = true
+	a.applyPrompt("hi")
+
+	// Path B: the same edit typed into the field, through promptChanged.
+	b := newTestApp(t)
+	b.Step = 2
+	b.SelToken = 10
+	b.KeyQ, b.KeyK = 10, 5
+	b.LastSample = `"d" (id 100, p=0.5)`
+	b.Playing = true
+	b.Prompt = "hi"
+	b.promptChanged()
+
+	if got, want := read(b), read(a); got != want {
+		t.Fatalf("the typed path left %+v, the preset path left %+v", got, want)
+	}
+
+	// And both must have actually cleared the old prompt's state: a comparison of two
+	// equally-wrong states would pass.
+	if a.LastSample != "" {
+		t.Fatalf("the sample survived the prompt change: %q", a.LastSample)
+	}
+	if a.Playing {
+		t.Fatal("playback survived the prompt change")
+	}
+	if !a.NextAt.IsZero() {
+		t.Fatalf("the pending clock survived: %v", a.NextAt)
+	}
+}

@@ -146,6 +146,18 @@ func New(w *model.Weights) *App {
 // sample and autoplay state that belonged to the previous prompt.
 func (a *App) applyPrompt(p string) {
 	a.Prompt = p
+	a.promptChanged()
+}
+
+// promptChanged drops the state that belonged to the previous prompt and re-runs the
+// forward pass. Both ways of changing the prompt go through it — the preset chips and
+// the text field — because they have to leave the app in the same state: a preset click
+// and an equivalent edit must not differ in whether playback stops or a stale sample
+// survives.
+//
+// The field's own handler calls this after ui.TextInput has already written a.Prompt,
+// which is why the assignment stays in applyPrompt rather than moving in here.
+func (a *App) promptChanged() {
 	a.LastSample = ""
 	a.Playing = false
 	a.NextAt = time.Time{}
@@ -683,10 +695,7 @@ func (a *App) topbar(c *ui.Context) {
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			field := ui.TextInput(c, &a.Prompt).Grow(1).Label("输入").SingleLine()
 			if field.Changed() {
-				a.LastSample = ""
-				a.Playing = false
-				a.NextAt = time.Time{}
-				a.recompute()
+				a.promptChanged()
 			}
 			if ui.Button(c, "重置").Clicked() {
 				a.applyPrompt(defaultPrompt)
