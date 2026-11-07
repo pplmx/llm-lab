@@ -7618,3 +7618,41 @@ func TestTooltipNumberingMatchesTheVisibleUI(t *testing.T) {
 			"longer the same as what is on screen")
 	}
 }
+
+// TestStatusLineHasThreeStates checks the sidebar's summary against the three states it can be in.
+//
+// An empty prompt used to report "0 tokens · 2 层 × 4 头 · 前向完成". Every clause is literally true —
+// the app does run a forward pass over nothing — but the inspector beside it says the app is waiting for
+// input, and a "前向完成" badge reads as though there were a result to look at.
+//
+// Three cases now: nothing yet, truncated, and a normal pass.
+func TestStatusLineHasThreeStates(t *testing.T) {
+	statusOf := func(prompt string) string {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		return a.Status
+	}
+
+	empty := statusOf("")
+	if !strings.HasPrefix(empty, "还没有提示词") {
+		t.Fatalf("the empty prompt reports %q, which reads as a finished pass", empty)
+	}
+	if strings.Contains(empty, "前向完成") {
+		t.Fatalf("the empty prompt claims a completed forward pass: %q", empty)
+	}
+
+	normal := statusOf("hi")
+	if !strings.Contains(normal, "2 tokens") || !strings.Contains(normal, "前向完成") {
+		t.Fatalf("a two-token prompt reports %q", normal)
+	}
+
+	ctx := newTestApp(t).W.Config.Ctx
+	truncated := statusOf(strings.Repeat("x", ctx+5))
+	if !strings.HasPrefix(truncated, "已截断到最近 ") {
+		t.Fatalf("an over-long prompt reports %q", truncated)
+	}
+	if strings.Contains(truncated, "前向完成") {
+		t.Fatalf("the truncated status also claims a full pass: %q", truncated)
+	}
+}

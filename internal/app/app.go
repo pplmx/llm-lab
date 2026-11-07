@@ -219,9 +219,16 @@ func (a *App) recompute() {
 	// Refresh the per-trace summary alongside the trace it describes.
 	a.cancelStats = measureCancellation(a.Trace)
 	a.cancelStatsFor = a.Trace
-	a.Status = fmt.Sprintf("%d tokens · %d 层 × %d 头 · 前向完成", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
-	if len(a.Prompt) > a.W.Config.Ctx {
+	// Three states, because "0 tokens · … · 前向完成" is a true sentence that reads as a
+	// contradiction: the inspector beside it says the app is waiting for input, while the status
+	// line reports a finished forward pass over nothing.
+	switch {
+	case len(ids) == 0:
+		a.Status = fmt.Sprintf("还没有提示词 · %d 层 × %d 头", a.W.Config.NLayer, a.W.Config.NHead)
+	case len(a.Prompt) > a.W.Config.Ctx:
 		a.Status = fmt.Sprintf("已截断到最近 %d 个 token · %d 层 × %d 头", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
+	default:
+		a.Status = fmt.Sprintf("%d tokens · %d 层 × %d 头 · 前向完成", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
 	}
 }
 
