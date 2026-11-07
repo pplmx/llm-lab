@@ -51,26 +51,31 @@ var lessons = []lesson{
 		name:  "Softmax",
 		title: "变成权重再混合",
 		bodyFn: func(tr *model.Trace) string {
-			const head = "一行分数经过 softmax 变成概率分布，每一行的和恰好是 1。" +
-				"用这些权重去加权求和 Value，就得到这个位置「从上下文里取回的信息」。" +
-				"多个头并行做同一件事，但学到的模式并不一样，切换头上的分段控件就能看出来。"
-			// The old text claimed layer 0 head 0 attends to the previous token in almost every
-			// row. That holds for the trained weights — measured 31 of 35 rows — and not for random
-			// ones, where the same count is 5 of 35. The app renders random weights whenever the
-			// bundled file is missing, and the banner already tells the reader not to trust the
-			// numbers; a fixed sentence describing a pattern that is not there is a different problem,
-			// because it claims something about the picture that the picture does not show.
-			// With no tokens there are no layers, and the stage still renders its body.
+			const base = "一行分数经过 softmax 变成概率分布，每一行的和恰好是 1。" +
+				"用这些权重去加权求和 Value，就得到这个位置「从上下文里取回的信息」。"
+			// Below three measurable rows nothing can be called a pattern, and "切换头上的分段控件
+			// 就能看出来" needs at least two positions to differ. A one-token prompt has no row with a
+			// predecessor at all, which used to print the fraction "0/0 行". A two-token prompt has
+			// exactly one such row, which is not a sample.
 			var prev, rows int
 			if len(tr.Layers) > 0 && len(tr.Layers[0].Heads) > 0 {
 				prev, rows = previousTokenShare(tr.Layers[0].Heads[0].Attn, len(tr.Tokens))
 			}
-			if rows > 0 && prev*4 >= rows*3 {
-				return head + fmt.Sprintf("这一份权重里，第 0 层的头 0 在 %d/%d 行上把最大的权重"+
+			if rows < 3 {
+				return base + "多个头并行做同一件事，各自学到的模式不同。" +
+					fmt.Sprintf("这个提示词只有 %d 行可以比较（每个位置只看得到它自己和之前的 key），"+
+						"样本太少，说不上有什么模式，也还看不出头与头的差别——多打几个字再看。", rows)
+			}
+			shared := "多个头并行做同一件事，但学到的模式并不一样，切换头上的分段控件就能看出来。"
+			// The claim that follows holds for the trained weights — measured 31 of 35 rows — and
+			// not for random ones, where the same count is 5 of 35. The app renders random weights
+			// whenever the bundled file is missing, so the sentence has to follow the measurement.
+			if prev*4 >= rows*3 {
+				return base + shared + fmt.Sprintf("这一份权重里，第 0 层的头 0 在 %d/%d 行上把最大的权重"+
 					"给了紧邻的前一个 token；第 1 层的几个头则反复回到同一小批位置上。"+
 					"热力图里同一列发亮，就是这个头在「一直看着那里」。", prev, rows)
 			}
-			return head + fmt.Sprintf("这一份权重里还看不出这种分工：第 0 层的头 0 只在 %d/%d 行上"+
+			return base + shared + fmt.Sprintf("这一份权重里还看不出这种分工：第 0 层的头 0 只在 %d/%d 行上"+
 				"把最大的权重给了紧邻的前一个 token，其余分散在各处。训练过的模型通常会出现"+
 				"「盯着前一个 token」或「盯着一小批位置」这类模式，这里没有。", prev, rows)
 		},

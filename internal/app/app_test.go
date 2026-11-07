@@ -8304,3 +8304,68 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 		}
 	}
 }
+
+// TestSoftmaxBodyAdmitsWhenThereIsNothingToMeasure closes a gap the weight-dependent fix left open.
+//
+// Round 209 made the body branch on whether the weights show the head pattern. Both branches printed a
+// fraction, and with a one-token prompt there are no rows with a predecessor at all, so it printed "0/0 行"
+// and went on to describe a pattern from a sample of zero. A two-token prompt gives exactly one row, which
+// is no better as evidence.
+//
+// Under three measurable rows the body now says how many there are and that no pattern can be claimed, and
+// it does not tell the reader to switch heads either: with one position all four heads are identical.
+func TestSoftmaxBodyAdmitsWhenThereIsNothingToMeasure(t *testing.T) {
+	bodyOf := func(prompt string) (string, int) {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 3
+		tr := ui.NewTester(a.View, 1500, 2800)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "一行分数经过") {
+				prev, rows := 0, 0
+				if len(a.Trace.Layers) > 0 && len(a.Trace.Layers[0].Heads) > 0 {
+					prev, rows = previousTokenShare(a.Trace.Layers[0].Heads[0].Attn,
+						len(a.Trace.Tokens))
+				}
+				_ = prev
+				return s, rows
+			}
+		}
+		return "", 0
+	}
+
+	// Prompts with fewer than three measurable rows must not claim a pattern.
+	for _, prompt := range []string{"", "a", "hi", "abc"} {
+		body, rows := bodyOf(prompt)
+		if body == "" {
+			t.Fatalf("prompt %q: the softmax body is missing", prompt)
+		}
+		if rows >= 3 {
+			t.Fatalf("prompt %q gives %d rows, so this no longer exercises the short case", prompt, rows)
+		}
+		if strings.Contains(body, "0/0 行") {
+			t.Fatalf("prompt %q prints a 0/0 fraction: %q", prompt, truncateForTest(body, 160))
+		}
+		if strings.Contains(body, "切换头上的分段控件就能看出来") {
+			t.Fatalf("prompt %q is told to switch heads, but all four are identical there: %q",
+				prompt, truncateForTest(body, 160))
+		}
+		want := fmt.Sprintf("只有 %d 行可以比较", rows)
+		if !strings.Contains(body, want) {
+			t.Fatalf("prompt %q says %q, want the phrase %q", prompt,
+				truncateForTest(body, 160), want)
+		}
+	}
+
+	// A long prompt keeps the full description.
+	body, rows := bodyOf("The transformer reads the tokens and")
+	if rows < 3 {
+		t.Fatalf("the long prompt gives only %d rows", rows)
+	}
+	if strings.Contains(body, "行可以比较") {
+		t.Fatalf("the long prompt still gets the short-sample wording: %q",
+			truncateForTest(body, 160))
+	}
+}
