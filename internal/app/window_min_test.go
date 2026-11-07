@@ -283,3 +283,22 @@ func TestBothUntrainedPathsAreSnapshot(t *testing.T) {
 			"untrained message")
 	}
 }
+
+// TestAllNegativeMatrixIsSnapshot keeps a picture of the branch where a head has no positive scores.
+//
+// Every bundled prompt has both signs in every head, so the legend's new data-driven list renders
+// the same two swatches in all 40 other snapshots — the branch that hides one of them would never be
+// compared. A two-token prompt reaches it.
+func TestAllNegativeMatrixIsSnapshot(t *testing.T) {
+	src, err := os.ReadFile("render_sizes_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "size-allnegative-1180.png") {
+		t.Fatal("no snapshot renders a matrix whose scores are all negative")
+	}
+	if !strings.Contains(text, `neg.Prompt = "hi"`) {
+		t.Fatal("the all-negative snapshot does not use the short prompt that produces the case")
+	}
+}

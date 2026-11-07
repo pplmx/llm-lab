@@ -448,16 +448,43 @@ func (a *App) stageScores(c *ui.Context) {
 				// this model's cells, and 212 negative scores still land in
 				// their row's top 3. Sign is only a convenient colour split;
 				// what decides attention is the ranking within a row.
+				// List only the sign the matrix actually contains. A legend swatch for
+				// warm cells beside a matrix with none of them advertises a category
+				// the reader cannot find — measured on a two-token prompt, where every
+				// score is negative and the whole grid is blue.
+				hasPos, hasNeg := false, false
+				for q := range h.Scores {
+					for k := 0; k <= q && k < len(h.Scores[q]); k++ {
+						if h.Scores[q][k] > -1e30 {
+							if h.Scores[q][k] >= 0 {
+								hasPos = true
+							} else {
+								hasNeg = true
+							}
+						}
+					}
+				}
 				ui.Row(c).Gap(12).Children(func() {
-					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-						ui.Box(c).Size(9, 9).Radius(2).Background(colWarm)
-						ui.Text(c, "正分（暖色）").FontSize(fontMicro).TextColor(colMuted)
-					})
-					ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
-						ui.Box(c).Size(9, 9).Radius(2).Background(colNeg)
-						ui.Text(c, "负分（蓝色）").FontSize(fontMicro).TextColor(colMuted)
-					})
+					if hasPos {
+						ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+							ui.Box(c).Size(9, 9).Radius(2).Background(colWarm)
+							ui.Text(c, "正分（暖色）").FontSize(fontMicro).TextColor(colMuted)
+						})
+					}
+					if hasNeg {
+						ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+							ui.Box(c).Size(9, 9).Radius(2).Background(colNeg)
+							ui.Text(c, "负分（蓝色）").FontSize(fontMicro).TextColor(colMuted)
+						})
+					}
 				})
+				if !hasPos {
+					// The misconception below says sign does not matter, only the
+					// ranking within a row. Saying so here explains why a wholly
+					// negative matrix is still a perfectly ordinary one.
+					mutedText(c, "这一头在这个提示词下所有分数都是负的——分数可以整体平移，"+
+						"决定注意力的是同一行里的大小顺序，不是正负。")
+				}
 				kvScale(c, tr.Config.DHead())
 				kv(c, "可见", fmt.Sprintf("%d 个 key", i+1))
 				// The colour ramp is |score| / saturation, so its top is a fact

@@ -7327,3 +7327,56 @@ func TestEveryInspectorFollowsThePrompt(t *testing.T) {
 		}
 	}
 }
+
+// TestScoreLegendListsOnlyTheSignsPresent keeps the legend matching the matrix.
+//
+// The legend had a warm swatch for positive scores and a blue one for negative, always both. On a
+// short prompt every score in a head can be negative — measured on "hi", where layer 0 head 0 is
+// all blue — so the card advertised a category the reader could not find anywhere in the grid, right
+// beside a callout explaining that sign does not matter.
+//
+// The list now follows the data, and a wholly negative head gets a line saying why that is ordinary:
+// the scores can shift as a group, and attention depends on the order within a row.
+func TestScoreLegendListsOnlyTheSignsPresent(t *testing.T) {
+	signs := func(prompt string) (hasPos, hasNeg bool) {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 2
+		tr := ui.NewTester(a.View, 1500, 1100)
+		tr.Frame()
+		return tr.HasText("正分（暖色）"), tr.HasText("负分（蓝色）")
+	}
+
+	// A short prompt where one head is entirely negative.
+	pos, neg := signs("hi")
+	if pos {
+		t.Fatalf("the legend shows a warm swatch for a matrix with no positive scores")
+	}
+	if !neg {
+		t.Fatal("the legend dropped the negative swatch too")
+	}
+
+	// The default prompt has both signs in every head, so both swatches belong.
+	pos, neg = signs("The transformer reads the tokens and")
+	if !pos || !neg {
+		t.Fatalf("the default prompt has both signs but the legend shows pos=%v neg=%v", pos, neg)
+	}
+
+	// And the all-negative case explains itself rather than leaving the reader to guess.
+	a := newTestApp(t)
+	a.Prompt = "hi"
+	a.recompute()
+	a.Step = 2
+	tr := ui.NewTester(a.View, 1500, 1100)
+	tr.Frame()
+	var explained bool
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "所有分数都是负的") && strings.Contains(s, "大小顺序") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Fatal("an all-negative matrix is drawn with no word about why that is fine")
+	}
+}

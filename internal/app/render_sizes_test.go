@@ -95,6 +95,16 @@ func TestRenderSizes(t *testing.T) {
 	b.Step = 4
 	writeSnapshot(t, dir, "size-untrained-1180-layernorm.png", ui.Render(b.View, 1180, 720, 1))
 
+	// A head whose scores are all negative, which is what a two-token prompt gives: the
+	// legend must list only the blue swatch, and the card has to say why an all-negative
+	// matrix is ordinary. No other snapshot reaches that branch — every bundled prompt has
+	// both signs in every head.
+	neg := newTestApp(t)
+	neg.Prompt = "hi"
+	neg.recompute()
+	neg.Step = 2
+	writeSnapshot(t, dir, "size-allnegative-1180.png", ui.Render(neg.View, 1180, 900, 1))
+
 	// The other way to reach an untrained model: -weights pointed at a file with no training
 	// metadata. untrainedWhy gives that case different advice — it must not claim the bundled
 	// file was missing — and no snapshot reached it. Source is display-only (json:"-"), so
