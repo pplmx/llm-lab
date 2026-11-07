@@ -1031,11 +1031,15 @@ func ffnTopShare(p ffnParts) float64 {
 	return 100 * top / p.AbsTotal
 }
 
+// topN is how many candidates the output stage lists. The card's title takes its name
+// from it, so the heading and the slice cannot disagree about how many rows there are.
+const topN = 12
+
 func (a *App) stageOutput(c *ui.Context) {
 	tr := a.Trace
 	last := len(tr.Tokens) - 1
 	probs := tr.Probabilities(a.Temp)
-	top := model.TopK(probs, 12)
+	top := model.TopK(probs, topN)
 	var maxP float32
 	for _, id := range top {
 		if probs[id] > maxP {
@@ -1081,7 +1085,7 @@ func (a *App) stageOutput(c *ui.Context) {
 		if rest*100 < 0.01 {
 			restText = fmt.Sprintf("%.1e%%", rest*100)
 		}
-		sectionTitle(c, "Top-12 概率",
+		sectionTitle(c, fmt.Sprintf("Top-%d 概率", topN),
 			fmt.Sprintf("softmax(logits / T) · 词表 %d 个，其余 %d 个合计 %s",
 				len(probs), len(probs)-len(top), restText))
 		rows := make([]barRow, 0, len(top))

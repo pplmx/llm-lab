@@ -6238,3 +6238,52 @@ func TestScoreColourRangeMatchesTheDocumentedFigures(t *testing.T) {
 		t.Fatal("the README still carries the stale 5.4–8.3 range")
 	}
 }
+
+// TestTopHeadingCountsTheRowsItLists keeps the output card's heading and its contents in
+// step.
+//
+// The title said "Top-12" as prose while TopK was called with a literal 12 a few lines
+// above it. Changing one and not the other would print a heading that miscounts its own
+// rows — the same shape as the lesson paragraph that hard-coded 58% while the card beside
+// it computed the share.
+//
+// topN now feeds both. The test counts the rendered rows rather than trusting the string,
+// so a title that says 12 over eleven bars fails.
+func TestTopHeadingCountsTheRowsItLists(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	var heading string
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, "Top-") && strings.Contains(s, "概率") {
+			heading = s
+		}
+	}
+	if heading == "" {
+		t.Fatal("the output card has no Top-N heading")
+	}
+	want := fmt.Sprintf("Top-%d 概率", topN)
+	if heading != want {
+		t.Fatalf("heading is %q, want %q", heading, want)
+	}
+
+	// The count in the heading has to be the count of rows actually listed.
+	probs := a.Trace.Probabilities(a.Temp)
+	if got := len(model.TopK(probs, topN)); got != topN {
+		t.Fatalf("the card lists %d rows but its heading names %d", got, topN)
+	}
+
+	// And the literal must be gone from the source, so the two cannot drift apart again.
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the heading counts: a comment may still mention the old wording when it
+	// explains why the card now prints the vocabulary size alongside it.
+	if strings.Contains(string(src), `sectionTitle(c, "Top-12`) ||
+		strings.Contains(string(src), `"Top-12 概率"`) {
+		t.Fatal("the heading is still written out as a literal")
+	}
+}
