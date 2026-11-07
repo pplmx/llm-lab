@@ -107,3 +107,38 @@ func TestContributingDoesNotRestateTheColourRange(t *testing.T) {
 		t.Fatal("CONTRIBUTING no longer points at README for the measured range")
 	}
 }
+
+// TestContributingCountsEveryTooltip keeps the guide's "六处 .Tooltip(...)" honest.
+//
+// The guide tells a reader that tooltips cannot be observed headless and must be checked by eye, and gives the count so
+// they know how much that is. A seventh tooltip with the guide still saying six would send someone away believing they had
+// checked them all.
+func TestContributingCountsEveryTooltip(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "CONTRIBUTING.md"))
+	if err != nil {
+		t.Fatalf("read CONTRIBUTING.md: %v", err)
+	}
+	doc := string(b)
+	if !strings.Contains(doc, "tooltip") {
+		t.Fatal("the guide no longer mentions tooltips; if they became testable, remove this test")
+	}
+
+	n := 0
+	for _, name := range []string{"app.go", "stages.go", "widgets.go"} {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n += strings.Count(string(src), ".Tooltip(")
+	}
+	if n == 0 {
+		t.Fatal("no tooltips left; the guide's paragraph is stale")
+	}
+
+	// The guide spells the count in Chinese numerals up to ten.
+	cn := [...]string{"零", "一", "两", "三", "四", "五", "六", "七", "八", "九", "十"}
+	if strings.Contains(doc, cn[n]) && strings.Contains(doc, cn[n]+"处") {
+		return
+	}
+	t.Fatalf("there are %d tooltips (%s处) but the guide does not say so", n, cn[n])
+}
