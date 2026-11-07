@@ -6388,3 +6388,54 @@ func TestTruncationBoundaryIsExact(t *testing.T) {
 		}
 	}
 }
+
+// TestTemperatureExtremesKeepTheDistributionValid covers the slider's two ends.
+//
+// The control runs from 0.1 to 2.0, so logits are never divided by zero — but 0.1 alone
+// multiplies them by ten, which saturates the softmax completely: measured max probability
+// 1.000000 at T=0.1 against 0.629685 at T=2.0. Saturation is the correct answer here, and
+// the card says so (熵 0.00 nats, 100.0%, and the note that T→0 is greedy), so the thing
+// worth pinning is that the numbers stay coherent at both ends rather than that the
+// distribution stays soft.
+func TestTemperatureExtremesKeepTheDistributionValid(t *testing.T) {
+	a := newTestApp(t)
+
+	for _, temp := range []float64{0.1, 2.0} {
+		probs := a.Trace.Probabilities(temp)
+		sum := 0.0
+		for _, p := range probs {
+			if p < 0 || math.IsNaN(float64(p)) || math.IsInf(float64(p), 0) {
+				t.Fatalf("T=%.1f produced an invalid probability %v", temp, p)
+			}
+			sum += float64(p)
+		}
+		if math.Abs(sum-1) > 1e-3 {
+			t.Fatalf("T=%.1f probabilities sum to %.6f, not 1", temp, sum)
+		}
+	}
+
+	// The two ends must actually differ: a temperature that changed nothing would make
+	// the slider dead.
+	cold := a.Trace.Probabilities(0.1)
+	hot := a.Trace.Probabilities(2.0)
+	if float64(model.Entropy(cold)) >= float64(model.Entropy(hot)) {
+		t.Fatalf("entropy does not rise with temperature: %.4f at T=0.1, %.4f at T=2.0",
+			model.Entropy(cold), model.Entropy(hot))
+	}
+
+	// And both ends must render without a NaN reaching the screen.
+	for _, temp := range []float64{0.1, 2.0} {
+		b := newTestApp(t)
+		b.Temp = temp
+		for step := 0; step < len(lessons); step++ {
+			b.Step = step
+			tr := ui.NewTester(b.View, 1500, 940)
+			tr.Frame()
+			for _, s := range tr.Texts() {
+				if strings.Contains(s, "NaN") || strings.Contains(s, "+Inf") || strings.Contains(s, "Infinity") {
+					t.Fatalf("T=%.1f stage %d renders %q", temp, step, s)
+				}
+			}
+		}
+	}
+}
