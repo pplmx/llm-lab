@@ -36,6 +36,16 @@
 
 ### Fixed
 
+- **同一个 `#` 符号在界面上有两种含义**：token 条写 `#4`、检查器写 `token #35 / 35`、字节条写 `#35`——都是**token 索引（0-based）**；而第 7 步 Top-N 柱条的 tooltip 写 `id 32 · "u" · **#1**`——这里的 `#1` 是**排名（1-based）**
+  - tooltip 恰好是读者核对 id 的地方，`#1` 与界面上其它 `#` 并列出现，很容易被当成 token 索引
+  - 排名改用文字：「`id 32 · "u" · 第 1 名`」
+  - 补 `TestHashMeansATokenIndexEverywhere`：禁止 tooltip 恢复 `#%d` 写法，并断言检查器表头与字节条上的 `#` 确实是 token 索引
+  - 已验证：把 tooltip 改回 `#%d`，测试报 `the top-N tooltip is back to writing a rank with the token-index symbol`
+  - 截图 0 变化——tooltip 在 headless 渲染里不出现
+- 顺带核对了另外两套编号，**都是对的**：阶段编号在侧栏与进度行都是 `a.Step+1`（1-based，与侧栏「1 分词 …7 输出」一致）；头编号在控件 `H0–H3`、副标题「头 0」、柱条标签、tip 里都是 0-based，没有混用
+
+### Fixed
+
 - **同一屏上有两套层编号**：顶栏分段控件写 `层 0 | 1`、检查器标题写「层 1」、卡片副标题引 `a.Layer`——全是 0-based；而第 5 步残差链的算式写的是「d0 的残差流在**第 2 层**」「所以**第 2 层**的输出完整送入最终 LayerNorm」——用的是 `layer+1`，1-based
   - 实测 `a.Layer = 1` 时，控件选中的是「1」，算式却说「第 2 层」。模型只有 2 层（编号 0、1），「第 2 层」实际指的是最后一个层
   - 读者要把控件上的数字和算式里的数字做一次心算转换才敢确认它们说的是同一层

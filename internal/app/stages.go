@@ -1226,8 +1226,11 @@ func (a *App) stageOutput(c *ui.Context) {
 				Color:      probColor(probs[id], maxP),
 				LabelWidth: 56,
 				ValueWidth: 50,
-				Tip:        fmt.Sprintf("id %d · %q · #%d", id, byteText(id), rank+1),
-				Index:      rank,
+				// "第 %d 名" rather than "#%d": the hash form means a token index everywhere
+				// else in the app ("token #35", the rail's "#4", the inspector header), so
+				// reusing it for a rank printed two different things under one symbol.
+				Tip:   fmt.Sprintf("id %d · %q · 第 %d 名", id, byteText(id), rank+1),
+				Index: rank,
 			})
 		}
 		bars(c, rows, maxP, colAccent2)

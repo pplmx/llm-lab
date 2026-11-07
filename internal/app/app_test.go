@@ -7533,3 +7533,39 @@ func TestRowZeroExplainsItsEmptyEntropyChart(t *testing.T) {
 			"that later rows differ does not hold", vals)
 	}
 }
+
+// TestHashMeansATokenIndexEverywhere keeps "#N" to one meaning.
+//
+// The app writes token positions as "#35" in the rail, "#4" in the byte strip and "token #35 / 35" in the
+// inspector header — all zero-based token indices. The top-N bars' tooltip used the same form for a rank:
+// 'id 32 · "u" · #1' for the highest-probability token, where #1 is its position in the list, not its
+// token index. One symbol, two meanings, and the tooltip is exactly where a reader is checking an id.
+//
+// Ranks now read "第 1 名".
+func TestHashMeansATokenIndexEverywhere(t *testing.T) {
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := string(src)
+	if strings.Contains(file, `"id %d · %q · #%d"`) {
+		t.Fatal("the top-N tooltip is back to writing a rank with the token-index symbol")
+	}
+	if !strings.Contains(file, `"id %d · %q · 第 %d 名"`) {
+		t.Fatal("the top-N tooltip no longer states the rank in words")
+	}
+
+	// The remaining "#" uses must be token positions.
+	a := newTestApp(t)
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	// The inspector header and the byte strip both index the selected token.
+	want := fmt.Sprintf("token #%d / %d", a.SelToken, len(a.Trace.Tokens)-1)
+	if !tr.HasText(want) {
+		t.Fatalf("the inspector header no longer reads %q", want)
+	}
+	if !tr.HasText(fmt.Sprintf("#%d", a.SelToken)) {
+		t.Fatalf("the byte strip no longer shows #%d for the selected token", a.SelToken)
+	}
+}
