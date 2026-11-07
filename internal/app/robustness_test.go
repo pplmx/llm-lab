@@ -140,7 +140,9 @@ func tr2HasText(t *testing.T, a *App, s string) bool {
 // TestStartingOnALaterStageRendersThatStage checks the -step flag's path, which
 // assigns a.Step directly instead of going through selectStep.
 func TestStartingOnALaterStageRendersThatStage(t *testing.T) {
-	want := map[int]string{0: "为什么中文更长", 3: "这一行的统计", 6: "分布统计"}
+	// Step 1's card adapts to the prompt; the default is ASCII, so it explains why bytes and
+	// runes coincide. TestByteCardFollowsThePrompt covers the CJK branch.
+	want := map[int]string{0: "ASCII 下字节就是字符", 3: "这一行的统计", 6: "分布统计"}
 	for step, marker := range want {
 		a := newTestApp(t)
 		a.Step = step // what main.go does for -step

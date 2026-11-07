@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -18,7 +19,9 @@ var inspectorCards = []struct {
 	// marker appears only in this step's card.
 	marker string
 }{
-	{0, "分词", "为什么中文更长"},
+	// Step 1's card adapts: the default prompt is ASCII, so it explains why bytes and
+	// runes coincide. TestByteCardFollowsThePrompt covers the other branch.
+	{0, "分词", "ASCII 下字节就是字符"},
 	{1, "嵌入", "位置向量"},
 	{2, "注意力分数", "分数 top-5"},
 	{3, "Softmax", "这一行的统计"},
@@ -121,5 +124,55 @@ func TestInspectorFollowsTheSelectedToken(t *testing.T) {
 	}
 	if first == second {
 		t.Fatalf("the inspector reports the same row for tokens 5 and 30: %q", first)
+	}
+}
+
+// TestByteCardFollowsThePrompt checks that step 1's explainer matches the prompt in the field.
+//
+// The card was headed "为什么中文更长" whatever the prompt was, which on an ASCII prompt is a
+// question the figures underneath answer with "it does not" — 36 字节 / 36 字符 is evidence against
+// the premise. A reader looking at that can only conclude they have misunderstood something.
+//
+// Two branches now: equal byte and rune counts explain that ASCII is one byte per character, and
+// unequal ones explain the UTF-8 encoding that makes CJK longer.
+func TestByteCardFollowsThePrompt(t *testing.T) {
+	cases := []struct {
+		prompt, want, notWant string
+	}{
+		{"The transformer reads the tokens and", "ASCII 下字节就是字符", "为什么中文更长"},
+		{"注意力就是加权求和", "为什么中文更长", "ASCII 下字节就是字符"},
+	}
+	for _, c := range cases {
+		a := newTestApp(t)
+		a.Prompt = c.prompt
+		a.recompute()
+		a.Step = 0
+		a.SelToken = 1
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		if !tr.HasText(c.want) {
+			t.Fatalf("prompt %q: the byte card does not show %q", c.prompt, c.want)
+		}
+		if tr.HasText(c.notWant) {
+			t.Fatalf("prompt %q: the byte card still shows %q, which the prompt contradicts",
+				c.prompt, c.notWant)
+		}
+	}
+
+	// And the figures have to agree with the branch that was chosen.
+	a := newTestApp(t)
+	a.Prompt = "注意力"
+	a.recompute()
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	bytes, runes := len([]byte("注意力")), len([]rune("注意力"))
+	want := fmt.Sprintf("%d 字节 / %d 字符", bytes, runes)
+	if !tr.HasText(want) {
+		t.Fatalf("the byte card does not print %q", want)
+	}
+	if bytes == runes {
+		t.Fatal("the CJK sample has equal byte and rune counts, so it does not exercise the " +
+			"branch this test is about")
 	}
 }

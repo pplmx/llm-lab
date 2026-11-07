@@ -1344,9 +1344,21 @@ func (a *App) inspectorBytes(c *ui.Context, tr *model.Trace) {
 		kv(c, "位置", fmt.Sprintf("%d / %d", a.SelToken, len(tr.Tokens)-1))
 	})
 	card(c, func() {
-		sectionTitle(c, "为什么中文更长", "")
-		mutedText(c, "ASCII 一个字节就是一个 token；一个汉字在 UTF-8 里占 3 个字节，所以是 3 个 token。")
-		kv(c, "提示词", fmt.Sprintf("%d 字节 / %d 字符", len(tr.Text), utf8.RuneCountInString(tr.Text)))
+		// The heading asks a question about the current prompt. With an ASCII-only prompt the
+		// answer is "it does not", and leaving the question there made the card read as though
+		// the reader had missed something — the figures underneath (36 字节 / 36 字符) were
+		// actually evidence *against* the premise. Measured on an English prompt the heading
+		// claimed a comparison the numbers did not show.
+		bytes, runes := len(tr.Text), utf8.RuneCountInString(tr.Text)
+		if bytes == runes {
+			sectionTitle(c, "ASCII 下字节就是字符", "")
+			mutedText(c, "这个提示词全是 ASCII：一个字符编成一个字节，也就是一个 token，"+
+				"所以下面两个数相等。贴一句中文进来，它们就会分开。")
+		} else {
+			sectionTitle(c, "为什么中文更长", "")
+			mutedText(c, "ASCII 一个字节就是一个 token；一个汉字在 UTF-8 里占 3 个字节，所以是 3 个 token。")
+		}
+		kv(c, "提示词", fmt.Sprintf("%d 字节 / %d 字符", bytes, runes))
 	})
 }
 
