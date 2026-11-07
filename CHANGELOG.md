@@ -41,6 +41,14 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Added
+
+- 卡片形状原先**没有守卫**：字体有 `TestTypeScaleIsTheOnlySourceOfFontSizes`（要求字号只能来自六个刻度常量），而卡片形状没有对应检查
+  - 每个阶段的卡片都走 `card()`，它固定 `Padding(14) / Gap(10) / Radius(10) / colPanel`，但没有任何东西阻止新面板被内联写成略有差别的数字——那读起来像渲染故障，而不是另一种东西
+  - 新增 `TestCardsAllComeFromOneHelper`：`Background(colPanel).Radius(10)` 在整个包内必须**只出现一次**（即 `card()` 里）
+  - 规则刻意收窄：chip、徽标、按钮各有自己的圆角和内边距是合理的，不能变的是卡片本身
+  - 已验证：内联写一个 `Padding(12).Radius(10)` 的面板会失败并给出位置
+
 ### Changed
 
 - 自动播放的间隔 `1300 * time.Millisecond` 原本**写了两处**：启动后的第一次等待、以及之后每一次等待。两者必须相同，否则第一步比后续快或慢，读起来像卡了一下

@@ -5809,3 +5809,46 @@ func TestStripCaretDoesNotOutliveThePointer(t *testing.T) {
 			hovered, a.HoverDimIn)
 	}
 }
+
+// TestCardsAllComeFromOneHelper keeps panel surfaces identical.
+//
+// The type scale has a guard (TestTypeScaleIsTheOnlySourceOfFontSizes) because a
+// literal font size is one nobody remembers writing and nobody dares change. Card
+// shape had no equivalent: every stage's panels go through card(), which fixes
+// Padding(14), Gap(10), Radius(10) and the colPanel background — but nothing stopped a
+// new panel from being written inline with slightly different numbers, which reads as a
+// rendering glitch rather than a different kind of thing.
+//
+// The rule is narrow on purpose. Chips, badges and buttons legitimately have their own
+// radius and padding; what must not vary is the card: the colPanel surface at radius 10
+// belongs to exactly one helper, so the whole package should contain exactly one such
+// expression.
+func TestCardsAllComeFromOneHelper(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const shape = "Background(colPanel).Radius(10)"
+	occurrences := 0
+	var where []string
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i, line := range strings.Split(string(body), "\n") {
+			if strings.Contains(line, shape) {
+				occurrences++
+				where = append(where, fmt.Sprintf("%s:%d", name, i+1))
+			}
+		}
+	}
+	if occurrences != 1 {
+		t.Fatalf("the card surface %q appears %d times (%v); it belongs to card() "+
+			"alone, so a panel written elsewhere would be shaped slightly differently",
+			shape, occurrences, where)
+	}
+}
