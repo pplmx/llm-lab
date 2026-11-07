@@ -94,6 +94,16 @@ func TestRenderSizes(t *testing.T) {
 	// they were learned. Nothing else in the snapshot set reaches that branch.
 	b.Step = 4
 	writeSnapshot(t, dir, "size-untrained-1180-layernorm.png", ui.Render(b.View, 1180, 720, 1))
+
+	// The other way to reach an untrained model: -weights pointed at a file with no training
+	// metadata. untrainedWhy gives that case different advice — it must not claim the bundled
+	// file was missing — and no snapshot reached it. Source is display-only (json:"-"), so
+	// setting it here reproduces exactly the state main.go builds from a custom file.
+	custom := model.Random(model.DefaultConfig, 42)
+	custom.Source = "/tmp/custom-weights.json"
+	c := New(custom)
+	c.Step = 0
+	writeSnapshot(t, dir, "size-untrained-custom-1180.png", ui.Render(c.View, 1180, 720, 1))
 }
 
 // writeSnapshot encodes img to dir/name, failing the test on either error.

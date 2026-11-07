@@ -252,3 +252,34 @@ func TestExtremeAspectRatiosKeepTheChromeInside(t *testing.T) {
 		}
 	}
 }
+
+// TestBothUntrainedPathsAreSnapshot keeps a picture of each way into an untrained model.
+//
+// untrainedWhy gives different advice depending on how the app got there: the bundled file failing
+// to load, or -weights pointing at a file with no training metadata. Claiming the bundled file was
+// missing when the reader supplied their own would send them looking for the wrong problem.
+//
+// The prose branch had a unit test but no snapshot, so a layout problem specific to the longer
+// second message — it says "（steps = 0）" and names no file — would not have shown up in the
+// comparison set.
+func TestBothUntrainedPathsAreSnapshot(t *testing.T) {
+	src, err := os.ReadFile("render_sizes_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	for _, name := range []string{
+		"size-untrained-1180.png",        // bundled file missing
+		"size-untrained-custom-1180.png", // -weights with steps = 0
+	} {
+		if !strings.Contains(text, name) {
+			t.Fatalf("the snapshot set no longer renders %q", name)
+		}
+	}
+	// And the custom case has to actually rename the source, or it silently renders the
+	// bundled-missing banner a second time.
+	if !strings.Contains(text, `custom.Source = `) {
+		t.Fatal("the custom-weights snapshot does not change Source, so it shows the other " +
+			"untrained message")
+	}
+}
