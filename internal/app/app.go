@@ -428,14 +428,20 @@ func (a *App) selectStep(step int) {
 	a.clearHover()
 }
 
-// play advances the lesson every 1.3 seconds while the user watches it.
+// playStepInterval is how long each stage stays up while the lesson plays itself.
+// One constant for both places it is used: the first wait after starting and every
+// wait after that. Two literals would let the first step take a different time from
+// the rest, which reads as a stutter rather than a deliberate pace.
+const playStepInterval = 1300 * time.Millisecond
+
+// play advances the lesson every playStepInterval while the user watches it.
 func (a *App) play(c *ui.Context) {
 	if !a.Playing {
 		return
 	}
 	now := c.Now()
 	if a.NextAt.IsZero() {
-		a.NextAt = now.Add(1300 * time.Millisecond)
+		a.NextAt = now.Add(playStepInterval)
 	}
 	if !now.Before(a.NextAt) {
 		if a.Step >= len(lessons)-1 {
@@ -445,7 +451,7 @@ func (a *App) play(c *ui.Context) {
 		a.Step++
 		a.Scroll.X, a.Scroll.Y = 0, 0
 		a.clearHover()
-		a.NextAt = now.Add(1300 * time.Millisecond)
+		a.NextAt = now.Add(playStepInterval)
 	}
 	c.After(a.NextAt.Sub(now))
 }

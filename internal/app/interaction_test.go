@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -312,4 +313,57 @@ func chipCentre(t *testing.T, tr *ui.Tester, i int) (float32, float32) {
 		t.Fatalf("no chip labelled token %d", i)
 	}
 	return r.X + r.W/2, r.Y + r.H/2
+}
+
+// TestPlayIntervalIsTheSameForTheFirstStepAndTheRest pins the pace of autoplay.
+//
+// The interval used to be written twice — once to schedule the first advance after
+// starting, once for every advance after that. They have to be equal: a longer first
+// wait reads as "nothing happened" and a shorter one as a stutter, and changing only
+// one of the two would produce exactly that while no test noticed.
+//
+// Measures the time between two consecutive advances, which is the property that
+// actually depends on both uses agreeing.
+func TestPlayIntervalIsTheSameForTheFirstStepAndTheRest(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	if !a.Playing {
+		t.Fatal("space did not start playback")
+	}
+
+	// Time from starting to the first advance.
+	const tick = 50 * time.Millisecond
+	start := a.Step
+	sinceStart := time.Duration(0)
+	for sinceStart < 5*time.Second && a.Step == start {
+		tr.Advance(tick)
+		tr.Frame()
+		sinceStart += tick
+	}
+	if a.Step != start+1 {
+		t.Fatalf("playback never advanced from stage %d", start)
+	}
+
+	// Time from that advance to the next one.
+	mid := a.Step
+	sinceMid := time.Duration(0)
+	for sinceMid < 5*time.Second && a.Step == mid {
+		tr.Advance(tick)
+		tr.Frame()
+		sinceMid += tick
+	}
+	if a.Step != mid+1 {
+		t.Fatalf("playback never advanced past stage %d", mid)
+	}
+
+	// Both waits must be the same interval. The tick granularity means each is
+	// measured to within one tick of the true value.
+	if delta := sinceMid - sinceStart; delta > tick || delta < -tick {
+		t.Fatalf("the first wait was %v and the next was %v; both must use "+
+			"playStepInterval (%v)", sinceStart, sinceMid, playStepInterval)
+	}
 }

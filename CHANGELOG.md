@@ -41,6 +41,13 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Changed
+
+- 自动播放的间隔 `1300 * time.Millisecond` 原本**写了两处**：启动后的第一次等待、以及之后每一次等待。两者必须相同，否则第一步比后续快或慢，读起来像卡了一下
+  - 注释里的「every 1.3 seconds」是第三处重复
+  - 提取为 `playStepInterval`，两处共用
+  - 补测试按帧时钟测量**连续两次前进之间的间隔**，要求相同。**第一版写错了**：比较的是 deadline 而非实际间隔，把第二次等待改成 2.6 秒后测试仍通过。改成测两次前进的实测间隔后，变异被捕获（`the first wait was 1.3s and the next was 2.6s`）
+
 ### Added
 
 - CONTRIBUTING 的「缺陷类型」清单原本只有七条，而最近几轮修的问题**三类都不在里面**：
