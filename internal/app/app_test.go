@@ -7569,3 +7569,52 @@ func TestHashMeansATokenIndexEverywhere(t *testing.T) {
 		t.Fatalf("the byte strip no longer shows #%d for the selected token", a.SelToken)
 	}
 }
+
+// TestTooltipNumberingMatchesTheVisibleUI checks the six tooltips against the conventions the visible
+// UI follows. Tooltips never render in the headless pass, so no snapshot or text assertion covers them
+// — they are the one surface where a divergent spelling can sit indefinitely.
+//
+// Measured conventions: stage numbers are 1-based ("第 3 / 7 步", matching the sidebar), layer and head
+// numbers are 0-based (the segmented controls read 层 0|1 and H0–H3), and a token's byte is printed in
+// decimal by the byte strip. That last one was the exception — the token chip's tooltip said "byte
+// 0x54" where the strip says 84.
+func TestTooltipNumberingMatchesTheVisibleUI(t *testing.T) {
+	files := map[string]string{}
+	for _, name := range []string{"app.go", "stages.go", "widgets.go"} {
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[name] = string(src)
+	}
+
+	// Stage numbers in tooltips are 1-based, like the sidebar.
+	for _, want := range []string{
+		`"第 %d / %d 步 · %s", i+1, len(lessons)`, // sidebar dot, app.go
+		`"第 %d / %d 步 · %s", i+1, len(lessons)`, // sidebar row, widgets.go
+	} {
+		found := strings.Contains(files["app.go"], want) || strings.Contains(files["widgets.go"], want)
+		if !found {
+			t.Fatalf("no tooltip still formats the stage with i+1 as %q", want)
+		}
+	}
+
+	// Layer and head tooltips quote a stage range and must convert to 1-based for display,
+	// because the range constants are stage indices.
+	for _, want := range []string{"layerFrom+1, layerTo+1", "headFrom+1, headTo+1"} {
+		if !strings.Contains(files["app.go"], want) {
+			t.Fatalf("a control tooltip no longer converts its stage range with %q", want)
+		}
+	}
+
+	// The byte tooltip leads with decimal, matching the byte strip.
+	byteTip := `"token %d · byte %d（0x%02X）· %q"`
+	if !strings.Contains(files["widgets.go"], byteTip) {
+		t.Fatalf("the token tooltip no longer leads with the decimal byte (%s)", byteTip)
+	}
+	// And the strip it has to agree with still prints decimal.
+	if !strings.Contains(files["stages.go"], `fmt.Sprintf("%d", tr.Tokens[i].Byte)`) {
+		t.Fatal("the byte strip stopped printing decimal, so the tooltip's leading value is no " +
+			"longer the same as what is on screen")
+	}
+}

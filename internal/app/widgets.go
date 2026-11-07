@@ -144,7 +144,11 @@ func (a *App) tokenRailChips(c *ui.Context, tokens []modelToken) {
 			// that belonged to the previous token — happen on this path too.
 			a.selectToken(i, false)
 		}
-		chip.Tooltip(fmt.Sprintf("token %d · byte 0x%02X · %q", i, tk.ID, tk.Rune))
+		// The byte strip above the stage prints these ids in decimal (84, 104, …), and this
+		// tooltip printed the same value in hex (0x54). One value, two spellings, in two places
+		// a reader is meant to compare. Decimal first now, with the hex kept because the
+		// tokenising stage's prose talks about the 0–255 byte value.
+		chip.Tooltip(fmt.Sprintf("token %d · byte %d（0x%02X）· %q", i, tk.ID, tk.ID, tk.Rune))
 		if i == a.SelToken && a.RevealRail {
 			chip.ScrollIntoView()
 		}

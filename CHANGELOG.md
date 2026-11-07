@@ -36,6 +36,15 @@
 
 ### Fixed
 
+- **tooltip 是唯一不进入截图与文本断言的界面**（headless 渲染不出 tooltip），逐条核对了全部六处，发现一处格式冲突：
+  - token chip 的 tip 写 `token 0 · byte **0x54** · "T"`（**十六进制**），而第 1 步字节条把同一个字节印成 **十进制 `84`**（`stages.go:1399`）。读者在 tip 里核对 id 时，数字和屏上的对不上
+  - 改成十进制在前、十六进制保留：`token 0 · byte 84（0x54）· "T"`——既与字节条一致，也保住了第 1 步正文讲的「0–255 字节值」这层信息
+  - 其余五处**都对**：侧栏 dot 与行的 tip 都是 `第 %d / %d 步` 且用 `i+1`（与侧栏「1 分词…7 输出」一致)；层/头控件的 tip 用 `layerFrom+1, layerTo+1` 转成 1-based；温度 tip 同理；预设 chip 的 tip 是提示词前 48 字，数据取自当前状态
+  - 补 `TestTooltipNumberingMatchesTheVisibleUI`：扫源码逐个断言六处的编号约定，并额外断言字节条**仍然**印十进制（否则 tip 的「十进制在前」就失去参照）。已验证把 tip 改回 `0x%02X` 会报 `the token tooltip no longer leads with the decimal byte`
+  - 截图 0 变化（tooltip 不渲染）
+
+### Fixed
+
 - **同一个 `#` 符号在界面上有两种含义**：token 条写 `#4`、检查器写 `token #35 / 35`、字节条写 `#35`——都是**token 索引（0-based）**；而第 7 步 Top-N 柱条的 tooltip 写 `id 32 · "u" · **#1**`——这里的 `#1` 是**排名（1-based）**
   - tooltip 恰好是读者核对 id 的地方，`#1` 与界面上其它 `#` 并列出现，很容易被当成 token 索引
   - 排名改用文字：「`id 32 · "u" · 第 1 名`」
