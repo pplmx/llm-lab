@@ -36,6 +36,14 @@
 
 ### Fixed
 
+- 把第 204 轮的教训（「存在于文本中」不等于「仍然被使用」）推广到**全仓其余的源码栅栏**，逐个变异：
+  - `TestNoUnusedFunctionsInApp`（AST 找未使用函数）：加一个未引用函数立刻报错。它已经会**剥离注释**、按**词边界**匹配，所以注释掩护无效；字符串字面量掩护是已知的理论漏洞，当前代码里没有这种情形，未加固
+  - `TestContributingNamesRealTests`：往 CONTRIBUTING.md 加一个不存在的测试名会报错；把全文的 `TestXxx` 全部替换掉，会被「the guide names no tests」拦下——**空集保护有效**
+  - `TestCheckCIRecipeMatchesTheWorkflow`：双向测试。从 workflow 删一步报错，从 justfile 删一步也报错
+  - `TestTokenRailChipLabelsAreZeroBased`：注释掉 `a.tokenRail(c)` 后失败，说明 `token 0` 确实只由 token 条产生，没有被别处的常驻文本冒名顶替
+  - `TestMaskedCellsAreNeverPainted`：把循环条件从 `j <= i` 改成未掩码版本，立刻报错
+  - stepper 的两条标记断言（背景 tint、粗体）匹配的是完整代码行，改名即失败
+  - **六条全部有效**，没有发现第 204 轮那种模式
 - **审计第 192–203 轮加的全部守卫，发现 4 条是无效的**。方法是逐个变异：把守卫针对的实现改坏，看测试会不会失败
   - **12 条行为断言全部有效**——单 token 字节卡、全负图例、位置卡三档、低温余数、第 0 行熵图、层编号、第 0 行 callout、状态行三态、`#` 含义、tooltip 字节、扫描器、跨位置数值一致，逐条改坏都会报错
   - **4 条源码栅栏全部无效**：它们用 `strings.Contains(text, "size-rowzero-1180.png")` 检查截图文件是否还在被渲染。**把文件名改成 `DELETED-size-rowzero-1180.png` 依然包含那个子串**，所以「删掉这张截图」这个最该被抓的动作测不出来
