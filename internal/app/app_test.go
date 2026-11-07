@@ -7946,3 +7946,52 @@ func TestTemperatureIsStatedToBeInferenceOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestTokenizeCalloutQuotesThePromptsOwnCounts checks step 1's new misconception block.
+//
+// Five stages had a callout and the two earliest did not. Step 1's is the belief a reader brings from
+// other tokenisers — one character, one token — and its correction uses this prompt's counts, so it can be
+// verified against the strip above rather than taken on faith, which is what the helper's contract asks
+// for.
+//
+// It only makes sense on a prompt that actually has multibyte characters, so ASCII prompts must not get it.
+func TestTokenizeCalloutQuotesThePromptsOwnCounts(t *testing.T) {
+	read := func(prompt string) (string, int, int) {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 0
+		tr := ui.NewTester(a.View, 1500, 1400)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "个字符编成了") {
+				return s, len(a.Prompt), len(a.Trace.Tokens)
+			}
+		}
+		return "", len(a.Prompt), len(a.Trace.Tokens)
+	}
+
+	// ASCII: no callout, because the belief does not apply.
+	for _, prompt := range []string{"hi", "The transformer reads the tokens and"} {
+		if line, _, _ := read(prompt); line != "" {
+			t.Fatalf("prompt %q is ASCII but got a CJK-token callout: %q", prompt, line)
+		}
+	}
+
+	// Multibyte: the callout cites this prompt's rune and token counts, not constants.
+	for _, prompt := range []string{"注意力", "hi 注意力"} {
+		line, bytes, tokens := read(prompt)
+		if line == "" {
+			t.Fatalf("prompt %q has multibyte characters but no callout", prompt)
+		}
+		runes := len([]rune(prompt))
+		want := fmt.Sprintf("这里 %d 个字符编成了 %d 个 token", runes, tokens)
+		if !strings.Contains(line, want) {
+			t.Fatalf("prompt %q: the callout says %q, want the phrase %q", prompt, line, want)
+		}
+		if bytes == runes {
+			t.Fatalf("prompt %q has equal byte and rune counts, so it does not exercise the case",
+				prompt)
+		}
+	}
+}

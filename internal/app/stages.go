@@ -44,7 +44,7 @@ var lessons = []lesson{
 	{
 		name:    "注意力分数",
 		title:   "Query 与 Key 的点积",
-		body:    "每个位置的向量被三个矩阵投影成 Query（我在找什么）、Key（我能提供什么）、Value（我携带的内容）。第 t 个位置用它的 Query 去点乘前面每个位置的 Key，得到「相关度」。除以 √d_head 是为了让方差稳定，否则维度一高分数就会爆炸，softmax 直接饱和。注意右上三角是空的：因果掩码让模型看不到未来。",
+		body:    "每个位置的向量被三个矩阵投影成 Query（我在找什么）、Key（我能提供什么）、Value（我携带的内容）——这三个矩阵和嵌入表一样，是训练出来的，不是人为设计的。第 t 个位置用它的 Query 去点乘前面每个位置的 Key，得到「相关度」。除以 √d_head 是为了让方差稳定，否则维度一高分数就会爆炸，softmax 直接饱和。注意右上三角是空的：因果掩码让模型看不到未来。",
 		formula: "score[t][s] = (q_t · k_s) / √d_head,  s ≤ t",
 	},
 	{
@@ -282,6 +282,16 @@ func (a *App) stageTokens(c *ui.Context) {
 			}
 		}
 	})
+
+	// The belief is the one a reader arrives with from other tokenisers, and the correction cites
+	// this prompt's own counts so it can be checked against the strip above rather than believed.
+	if bytes, runes := len(tr.Text), utf8.RuneCountInString(tr.Text); bytes > runes {
+		misconception(c,
+			"「一个汉字就是一个 token」",
+			fmt.Sprintf("这里 %d 个字符编成了 %d 个 token：一个汉字在 UTF-8 里占三个字节，"+
+				"字节级分词就把这三个字节各算一个 token。往上看 token 条，每个汉字下面都跟三个格子。",
+				runes, len(tr.Tokens)))
+	}
 
 	card(c, func() {
 		sectionTitle(c, "数据流与形状", "点击任意阶段跳转")
