@@ -980,3 +980,44 @@ func TestHoveringACellShowsItsCardAtEverySize(t *testing.T) {
 		}
 	}
 }
+
+// TestTypingRecomputesWithoutAKey covers the empty state's hint.
+//
+// The hint used to read "输入后按任意阶段键（1–7）继续，顶部的 token 条会立刻出现", which tells a
+// reader that the view waits for a stage key. It does not: promptChanged recomputes on every
+// keystroke, so the token strip appears as they type. The wording sent them to press a key that
+// changes what they are looking at rather than what is computed.
+//
+// This asserts the behaviour the new wording describes — typing alone reaches the forward pass —
+// so the sentence cannot drift away from it again.
+func TestTypingRecomputesWithoutAKey(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = ""
+	a.recompute()
+	a.Step = 2
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	if len(a.Trace.Tokens) != 0 {
+		t.Fatalf("the empty prompt already has %d tokens", len(a.Trace.Tokens))
+	}
+
+	if err := tr.Click("输入"); err != nil {
+		t.Fatal(err)
+	}
+	tr.Frame()
+	tr.TypeKey(0, ui.KeyH, "h")
+	tr.TypeKey(0, ui.KeyI, "i")
+	tr.Frame()
+
+	if a.Prompt != "hi" {
+		t.Fatalf("typing produced %q", a.Prompt)
+	}
+	if len(a.Trace.Tokens) != 2 {
+		t.Fatalf("typing \"hi\" left %d tokens; the view does not recompute without a key",
+			len(a.Trace.Tokens))
+	}
+	if a.Step != 2 {
+		t.Fatalf("the stage changed to %d while typing; the key handler should not fire here",
+			a.Step)
+	}
+}

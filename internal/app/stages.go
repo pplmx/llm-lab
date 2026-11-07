@@ -130,7 +130,12 @@ func (a *App) emptyPromptCard(c *ui.Context) {
 		})
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "提示：").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
-			ui.Text(c, "输入后按任意阶段键（1–7）继续，顶部的 token 条会立刻出现。").
+			// The old wording was "输入后按任意阶段键（1–7）继续，顶部的 token 条会立刻出现",
+			// which reads as though the view waits for a key. It does not: promptChanged
+			// recomputes on every keystroke, so the strip appears as the reader types and
+			// the stage keys only switch stage. Measured: typing "hi" from empty reaches two
+			// tokens with no key pressed at all.
+			ui.Text(c, "边打边重算，顶部的 token 条会立刻出现；1–7 或方向键可以切到别的阶段。").
 				FontSize(fontMicro).TextColor(colFaint)
 		})
 	})
