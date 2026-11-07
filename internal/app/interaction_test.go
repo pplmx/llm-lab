@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"fmt"
 	"testing"
 	"time"
@@ -437,5 +438,76 @@ func TestPlaybackStopsAtTheEnd(t *testing.T) {
 	}
 	if a.Step != len(lessons)-1 {
 		t.Fatalf("playback stopped on stage %d, not the last one", a.Step)
+	}
+}
+
+// TestTabDrawsAFocusRing covers the keyboard path the app never tested.
+//
+// The goal for this tool names "keyboard operable, with feedback" as one of the things
+// it must do, and every shortcut has a test — but Tab, the key that walks between
+// controls and is the only way a keyboard-only reader reaches the input field, had
+// none. Measured: pressing Tab changes over 2000 bytes of the frame, which is the
+// focus ring appearing. If that ever stopped being drawn, a keyboard reader would be
+// moving an invisible cursor through the controls.
+//
+// The assertion is on the pixels rather than on any state, because the ring is what
+// the reader actually sees.
+func TestTabDrawsAFocusRing(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	before := append([]byte(nil), tr.Image().Pix...)
+
+	tr.Key(0, ui.KeyTab)
+	after := tr.Image().Pix
+
+	const minChangedPixels = 200 // conservative: the measured figure is ~2000 bytes
+	changed := 0
+	for i := 0; i+3 < len(before) && i+3 < len(after); i += 4 {
+		if before[i] != after[i] || before[i+1] != after[i+1] || before[i+2] != after[i+2] {
+			changed++
+			if changed >= minChangedPixels {
+				break
+			}
+		}
+	}
+	if changed < minChangedPixels {
+		t.Fatalf("Tab changed %d pixels; the focus ring is not being drawn, so a "+
+			"keyboard reader would be moving an invisible cursor", changed)
+	}
+
+	// Tab must not also act as a shortcut: the stage and playback state are what the
+	// other keys touch, and a focus move should be invisible to them.
+	if a.Step != 0 {
+		t.Fatalf("Tab changed the stage to %d", a.Step)
+	}
+	if a.Playing {
+		t.Fatal("Tab started playback")
+	}
+}
+
+// TestTabWalksThroughMoreThanOneControl checks the focus actually moves on, rather
+// than cycling between the first control and nothing.
+func TestTabWalksThroughMoreThanOneControl(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	// Each Tab should land on a different control, so consecutive frames differ.
+	var frames [][]byte
+	frames = append(frames, append([]byte(nil), tr.Image().Pix...))
+	for i := 0; i < 4; i++ {
+		tr.Key(0, ui.KeyTab)
+		frames = append(frames, append([]byte(nil), tr.Image().Pix...))
+	}
+	distinct := 1
+	for i := 1; i < len(frames); i++ {
+		if !bytes.Equal(frames[i], frames[i-1]) {
+			distinct++
+		}
+	}
+	if distinct < 3 {
+		t.Fatalf("four Tab presses produced %d distinct frames; focus is not walking "+
+			"through the controls", distinct)
 	}
 }
