@@ -1,10 +1,10 @@
 package app
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
-
-	"fmt"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -147,4 +147,36 @@ func TestResidualStageReadsTheSelectedLayersInput(t *testing.T) {
 // fmtRange is the strip caption's min/max line, which every vector strip prints.
 func fmtRange(lo, hi float32) string {
 	return fmt.Sprintf("min %+.2f · max %+.2f", lo, hi)
+}
+
+// TestTemperatureNoteFollowsItsRange keeps the slider's tooltip derived from the
+// range it describes.
+//
+// The layer and head controls build their tooltips from layerFrom/layerTo and
+// headFrom/headTo. The temperature one was a literal — "只有第 7 步的 softmax 除以温度" —
+// which happened to match tempFrom = 6 but would not have followed a change to it,
+// and nothing would have caught that: the tooltip is not in Texts(), so no assertion
+// could see it drift.
+func TestTemperatureNoteFollowsItsRange(t *testing.T) {
+	// The source must not carry the literal any more.
+	src, err := os.ReadFile("app.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), `"只有第 7 步的 softmax 除以温度"`) {
+		t.Fatal("the temperature tooltip is still a hard-coded string; it must be " +
+			"built from tempFrom/tempTo like the other two controls")
+	}
+	if !strings.Contains(string(src), "tempFrom+1") {
+		t.Fatal("the temperature tooltip does not derive its stage number from tempFrom")
+	}
+
+	// And the range it describes must still be the single sampling stage.
+	if tempFrom != tempTo {
+		t.Fatalf("the temperature range became %d–%d, so the note's single-stage "+
+			"wording is stale", tempFrom, tempTo)
+	}
+	if tempFrom != 6 {
+		t.Fatalf("the temperature stage moved to %d; the sampling stage is 7", tempFrom+1)
+	}
 }

@@ -799,8 +799,14 @@ func (a *App) tempControl(c *ui.Context) {
 			a.LastSample = ""
 		}
 	}
-	a.controlGroup(c, fmt.Sprintf("温度 %.2f", a.Temp), tempFrom, tempTo,
-		"只有第 7 步的 softmax 除以温度", build)
+	// The other two controls build this sentence from their own range constants;
+	// this one was hard-coded, so changing tempFrom would have left the tooltip
+	// pointing at a stage the slider no longer applies to.
+	note := fmt.Sprintf("只有第 %d 步的 softmax 除以温度", tempFrom+1)
+	if tempFrom != tempTo {
+		note = fmt.Sprintf("只有第 %d–%d 步的 softmax 除以温度", tempFrom+1, tempTo+1)
+	}
+	a.controlGroup(c, fmt.Sprintf("温度 %.2f", a.Temp), tempFrom, tempTo, note, build)
 }
 
 // ---------------------------------------------------------------- step bar
