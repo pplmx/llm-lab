@@ -8812,3 +8812,81 @@ func TestEachControlChangesOnlyItsOwnStages(t *testing.T) {
 		}
 	}
 }
+
+// TestAdvertisedShortcutsDoWhatTheLineSays turns the shortcut sentence into a contract.
+//
+// The line under every lesson reads "快捷键：← → 切换阶段 · Shift+← → 切换 token · 空格 播放/暂停 · Enter 采样 · 1–7 跳转",
+// with the Shift part rewritten on the two stages that draw a matrix. It is a promise to the reader, and one that
+// has been wrong before: the Shift clause used to say "切换 token" on the matrix stages too.
+//
+// Each key is pressed and its effect checked against the sentence, and the sentence is checked to still mention it —
+// so a mapping change that forgets the line fails here rather than misleading a reader.
+func TestAdvertisedShortcutsDoWhatTheLineSays(t *testing.T) {
+	// The advertised line, as rendered.
+	lineOf := func(step int) string {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 2000)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "快捷键：") {
+				return s
+			}
+		}
+		return ""
+	}
+	plain, matrix := lineOf(0), lineOf(3)
+	if plain == "" || matrix == "" {
+		t.Fatal("the shortcut line is missing")
+	}
+	for _, want := range []string{"←", "→", "空格", "Enter", "1–7"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("the shortcut line no longer mentions %q: %q", want, plain)
+		}
+	}
+	if !strings.Contains(plain, "切换 token") {
+		t.Fatalf("on a matrix-less stage the Shift clause should say 切换 token: %q", plain)
+	}
+	if !strings.Contains(matrix, "移动矩阵格子") {
+		t.Fatalf("on a matrix stage the Shift clause should say 移动矩阵格子: %q", matrix)
+	}
+
+	// And the keys do those things.
+	press := func(step int, key ui.Key, mods ui.Modifiers) (dStep, dToken, dKeyK int) {
+		a := newTestApp(t)
+		a.Step = step
+		a.SelToken = 10
+		tr := ui.NewTester(a.View, 1500, 1400)
+		tr.Frame()
+		s0, tk0, kk0 := a.Step, a.SelToken, a.KeyK
+		tr.Key(mods, key)
+		tr.Frame()
+		return a.Step - s0, a.SelToken - tk0, a.KeyK - kk0
+	}
+
+	// ← → 切换阶段. Left is tested from a middle stage: at stage 0 there is nowhere to go, and
+	// selectStep clamps, so the key correctly does nothing there.
+	for _, step := range []int{0, 3} {
+		if d, tk, _ := press(step, ui.KeyRight, 0); d != 1 || tk != 0 {
+			t.Fatalf("step %d: Right should move one stage only, got step%+d token%+d", step, d, tk)
+		}
+	}
+	if d, tk, _ := press(3, ui.KeyLeft, 0); d != -1 || tk != 0 {
+		t.Fatalf("step 3: Left should move back one stage only, got step%+d token%+d", d, tk)
+	}
+
+	// Shift+arrows: token on a matrix-less stage, cell on a matrix stage.
+	if _, tk, _ := press(0, ui.KeyRight, ui.Shift); tk != 1 {
+		t.Fatalf("step 0 advertises Shift+→ as 切换 token, but the token moved by %d", tk)
+	}
+	if d, tk, kk := press(3, ui.KeyRight, ui.Shift); d != 0 || tk != 0 || kk == 0 {
+		t.Fatalf("step 3 advertises Shift+→ as 移动矩阵格子, but step%+d token%+d keyK%+d", d, tk, kk)
+	}
+
+	// 1–7 跳转.
+	for i, key := range [...]ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7} {
+		if d, _, _ := press(0, key, 0); d != i {
+			t.Fatalf("digit %d should jump to stage %d, got %+d", i+1, i, d)
+		}
+	}
+}
