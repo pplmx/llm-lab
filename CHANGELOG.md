@@ -36,6 +36,13 @@
 
 ### Fixed
 
+- 第 2 步的位置向量卡标题和副标题**都是写死的**：「位置向量随位置变化」+「取前四个位置的 P[t]」。而这张表**每个位置一行**，行数取决于提示词长度
+  - 实测：`a` → 只有 1 行，`hi` → 2 行，整句 → 4 行（上限）
+  - 单 token 时，卡片一边说「**随位置变化**」（一行没法比较），一边说「**取前四个位置**」（屏上只有 1 个）
+  - 改成三档：1 个位置时标题为「**位置向量是每个位置一行**」、副标题「这个提示词只有 1 个位置」；2–3 个位置时副标题「这个提示词只有 N 个位置，都列在这里」；≥4 时才用原来的「取前四个位置的 P[t]」
+  - 补 `TestPositionCardMatchesHowManyPositionsThePromptHas`：三种情况逐一断言，并单独断言单 token 时不得出现「取前四个位置」。已验证改回固定文案会报 `prompt "a" (1 tokens): the position card does not say "位置向量是每个位置一行"`
+  - **41 张截图都没覆盖这条**（最短的提示词是 `hi`，2 个 token），补 `size-onetoken-1180.png`，截图集 41 → **42 张**
+  - 补 `TestShortPromptBranchesAreSnapshot` 把这张和上一轮那张全负矩阵截图一起锁住
 - 清理四处**死代码**（定义了但从未被调用）
   - `heatmap()` 是 `heatmapAxed(..., false)` 的薄封装，两个真实调用点都直接传 `true`——它描述的是一种界面从不渲染的模式，而读者查「这个图怎么画」时最先会看到它
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
