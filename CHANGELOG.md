@@ -36,6 +36,15 @@
 
 ### Added
 
+- 补 `TestClearingThePromptResetsEverythingThatPointedIntoIt`：把「清空提示词」这一个动作**同时让哪些状态失效**收在一处验证
+  - `App` 里有四个字段是**指向当前提示词的索引**：选中的 token、键盘所在的矩阵格子、指针所在的格子、上一次采样的描述。提示词没了，它们都不再有意义——残留的 `SelToken` 会指到数组外，残留的 `LastSample` 会描述一段读者已看不见的文本
+  - 实测清空后：`SelToken = -1`、`KeyQ/KeyK = -1`、`HoverQ/HoverK = -1`、`LastSample = ""`，全部归位
+  - **同时断言一件不该重置的事**：`Step` 保持不动。清空提示词不是「回到第一步」，读者站在哪一页由他自己决定
+  - 再输一个字符后，所有状态重新有效
+  - 已验证：把 `recompute` 里的 `a.SelToken = -1` 改成保留旧值，测试报 `SelToken is 10 with no tokens to select`
+
+### Added
+
 - 补一条**逐字输入**的端到端测试 `TestTypingBuildsThePipelineOneKeyAtATime`。这是最基本的用户动作，但此前只测过「打完 `hi` 后 token 数是 2」
   - 逐字符输入 `Hi there`（9 次击键），**每一次**都检查：token 数等于已输入字符数、空态卡片已消失、阶段 1 仍显示讲解卡片、且 `T = N` 的数字与实际一致
   - 另外覆盖**单 token 状态**（输入一个 `x`）：七个阶段全部能渲染、不退回空态、检查器仍命名所属阶段。这是每句话都要经过的状态，而它正是好几张卡片分支的特殊情形（1×1 分数矩阵、没有可比对象的注意力行、只有一项的残差链）

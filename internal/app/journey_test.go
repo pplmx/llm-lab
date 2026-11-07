@@ -324,3 +324,57 @@ func TestTypingBuildsThePipelineOneKeyAtATime(t *testing.T) {
 		}
 	}
 }
+
+// TestClearingThePromptResetsEverythingThatPointedIntoIt is the lifecycle rule from CONTRIBUTING, checked in one place.
+//
+// The app keeps several pieces of state that are indices into the current prompt: which token is selected, which matrix
+// cell the keyboard is on, which cell the pointer is over, and the last sample's description. None of them mean anything
+// once the prompt they index is gone, and a stale one is not harmless — SelToken would point past the end, and LastSample
+// would describe a draw from text the reader no longer sees.
+//
+// Each has a test of its own for the action that should clear it. This covers the one action that invalidates all of them
+// at once, and states the one thing that must NOT reset: the stage. Clearing the prompt is not "go back to the start".
+func TestClearingThePromptResetsEverythingThatPointedIntoIt(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 5, 3
+	a.HoverQ, a.HoverK = 4, 2
+	a.LastSample = `"x" (id 1, p=0.500)`
+
+	a.applyPrompt("")
+	if len(a.Trace.Tokens) != 0 {
+		t.Fatalf("the cleared prompt still has %d tokens", len(a.Trace.Tokens))
+	}
+
+	if a.SelToken >= 0 {
+		t.Errorf("SelToken is %d with no tokens to select", a.SelToken)
+	}
+	if a.KeyQ >= 0 || a.KeyK >= 0 {
+		t.Errorf("the keyboard cell is still %d,%d with no matrix", a.KeyQ, a.KeyK)
+	}
+	if a.HoverQ >= 0 || a.HoverK >= 0 {
+		t.Errorf("the hovered cell is still %d,%d with no matrix", a.HoverQ, a.HoverK)
+	}
+	if a.LastSample != "" {
+		t.Errorf("the last sample still reads %q, describing a draw from text that is gone", a.LastSample)
+	}
+
+	// The stage is a position in the lesson, not an index into the prompt.
+	if a.Step != 2 {
+		t.Errorf("clearing the prompt moved the reader from stage 3 to stage %d", a.Step+1)
+	}
+
+	// And the frame has to agree: the empty state, on the stage the reader was already on.
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("还没有提示词") {
+		t.Error("the frame does not show the empty state after clearing")
+	}
+
+	// Typing one character brings every one of them back to a valid state.
+	a.applyPrompt("x")
+	if a.SelToken < 0 || a.SelToken >= len(a.Trace.Tokens) {
+		t.Fatalf("after typing, SelToken is %d and there are %d tokens", a.SelToken, len(a.Trace.Tokens))
+	}
+}
