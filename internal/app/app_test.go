@@ -6171,3 +6171,70 @@ func TestSoftmaxLessonClaimsMatchTheAttention(t *testing.T) {
 	}
 	_ = secondHits
 }
+
+// TestScoreColourRangeMatchesTheDocumentedFigures pins the range that the README and the
+// stage's own comment quote.
+//
+// Both said "5.4–8.3" (the comment said 5.4 to 8.2). Measured now: layer 0 spans 4.6–12.5
+// and layer 1 spans 8.1–15.2 across the bundled prompts. The old figures were neither the
+// whole range nor any single layer's — 5.4–8.3 is close to layer 0 on the Chinese prompt
+// alone, which looks like a measurement from an earlier checkpoint or an earlier
+// measurement that only covered one layer.
+//
+// The reader is told this number is a moving fact, so it has to be the moving fact that is
+// actually there. The test checks both layers against the documented bounds rather than
+// hard-coding each value, since the figures move whenever the weights do.
+func TestScoreColourRangeMatchesTheDocumentedFigures(t *testing.T) {
+	lo := [2]float64{1e9, 1e9}
+	hi := [2]float64{-1e9, -1e9}
+	for _, p := range promptPresets {
+		a := newTestApp(t)
+		a.Prompt = p.prompt
+		a.recompute()
+		if a.Trace == nil || len(a.Trace.Tokens) == 0 {
+			continue
+		}
+		for li := range a.Trace.Layers {
+			if li >= len(lo) {
+				break
+			}
+			for h := range a.Trace.Layers[li].Heads {
+				sc := scoreColorScale(a.Trace.Layers[li].Heads[h])
+				if sc <= 0 {
+					continue
+				}
+				lo[li] = math.Min(lo[li], sc)
+				hi[li] = math.Max(hi[li], sc)
+			}
+		}
+	}
+	if lo[0] >= 1e9 || hi[0] <= -1e9 {
+		t.Skip("no scored matrices in the presets")
+	}
+
+	// The documented figures, one decimal place as the README states them.
+	//
+	// Layer 0: 4.6–12.5, layer 1: 8.1–15.2.
+	for li, want := range [][2]float64{{4.6, 12.5}, {8.1, 15.2}} {
+		if li >= len(lo) || hi[li] <= -1e9 {
+			continue
+		}
+		if got := math.Round(lo[li]*10) / 10; math.Abs(got-want[0]) > 0.11 {
+			t.Fatalf("layer %d's smallest colour scale is %.1f, the README says %.1f",
+				li, got, want[0])
+		}
+		if got := math.Round(hi[li]*10) / 10; math.Abs(got-want[1]) > 0.11 {
+			t.Fatalf("layer %d's largest colour scale is %.1f, the README says %.1f",
+				li, got, want[1])
+		}
+	}
+
+	// And the README must carry these numbers, not the old ones.
+	doc := readREADME(t)
+	if !strings.Contains(doc, "第 0 层 4.6–12.5") || !strings.Contains(doc, "第 1 层 8.1–15.2") {
+		t.Fatal("the README does not state the measured per-layer ranges")
+	}
+	if strings.Contains(doc, "5.4–8.3") {
+		t.Fatal("the README still carries the stale 5.4–8.3 range")
+	}
+}
