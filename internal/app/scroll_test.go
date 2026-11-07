@@ -68,3 +68,40 @@ func TestScrollingAStageKeepsTheHeaderOnScreen(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryStageKeepsItsHeaderWhileScrolled is the same claim for all seven stages, not just the
+// one long enough to be noticed.
+//
+// Round 183 measured step 5 because it is the tallest. The other stages scroll too — at 1180×720
+// step 4's viewport holds about 870 DIP of content — and a header that scrolled on one of them
+// would be the same defect there.
+func TestEveryStageKeepsItsHeaderWhileScrolled(t *testing.T) {
+	for step := 0; step < len(lessons); step++ {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+
+		title, ok := tr.Find(lessons[step].title)
+		if !ok {
+			t.Fatalf("stage %d: the stage title is not drawn", step)
+		}
+
+		tr.Scroll(600, 500, 0, 5000)
+		tr.Frame()
+		scrolled := a.Scroll.Y
+
+		after, ok := tr.Find(lessons[step].title)
+		if !ok {
+			t.Fatalf("stage %d: the stage title disappeared after scrolling %.0f DIP",
+				step, scrolled)
+		}
+		if dy := after.Y - title.Y; dy < -20 || dy > 20 {
+			t.Fatalf("stage %d: the title moved %.0f DIP when the content scrolled %.0f",
+				step, dy, scrolled)
+		}
+		if after.Y < 0 || after.Y > 720 {
+			t.Fatalf("stage %d: the title ends at y=%.0f, outside the window", step, after.Y)
+		}
+	}
+}
