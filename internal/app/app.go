@@ -247,7 +247,18 @@ func (a *App) cellCursor() (q, k int) {
 // for the keyboard to walk: step 3 (注意力分数) draws the score matrix and step
 // 4 (Softmax) draws the attention matrix. The other five stages have no matrix,
 // so the arrow keys there go on moving the token selection.
-func (a *App) hasMatrix() bool { return a.Step == 2 || a.Step == 3 }
+// hasMatrix reports whether the current stage is drawing a heatmap the keyboard and pointer
+// can act on. It is about the matrix being *there*, not about which stage this is: with an
+// empty prompt the two attention stages draw no cells at all, yet they still advertised
+// "⇧ + 方向键 移动格子 · 点击固定" while stepCell refused every press. A hint for a control
+// that does nothing is worse than no hint — the reader tries the keys, nothing moves, and
+// they conclude the app is broken rather than empty.
+func (a *App) hasMatrix() bool {
+	if a.Step != 2 && a.Step != 3 {
+		return false
+	}
+	return a.Trace != nil && len(a.Trace.Tokens) > 0
+}
 
 // stepCell moves the keyboard's attention cell by (dq, dk). Only the stages
 // that draw a heatmap have cells; elsewhere the keys do nothing, which is why

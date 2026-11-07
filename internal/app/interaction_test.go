@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -674,5 +675,52 @@ func TestSamplingStopsPlayback(t *testing.T) {
 	// And the record of what was drawn has to survive, unlike the other two paths.
 	if a.LastSample == "" {
 		t.Fatal("the sample record was cleared, so the card cannot show what was drawn")
+	}
+}
+
+// TestEmptyAttentionStageDoesNotAdvertiseCellKeys covers the empty state on the two stages
+// that draw a matrix.
+//
+// hasMatrix answered only "is this stage 2 or 3", so with an empty prompt those stages still
+// printed "⇧ + 方向键 移动格子 · 点击固定" in the step bar and "Shift+← → ↑ ↓ 移动矩阵格子" in
+// the lesson footer — while stepCell returned immediately on zero tokens. A reader following
+// the hint pressed the keys and nothing moved, which reads as a broken app rather than an
+// empty one.
+//
+// hasMatrix now means "there is a matrix to act on". The hint goes away, and the left/right
+// arrows fall through to stepToken, so the footer correctly says "切换 token" instead.
+func TestEmptyAttentionStageDoesNotAdvertiseCellKeys(t *testing.T) {
+	for _, step := range []int{2, 3} {
+		a := newTestApp(t)
+		a.Prompt = ""
+		a.recompute()
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "移动格子") {
+				t.Fatalf("stage %d with an empty prompt still says the arrows move a "+
+					"cell: %q", step, s)
+			}
+			if strings.Contains(s, "移动矩阵格子") {
+				t.Fatalf("stage %d's footer still describes the matrix keys: %q", step, s)
+			}
+		}
+
+		// And the stage must still be usable: with a prompt, the hint comes back.
+		b := newTestApp(t)
+		b.Step = step
+		bt := ui.NewTester(b.View, 1500, 940)
+		bt.Frame()
+		var sawHint bool
+		for _, s := range bt.Texts() {
+			if strings.Contains(s, "移动格子") {
+				sawHint = true
+			}
+		}
+		if !sawHint {
+			t.Fatalf("stage %d no longer advertises the cell keys even with a prompt", step)
+		}
 	}
 }

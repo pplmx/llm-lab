@@ -68,7 +68,9 @@ func TestRenderSizes(t *testing.T) {
 	// is not the tokenising one, and the inspector's empty copy.
 	a.Prompt = ""
 	a.recompute()
-	for _, step := range []int{0, 4} {
+	// Steps 2 and 3 are the matrix stages: with no tokens they must not advertise the
+	// cell keys, and nothing else renders them empty.
+	for _, step := range []int{0, 2, 4} {
 		a.Step = step
 		writeSnapshot(t, dir, fmt.Sprintf("size-emptyprompt-1180-step%d.png", step),
 			ui.Render(a.View, 1180, 720, 1))
