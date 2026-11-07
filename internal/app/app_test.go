@@ -7037,3 +7037,33 @@ func TestOnlyWarningsUseTheWarmLabelColour(t *testing.T) {
 		t.Fatal("the LN(x) label lost its result colour")
 	}
 }
+
+// TestDataColoursAreNotUsedOnText keeps the palette's two kinds of colour apart.
+//
+// theme.go documents two families. Accents and text colours — colAccent, colAccent2, colMuted,
+// colFaint — say what a thing is. Data colours — colPos, colNeg, colGreen, colWarm — say what
+// a value is, and belong in charts: the red/blue of a signed vector, a bar fill, the warm end
+// of the score ramp.
+//
+// Using a data colour on a label makes the label read as a reading off a chart. That is exactly
+// what happened to LN(x) last round, which was warm on a card where warm means a score.
+//
+// colPos, colNeg and colGreen are never used on text today. colWarm is, but only for warnings;
+// TestOnlyWarningsUseTheWarmLabelColour covers those. This test holds the line for the three
+// that have no text use at all.
+func TestDataColoursAreNotUsedOnText(t *testing.T) {
+	files := []string{"app.go", "stages.go", "widgets.go", "theme.go"}
+	for _, dataColour := range []string{"colPos", "colNeg", "colGreen"} {
+		for _, name := range files {
+			src, err := os.ReadFile(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := strings.Count(string(src), "TextColor("+dataColour+")"); n > 0 {
+				t.Fatalf("%s uses %s on text %d time(s); that colour means a value in a chart, "+
+					"not a label — use a text colour or explain why the exception is right",
+					name, dataColour, n)
+			}
+		}
+	}
+}
