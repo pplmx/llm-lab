@@ -1226,6 +1226,14 @@ func (a *App) sampleNext() {
 	// set above — that record is the point of this path.
 	a.stopPlayback()
 	a.recompute()
+	// Select what was just produced. recompute keeps the reader's old token when the prompt is extended,
+	// which is right for typing — a keystroke should not move the selection — but sampling is the one action
+	// where the reader asked for new content, and on six of the seven stages the only other sign it happened
+	// was the token count in the status line. Selecting it lights the chip and makes the inspector describe
+	// the byte that was just drawn.
+	if n := len(a.Trace.Tokens); n > 0 {
+		a.SelToken = n - 1
+	}
 }
 
 // topBars keeps the n largest rows, then restores their original order so the

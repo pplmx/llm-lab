@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"image"
+	"strings"
 	"testing"
 
 	"github.com/egoist/mygo/ui"
@@ -426,4 +427,60 @@ func TestStageSwitchKeepsTheTokenAndDropsTheCell(t *testing.T) {
 	if a.SelToken != 10 {
 		t.Fatalf("moving between matrix stages moved the selection to token %d", a.SelToken)
 	}
+}
+
+// TestSamplingSelectsWhatItProduced covers the one action where new content appears.
+//
+// recompute keeps the reader's selected token when the prompt is extended, which is right for typing: a keystroke
+// should not move the selection out from under someone reading a row. Sampling is the exception — the reader pressed a
+// button asking for a new byte, and before this the only sign it had happened on six of the seven stages was the token
+// count ticking up in the status line. The new chip was inert, the inspector still described the old token, and the
+// record of the draw is only printed on the output stage.
+//
+// So sampling selects the token it just made. This checks that on both a short prompt and one at the context ceiling,
+// where truncation shifts every index.
+func TestSamplingSelectsWhatItProduced(t *testing.T) {
+	check := func(name, prompt string, step int) {
+		t.Helper()
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = step
+		// Deliberately not the last token: if sampling left it alone, this is what would survive.
+		a.SelToken = 0
+		before := len(a.Trace.Tokens)
+
+		a.sampleNext()
+
+		after := len(a.Trace.Tokens)
+		// Below the ceiling the prompt grows by one byte and so does the token list; at the ceiling the
+		// window stays full and the oldest byte falls off instead.
+		if want := before + 1; before < a.W.Config.Ctx && after != want {
+			t.Fatalf("%s: sampling took the token count from %d to %d, want %d", name, before, after, want)
+		}
+		if before >= a.W.Config.Ctx && after != a.W.Config.Ctx {
+			t.Fatalf("%s: sampling at the ceiling left %d tokens, want the window's %d",
+				name, after, a.W.Config.Ctx)
+		}
+		if a.SelToken != after-1 {
+			t.Fatalf("%s: after sampling there are %d tokens and the selection is %d; it should be the one just "+
+				"produced", name, after, a.SelToken)
+		}
+		if a.LastSample == "" {
+			t.Fatalf("%s: sampling recorded nothing", name)
+		}
+
+		// The chip has to be in the frame and marked as selected, so the reader sees where the new byte is.
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		if r, ok := tr.Find(fmt.Sprintf("token %d", a.SelToken)); !ok {
+			t.Fatalf("%s: the selected chip is not in the frame", name)
+		} else if r.X < 0 || r.X > 1400 {
+			t.Fatalf("%s: the selected chip sits at x=%.0f, outside the strip", name, r.X)
+		}
+	}
+
+	check("short prompt", "The", 0)
+	check("mid stage", "The transformer", 2)
+	check("at the ceiling", strings.Repeat("x", 64), 6)
 }

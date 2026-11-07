@@ -34,6 +34,16 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Fixed
+
+- **采样之后没有选中新生成的那个 token**，导致在七个阶段里的六个**几乎看不到采样发生了什么**
+  - 实测（短提示词，第 3 步）：点「采样下一个 token」后 token 数 3 → 4，但 `SelToken` 仍是 1（新的是 3）。画面上唯一的变化是状态行从 `3 tokens` 变成 `4 tokens`——token 条上那个新格子没有任何标记，检查器还在描述旧 token，而「上一次采样」的记录只印在第 7 步
+  - 根因是 `recompute` 的「提示词被扩展」分支会**保持读者原来选的那个 token**——这对**打字**是对的（敲一个字符不该让选中跳走），但**采样是唯一一个读者明确要求「造出新内容」的动作**
+  - 修法：`sampleNext` 在 `recompute` 之后选中最后一个 token。现在采样后 token 条的对应格子高亮、检查器描述刚生成的那个字节
+  - 补 `TestSamplingSelectsWhatItProduced`：短提示词、中间阶段、**到达上下文上限**三种情形，都要求 `SelToken == len(Tokens)-1`；并检查该格子确实在画面内
+  - 已验证：去掉新加的那行赋值，测试报 `after sampling there are 4 tokens and the selection is 0; it should be the one just produced`
+  - **43 张截图全无变化**——截图渲染的是初始状态，从不触发采样。这个行为改动只有测试能守住
+
 ### Added
 
 - 补 `TestStageSwitchKeepsTheTokenAndDropsTheCell`：切换阶段时**三类位置状态各有各的处理**，此前只是零散地间接覆盖
