@@ -348,6 +348,8 @@ func (a *App) clampPinnedCell() {
 // cell is a deliberate selection that should survive. Sampling used to drop the
 // pin silently — the reader set it, pressed 采样并续写, and the card under it
 // changed from "已固定" back to nothing.
+// clearPointer drops every hover state but leaves a pinned cell alone: the pointer
+// leaving the matrix should not unpin what a click fixed.
 func (a *App) clearPointer() {
 	a.HoverQ, a.HoverK = -1, -1
 	a.HoverDimIn = -1
