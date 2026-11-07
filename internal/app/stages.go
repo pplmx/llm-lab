@@ -1184,8 +1184,19 @@ func (a *App) stageOutput(c *ui.Context) {
 		// %.4f would print 0.0000 for a tail that shares 0.00002%, which reads as
 		// nothing at all. The rows below already switch to scientific notation
 		// when a probability gets small; the summary follows the same rule.
+		// A tail that rounds to zero in float32 is zero, not "0.0e+00%". At T=0.1 the top
+		// twelve carry the whole distribution and the remainder is 5.6e-17 — formatting that
+		// with scientific notation printed a malformed-looking number for what is simply no
+		// probability left.
+		// Below this the printed figure is float32 residue, not a probability. At T=0.1 the top
+		// twelve carry everything and the remainder lands at 5.6e-17; at T=0.3 it is 1.5e-19.
+		// Formatting those in scientific notation presents arithmetic noise as a measurement —
+		// "1.5e-17%" reads like a very small but real share.
 		restText := fmt.Sprintf("%.4f%%", rest*100)
-		if rest*100 < 0.01 {
+		switch {
+		case rest*100 < 1e-9:
+			restText = "0%"
+		case rest*100 < 0.01:
 			restText = fmt.Sprintf("%.1e%%", rest*100)
 		}
 		sectionTitle(c, fmt.Sprintf("Top-%d 概率", topN),

@@ -5775,12 +5775,21 @@ func TestTop12TailSwitchesFormatBySize(t *testing.T) {
 		return share * 100, printed
 	}
 
-	// Cold: the tail is vanishing, so the percentage must be written in scientific
-	// notation — "%.4f" would round it to 0.0000%.
-	smallShare, smallText := tailShare(0.5)
+	// Small but real: the tail is vanishing yet still a probability, so it must be written in
+	// scientific notation — "%.4f" would round it to 0.0000%.
+	//
+	// T=0.5 used to be the sample here, but at that temperature the top twelve carry the whole
+	// distribution and the leftover is float32 residue (5.6e-19 as a percentage). That residue is
+	// now reported as 0%, so the case needs a temperature where the tail is genuinely small and
+	// genuinely non-zero: T=0.8 gives about 1.3e-05%.
+	smallShare, smallText := tailShare(0.8)
 	if smallShare >= 0.01 {
-		t.Fatalf("at T=0.5 the tail is %.4f%%, not small enough to test the "+
+		t.Fatalf("at T=0.8 the tail is %.4f%%, not small enough to test the "+
 			"scientific branch", smallShare)
+	}
+	if smallShare < 1e-9 {
+		t.Fatalf("at T=0.8 the tail is %.3e%%, which is float residue rather than a "+
+			"probability; pick a warmer temperature", smallShare)
 	}
 	if !strings.Contains(smallText, "e-") {
 		t.Fatalf("a tail of %.4f%% is printed as %q, which rounds to 0.0000%%",
@@ -7424,5 +7433,50 @@ func TestPositionCardMatchesHowManyPositionsThePromptHas(t *testing.T) {
 	}
 	if !tr.HasText("这个提示词只有 1 个位置") {
 		t.Fatal("a one-token prompt does not say how many positions it has")
+	}
+}
+
+// TestTailProbabilityIsNotFormattedAsResidue keeps arithmetic noise out of the readout.
+//
+// At low temperature the top twelve tokens carry the whole distribution and the sum of the other 244
+// lands wherever float32 addition leaves it: 5.6e-17 at T=0.1, 1.5e-19 at T=0.3. Formatting those in
+// scientific notation printed "1.5e-17%", which reads as a very small but real share of probability
+// rather than as "nothing left".
+//
+// Below 1e-9 percent the readout says 0%. Above it the figure is a real tail and is kept — T=0.8
+// prints 1.3e-05%.
+func TestTailProbabilityIsNotFormattedAsResidue(t *testing.T) {
+	tailOf := func(temp float64) string {
+		a := newTestApp(t)
+		a.Temp = temp
+		a.recompute()
+		a.Step = 6
+		tr := ui.NewTester(a.View, 1500, 1400)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "其余 244 个合计") {
+				return s
+			}
+		}
+		return ""
+	}
+
+	for _, temp := range []float64{0.1, 0.3, 0.5} {
+		line := tailOf(temp)
+		if line == "" {
+			t.Fatalf("temp %.1f: the top-N heading is gone", temp)
+		}
+		if !strings.Contains(line, "合计 0%") {
+			t.Fatalf("temp %.1f: the exhausted tail is not reported as 0: %q", temp, line)
+		}
+	}
+
+	// A tail that really is small but non-zero must still be shown, not rounded away.
+	line := tailOf(0.8)
+	if strings.Contains(line, "合计 0%") {
+		t.Fatalf("temp 0.8 still has a non-zero tail (1.3e-05%%) but it reads as %q", line)
+	}
+	if !strings.Contains(line, "e-") {
+		t.Fatalf("temp 0.8: a small tail should stay in scientific notation, got %q", line)
 	}
 }
