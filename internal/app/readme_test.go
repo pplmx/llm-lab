@@ -4,6 +4,7 @@ import (
 	"image"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -371,5 +372,32 @@ func TestReadmeNumbersMatchTheCode(t *testing.T) {
 	}
 	if !strings.Contains(doc, "最多 8 个 worker") {
 		t.Fatal("the README no longer states the worker cap")
+	}
+}
+
+// TestReadmeImagesExist keeps every screenshot the guide embeds present on disk.
+//
+// The guide shows six: the hero image and a collapsed gallery of five. Two of the six had fallen out of the document
+// entirely at some point while staying in docs/, and all five of those were rendered against an interface that no
+// longer exists — sidebar numbering from 0, no data-flow card, no misconception block. A broken link is visible in the
+// rendered page, but a stale image is not, so the check here is that the files are there; keeping them current is the
+// job of running the render when the interface changes.
+func TestReadmeImagesExist(t *testing.T) {
+	doc := readREADME(t)
+	re := regexp.MustCompile(`!\[[^\]]*\]\((docs/[^)]+)\)`)
+	all := re.FindAllStringSubmatch(doc, -1)
+	if len(all) < 6 {
+		t.Fatalf("the guide embeds %d images; it documents six stages and a small window", len(all))
+	}
+	seen := map[string]bool{}
+	for _, m := range all {
+		path := m[1]
+		if seen[path] {
+			continue
+		}
+		seen[path] = true
+		if _, err := os.Stat(filepath.Join("..", "..", path)); err != nil {
+			t.Errorf("the guide embeds %s, which is missing: %v", path, err)
+		}
 	}
 }

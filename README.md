@@ -4,6 +4,19 @@
 
 ![注意力矩阵](docs/attention.png)
 
+<details>
+<summary>界面一览（点击展开另外五张）</summary>
+
+分词、注意力分数、残差与 LayerNorm、输出采样，以及最小窗口 1180×720 下的同一界面：
+
+![分词](docs/tokens.png)
+![注意力分数](docs/scores.png)
+![残差与 LayerNorm](docs/residual.png)
+![输出与采样](docs/output.png)
+![1180×720](docs/window.png)
+
+</details>
+
 ## 为什么用 MyGo
 
 - **一个 Go 二进制就够**：模型、前向计算、界面全在一个进程里，11 MB，没有 Python、没有 Node、没有浏览器内核。

@@ -34,6 +34,15 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Fixed
+
+- **`docs/` 里的截图全是过期界面**，升级 MyGo 后一并重渲染
+  - `attention.png`（README 的头部图）是 v0.7.4 时代渲的，与当前构建差 **24.6%** 的像素——不是抗锯齿级别，是内容差异：缺了热力图的坐标标签、缺了检查器「这一行在各头的熵」柱状图
+  - 另外 5 张更旧：侧栏编号还是 **0-based**（`0 分词`、`1 嵌入`…）、没有数据流形状卡片、没有「常见误解」、没有形状徽章——**展示的是一个已经不存在的界面**
+  - 而且这 5 张**根本没被 README 引用**，只躺在 `docs/` 里
+  - 处理：按当前构建重渲染 6 张（`tokens` / `scores` / `residual` / `output` 用 1500×940，`window` 用最小窗口 1180×720），并把未引用的 5 张**加进 README 的折叠区**「界面一览」，让这些资产真正被用到
+  - 补 `TestReadmeImagesExist`：README 引用的每张图都必须在磁盘上、且总数 ≥6。已验证移走一张会报 `the guide embeds docs/tokens.png, which is missing`
+
 ### Changed
 
 - **MyGo v0.7.4 → v0.8.3**。`go build`、`go vet`、`gofmt`、`go test ./...`（381 个）全部直接通过，**没有需要改的调用点**
