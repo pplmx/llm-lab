@@ -51,3 +51,31 @@ func TestWindowMinimumMatchesTheSmallestSnapshot(t *testing.T) {
 			"layout works at the window's minimum size", want)
 	}
 }
+
+// TestEveryStageIsRenderedAtEverySize keeps the snapshot matrix complete.
+//
+// It used to cover stages 0, 3, 5 and 6 only — four of seven. The three skipped ones
+// were not accidental omissions of equivalent content: stage 2 is the embedding card
+// with three strips and a histogram, stage 3 is the score heatmap, and stage 5 is the
+// residual stage, which stacks six strips and is by far the tallest card. That last
+// one is the most likely to overflow and had no frame at the smallest window.
+//
+// The claim this suite backs is "no overflow from 1180×720 to 1920×1080", and that is
+// a claim about all seven stages.
+func TestEveryStageIsRenderedAtEverySize(t *testing.T) {
+	src, err := os.ReadFile("render_sizes_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "[]int{0, 1, 2, 3, 4, 5, 6}") {
+		t.Fatalf("the size matrix no longer renders every stage; it should iterate " +
+			"all seven so the overflow claim covers them")
+	}
+	// And the three sizes must all still be there.
+	for _, size := range []string{"{1180, 720}", "{1500, 940}", "{1920, 1080}"} {
+		if !strings.Contains(text, size) {
+			t.Fatalf("the size matrix no longer includes %s", size)
+		}
+	}
+}

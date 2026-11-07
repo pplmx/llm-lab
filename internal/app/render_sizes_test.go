@@ -25,8 +25,13 @@ func TestRenderSizes(t *testing.T) {
 	}
 	sizes := []struct{ w, h int }{{1180, 720}, {1500, 940}, {1920, 1080}}
 	a := newTestApp(t)
+	// Every stage, not a sample of them: the sizes are the window's own range, and
+	// "no overflow from 1180×720 to 1920×1080" is a claim about all seven. Stages 2,
+	// 3 and 5 were skipped for a long time — stage 5 is the one with six vector
+	// strips stacked, so it is the tallest card and the likeliest to overflow, and it
+	// had no frame at the smallest window at all.
 	for _, s := range sizes {
-		for _, step := range []int{0, 3, 5, 6} {
+		for _, step := range []int{0, 1, 2, 3, 4, 5, 6} {
 			a.Step = step
 			writeSnapshot(t, dir, fmt.Sprintf("size-%dx%d-step%d.png", s.w, s.h, step),
 				ui.Render(a.View, s.w, s.h, 1))
