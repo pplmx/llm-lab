@@ -6332,3 +6332,59 @@ func TestTokenLessonExplainsMultiRuneSymbols(t *testing.T) {
 		}
 	}
 }
+
+// TestTruncationBoundaryIsExact pins the two cases either side of the context limit.
+//
+// A prompt of exactly ctx bytes must pass through untouched, and one byte more must lose
+// exactly one. That boundary had no test: the existing cases use prompts far over or far
+// under it, and round 126's finding (a CJK prompt keeping 63 of 64) lived on this same line
+// without anyone having measured where the edge actually is.
+//
+// Multi-byte prompts are checked separately, because there the count depends on where the
+// window starts rather than on how much was supplied: 63 CJK characters fit exactly, and
+// every length from 64 up keeps 63, since the 64-byte window always begins inside a
+// character.
+func TestTruncationBoundaryIsExact(t *testing.T) {
+	ctx := newTestApp(t).W.Config.Ctx
+
+	for _, c := range []struct {
+		bytes    int
+		wantKept int
+	}{
+		{ctx - 1, ctx - 1},
+		{ctx, ctx},     // exactly at the limit: nothing dropped
+		{ctx + 1, ctx}, // one over: exactly one byte dropped
+		{ctx + 2, ctx},
+	} {
+		a := newTestApp(t)
+		a.Prompt = strings.Repeat("a", c.bytes)
+		a.recompute()
+		if got := len(a.Trace.Tokens); got != c.wantKept {
+			t.Fatalf("%d ASCII bytes kept %d tokens, want %d", c.bytes, got, c.wantKept)
+		}
+	}
+
+	// The card must say nothing about truncation when nothing was truncated: with a
+	// prompt of exactly ctx bytes, "已截断到最近 64 个 token" would be false.
+	a := newTestApp(t)
+	a.Prompt = strings.Repeat("a", ctx)
+	a.recompute()
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "已截断") {
+			t.Fatalf("a prompt of exactly %d bytes is reported as truncated: %q", ctx, s)
+		}
+	}
+
+	// Multi-byte: 63 characters (189 bytes) fit; 64 and beyond keep 63.
+	for _, chars := range []int{63, 64, 65} {
+		b := newTestApp(t)
+		b.Prompt = strings.Repeat("中", chars)
+		b.recompute()
+		if got := len(b.Trace.Tokens); got != 63 {
+			t.Fatalf("%d CJK characters kept %d tokens, want 63", chars, got)
+		}
+	}
+}
