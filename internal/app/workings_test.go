@@ -739,3 +739,165 @@ func TestWeightedShareUsesAbsoluteMass(t *testing.T) {
 		t.Fatalf("the panel prints the signed share %q as well", wrong)
 	}
 }
+
+// TestPrintedScoreLineUsesTheComputedNumbers reads the rendered line rather than
+// calling computeScore again.
+//
+// TestPrintedScoreLineRecomputes above checks that computeScore's own fields close —
+// terms plus remainder equal Dot, Dot times scale equal Score. That passes no matter
+// what the panel prints, because it never looks at the panel. Mutation testing
+// swapped the printed dot for p.Rest, and the printed result for p.Dot, and the suite
+// stayed green: the line a reader is asked to verify could name any number.
+func TestPrintedScoreLineUsesTheComputedNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 10, 5 // pin a cell so the workings render
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	h := a.layer().Heads[a.Head]
+	dHead := a.Trace.Config.DHead()
+	p := computeScore(h.Q[10], h.K[5], dHead, h.Scores[10][5])
+	if !p.OK {
+		t.Fatal("computeScore declined")
+	}
+	scale := float64(float32(1 / math.Sqrt(float64(dHead))))
+
+	want := fmt.Sprintf("score = 点积 / √%d = %.4f × %.4f = %+.4f",
+		dHead, p.Dot, scale, p.Score)
+	found := false
+	for _, s := range tr.Texts() {
+		if s == want {
+			found = true
+		}
+	}
+	if !found {
+		var seen string
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "score = 点积") {
+				seen = s
+			}
+		}
+		t.Fatalf("the panel prints %q, want %q", seen, want)
+	}
+
+	// The printed value a reader divides must be the dot the previous line closed on.
+	wantDot := fmt.Sprintf("+ 其余 %d 维 %+.4f = 点积 %.4f", dHead-len(p.Top), p.Rest, p.Dot)
+	dotFound := false
+	for _, s := range tr.Texts() {
+		if s == wantDot {
+			dotFound = true
+		}
+	}
+	if !dotFound {
+		t.Fatalf("the panel does not show the dot %q that the score line divides", wantDot)
+	}
+}
+
+// TestPrintedSoftmaxLinesUseTheComputedNumbers reads the rendered softmax workings.
+//
+// The same blind spot as the score line: TestPrintedSoftmaxLineRecomputes checks that
+// computeSoftmaxParts's fields are consistent with each other, but never looks at the
+// panel. Swapping the printed denominator for the row maximum, or for the numerator,
+// left the suite green — the two lines a reader is told to divide could name anything.
+func TestPrintedSoftmaxLinesUseTheComputedNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 10, 5
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	h := a.layer().Heads[a.Head]
+	p := computeSoftmaxParts(h, 10, 5)
+	if !p.ok {
+		t.Fatal("computeSoftmaxParts declined")
+	}
+
+	wantDenom := fmt.Sprintf("分母 = Σ exp(score − %+.4f) = %.4f", p.rowMax, p.denom)
+	wantWeight := fmt.Sprintf("α = exp(%+.4f − %+.4f) ÷ %.4f = %.4f",
+		h.Scores[10][5], p.rowMax, p.denom, p.num/p.denom)
+
+	var sawDenom, sawWeight bool
+	for _, s := range tr.Texts() {
+		if s == wantDenom {
+			sawDenom = true
+		}
+		if s == wantWeight {
+			sawWeight = true
+		}
+	}
+	if !sawDenom {
+		t.Fatalf("the panel does not print %q", wantDenom)
+	}
+	if !sawWeight {
+		t.Fatalf("the panel does not print %q", wantWeight)
+	}
+
+	// And the division the second line shows must reproduce the printed weight.
+	if got, want := p.num/p.denom, float64(h.Attn[10][5]); math.Abs(got-want) > 1e-4 {
+		t.Fatalf("the printed division gives %.6f, the trace holds %.6f", got, want)
+	}
+}
+
+// TestPrintedLNLineUsesTheComputedNumbers reads the rendered LayerNorm workings.
+//
+// The third instance of the same blind spot. The tests above check that
+// computeLN's fields are consistent, but never read the panel, so the printed γ
+// could be β, the printed μ could be 1/σ, and the printed result could be γ — all
+// four mutations passed. This is the line with the most hand-verifiable parts of any
+// in the app: five values a reader multiplies and adds.
+//
+// Uses the untrained weights' learned-ness only for setup, not for the assertion.
+func TestPrintedLNLineUsesTheComputedNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4 // the LayerNorm stage
+	a.SelToken = 10
+	a.Layer = 1
+	a.HoverDimIn = 7 // the workings follow the hovered dimension, defaulting to 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	l := a.layer()
+	w := a.W.Layers[a.Layer]
+	const dim = 7
+	p := computeLN(l.AfterAttn[10], w.LN2G, w.LN2B, dim)
+	if !p.ok {
+		t.Fatal("computeLN declined")
+	}
+
+	wantHeader := fmt.Sprintf("d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f",
+		dim, p.mean, 1/p.invStd, p.invStd)
+	wantBody := fmt.Sprintf("(%.4f − %.4f) × %.4f × γ %.5f + β %.5f ≈ %.4f",
+		p.x, p.mean, p.invStd, p.gamma, p.beta, p.out)
+
+	var sawHeader, sawBody bool
+	for _, s := range tr.Texts() {
+		if s == wantHeader {
+			sawHeader = true
+		}
+		if s == wantBody {
+			sawBody = true
+		}
+	}
+	if !sawHeader {
+		t.Fatalf("the panel does not print %q", wantHeader)
+	}
+	if !sawBody {
+		t.Fatalf("the panel does not print %q", wantBody)
+	}
+
+	// The result the line ends on must be the trace's LayerNorm output for this
+	// dimension, not merely some value computeLN happened to produce.
+	if got, want := p.out, float64(l.Norm2[10][dim]); math.Abs(got-want) > 1e-4 {
+		t.Fatalf("the printed result is %.6f, the trace holds %.6f", got, want)
+	}
+	// And substituting the printed five-decimal values must land near the printed
+	// result — the property the "≈" and the note underneath are there to describe.
+	hand := (p.x-p.mean)*p.invStd*p.gamma + p.beta
+	if gap := math.Abs(hand - p.out); gap > 2e-4 {
+		t.Fatalf("substituting the printed numbers gives %.6f, %.1e away from the "+
+			"printed result %.6f", hand, gap, p.out)
+	}
+}
