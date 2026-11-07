@@ -627,3 +627,52 @@ func TestBothPromptPathsLeaveTheSameState(t *testing.T) {
 		t.Fatalf("the pending clock survived: %v", a.NextAt)
 	}
 }
+
+// TestSamplingStopsPlayback checks the third way of editing the prompt against the other
+// two.
+//
+// Three paths append to or replace the prompt: the preset chips, the text field, and the
+// sample button — which appends one byte. The first two stop playback and clear the
+// pending clock, because the prompt they were playing no longer exists. The sample path
+// did neither: a reader watching the lesson play, who then sampled, would be carried to
+// the next stage a second later with the sample already replaced by a different
+// prediction.
+//
+// It does not go through promptChanged, and should not: that helper clears LastSample,
+// and the sample is the whole point of this path. The clock and playing flag are
+// duplicated here for that reason, which is worth stating since the duplication is
+// otherwise exactly what the helper exists to prevent.
+func TestSamplingStopsPlayback(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	if !a.Playing {
+		t.Fatal("playback did not start")
+	}
+	if a.NextAt.IsZero() {
+		t.Fatal("playback started without scheduling an advance")
+	}
+
+	before := a.Prompt
+	a.sampleNext()
+	tr.Frame()
+
+	if a.Prompt == before {
+		t.Fatalf("sampling did not extend the prompt: %q", a.Prompt)
+	}
+	if a.Playing {
+		t.Fatal("sampling left playback running; the reader would be carried off the " +
+			"stage they sampled from")
+	}
+	if !a.NextAt.IsZero() {
+		t.Fatalf("the pending clock survived sampling: %v", a.NextAt)
+	}
+	// And the record of what was drawn has to survive, unlike the other two paths.
+	if a.LastSample == "" {
+		t.Fatal("the sample record was cleared, so the card cannot show what was drawn")
+	}
+}

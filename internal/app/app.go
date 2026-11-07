@@ -1181,6 +1181,13 @@ func (a *App) sampleNext() {
 	a.LastSample = fmt.Sprintf("%q (id %d, p=%.3f)", byteText(pick), pick, probs[pick])
 	// A byte-level model predicts bytes, not runes: append exactly one byte.
 	a.Prompt += string([]byte{byte(pick)})
+	// Sampling edits the prompt, and the two other ways of editing it stop playback
+	// first: a reader who is watching the lesson play and then samples should stay on
+	// the stage they are looking at, not be carried to the next one a second later.
+	// LastSample is set above rather than through promptChanged because that helper
+	// clears it — the sample is the point here.
+	a.Playing = false
+	a.NextAt = time.Time{}
 	a.recompute()
 }
 
