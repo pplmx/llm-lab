@@ -43,6 +43,13 @@
 
 ### Fixed
 
+- 全仓搜「只记录、不断言」的测试分支，又找到两处：
+  - `TestFFNShareUsesAbsoluteMass`：注释写着「the point of the absolute denominator: it must report a materially smaller share」，代码却是 `if naive <= want*2 { t.Logf(...) }`。而且测试用的那一行（默认 token 35）实测比值 **3.05**，远大于 2，**这个分支从未执行过**——是死代码加假断言。改成 `t.Fatalf`，并记录实测：绝对值分母 **16.05%** vs 有符号分母 **48.95%**
+  - `TestScaleReadoutIsTheSameOnBothPanels`：注释说「assert the printed form is the same」，代码同样只 `t.Logf`。核查后发现**前一条断言已经覆盖了这个意图**（`want` 按面板的构造方式生成，改精度就会对不上计数），所以这段是冗余的——**删掉**而不是改成第二条断言
+- 其余模式核查无问题：11 处 `t.Skip` 全是「前提不成立则跳过」且前提都显式检查过，当前只有 2 处触发（`RENDER=1` 的截图测试）；没有吞错误的分支；没有无断言的测试函数
+
+### Fixed
+
 - `TestFFNCalloutZeroCountIsMeasured` 里有一条**只记录、不断言**的分支：
   ```go
   if zeroDims(hidden) != 0 { t.Logf("note: this row has %d exact zeros") }

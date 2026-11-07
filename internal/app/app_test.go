@@ -1907,10 +1907,19 @@ func TestFFNShareUsesAbsoluteMass(t *testing.T) {
 	if got := ffnTopShare(p); math.Abs(got-want) > 1e-9 {
 		t.Fatalf("share %.3f, want %.3f", got, want)
 	}
-	// The point of the absolute denominator: it must report a materially
-	// smaller share than dividing by the signed result would.
-	if naive := 100 * top / math.Abs(p.Out); naive <= want*2 {
-		t.Logf("note: signed and absolute denominators agree here (%.1f%% vs %.1f%%)", naive, want)
+	// The point of the absolute denominator: it must report a materially smaller share
+	// than dividing by the signed result would. Measured on the selected token the naive
+	// form reports 48.95% against the correct 16.05%, a factor of 3.05 — the signed total
+	// cancels heavily, which is the whole reason the other denominator exists.
+	//
+	// This was a t.Logf branch, so it proved nothing: on the row the test happens to use
+	// it never fired, and had it fired it would only have printed a line. The margin is
+	// asserted now, at a factor that still leaves room for a different token's cancellation
+	// while failing if the denominator ever goes back to the signed total.
+	if naive := 100 * top / math.Abs(p.Out); naive < want*2 {
+		t.Fatalf("dividing by |out| gives %.2f%%, dividing by Σ|term| gives %.2f%%; the "+
+			"absolute denominator is supposed to report a materially smaller share",
+			naive, want)
 	}
 	// And in this model the three terms must not carry most of the mass, which
 	// is why the remainder is printed at all.
@@ -6050,14 +6059,11 @@ func TestScaleReadoutIsTheSameOnBothPanels(t *testing.T) {
 			"inspector", want, count)
 	}
 
-	// The float32 and float64 forms agree at three decimals for this model, but a
-	// different d_head could separate them; assert the printed form is the same as the
-	// workings line's, since a reader may compare the two.
-	f32 := float64(float32(1 / math.Sqrt(float64(dHead))))
-	if got, other := fmt.Sprintf("%.3f", 1/math.Sqrt(float64(dHead))), fmt.Sprintf("%.3f", f32); got != other {
-		t.Logf("float64 prints %s, float32 prints %s — the two panels and the workings "+
-			"line would disagree", got, other)
-	}
+	// The float32/float64 question is already decided by the assertion above: `want` is
+	// built the way the panels build it, so a panel that switched precision would print a
+	// different string and the count would come out wrong. A separate check here compared
+	// the two forms and only logged the result, which proved nothing — removed rather than
+	// turned into a second assertion over the same thing.
 }
 
 // TestScaleReadoutComesFromOneHelper keeps the two copies from being re-inlined.
