@@ -1231,8 +1231,11 @@ func (a *App) sampleNext() {
 	// where the reader asked for new content, and on six of the seven stages the only other sign it happened
 	// was the token count in the status line. Selecting it lights the chip and makes the inspector describe
 	// the byte that was just drawn.
+	// Through selectToken rather than an assignment: a pinned cell belongs to the token the reader was on, and
+	// moving the selection without dropping it left the inspector headed "query = token 15" over a cell card that
+	// still described token 5's row — the same split selectToken exists to prevent, reached by a third path.
 	if n := len(a.Trace.Tokens); n > 0 {
-		a.SelToken = n - 1
+		a.selectToken(n-1, true)
 	}
 }
 

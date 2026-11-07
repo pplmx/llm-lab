@@ -34,6 +34,14 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Fixed
+
+- **采样绕过 `selectToken` 直接赋值 `SelToken`，留下标题与内容互相矛盾的检查器**。第 245 轮加了「采样后选中新 token」，用的是一句裸赋值；`selectToken` 里那条注释写得很清楚——固定格子属于读者当时在看的那一行，换行后「inspector would then head "query = token 20" while the cell underneath it still described token 10's row」——而采样成了**唯一绕过它的路径**
+  - 实测：固定 `(5,3)`、在第 3 步采样后，检查器表头是 `query = token 15`，而下面的格子卡仍是 `query 5 "r"` / `key 3 "␣"`
+  - 修法：采样改走 `selectToken(n-1, true)`。格子在语义上仍然有效（采样只是追加字节），但**它不再是读者在看的那一行**，所以按既有规则解除
+  - **同时更新了三处描述**：`TestPinnedCellSurvivesEditing` 与 `TestPinClaimsInTheReadmeAreTrue` 原来断言「采样不让格子移动」，理由都写着「采样只是追加字节」——那个理由在 245 轮之后不再成立，两处都改了并写明为什么；README 的「采样续写后都留在检查器里」改成「采样续写也会解除（采样会选中新生成的那个 token，也算换行）」
+  - 补 `TestSamplingDropsAPinItWouldContradict`：断言采样后格子被解除、格子卡从画面消失、表头点名新 token。已验证改回裸赋值会报 `the pin survived at (5,3) while the selection is token 15`
+
 ### Added
 
 - `CONTRIBUTING.md` 新增「**键盘焦点：五个可聚焦控件**」一节，把 Tab 顺序和焦点环位置写成可核对的表

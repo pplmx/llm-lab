@@ -3177,16 +3177,13 @@ func TestSelectionShiftCountsBothSidesOfTheEdit(t *testing.T) {
 // The pin is a deliberate choice about a cell that still exists, so it must
 // stay; only the pointer's hover is stale and should be cleared.
 func TestPinnedCellSurvivesEditing(t *testing.T) {
-	// Sampling appends a byte, so every existing cell keeps its indices.
-	a := newTestApp(t)
-	a.Step = 2
-	a.KeyQ, a.KeyK = 20, 5
-	a.sampleNext()
-	if a.KeyQ != 20 || a.KeyK != 5 {
-		t.Fatalf("sampling moved the pin to (%d,%d), want (20,5)", a.KeyQ, a.KeyK)
-	}
-
-	// Typing an extra character likewise only grows the matrix.
+	// Typing an extra character only grows the matrix, so the pin keeps its indices.
+	//
+	// Sampling used to be checked here too, on the same reasoning — it appends a byte, so every cell keeps its
+	// indices. That changed in round 245: sampling now selects the token it produced, which moves the reader to a
+	// different row, and a pin left behind would head the inspector "query = token 15" over a card still describing
+	// token 5. selectToken drops the pin for exactly this reason on every other path, and sampling goes through it
+	// now. The cell is still valid; it is simply no longer the one the reader is looking at.
 	b := newTestApp(t)
 	b.Step = 2
 	b.KeyQ, b.KeyK = 20, 5
@@ -3279,11 +3276,8 @@ func TestPinClaimsInTheReadmeAreTrue(t *testing.T) {
 		t.Fatalf("pointer move lost the pin: (%d,%d)", a.KeyQ, a.KeyK)
 	}
 
-	// It survives an edit and a sample.
-	a.sampleNext()
-	if a.KeyQ != 20 || a.KeyK != 5 {
-		t.Fatalf("sampling lost the pin: (%d,%d)", a.KeyQ, a.KeyK)
-	}
+	// It survives an edit. Sampling is different now: it selects the token it produced, which is the same context
+	// change as clicking another chip, and selectToken drops the pin for that. The README says so.
 	a.Prompt += "!"
 	a.recompute()
 	if a.KeyQ != 20 || a.KeyK != 5 {

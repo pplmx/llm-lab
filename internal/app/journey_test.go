@@ -686,3 +686,40 @@ func TestEveryShortcutHasAVisibleAlternative(t *testing.T) {
 		}
 	}
 }
+
+// TestSamplingDropsAPinItWouldContradict closes the third path into a state selectToken exists to prevent.
+//
+// A pinned cell belongs to the row the reader was looking at. Everything that moves the selection drops it — clicking
+// another chip, pressing shift-arrow, switching stage — because otherwise the inspector heads "query = token 15" over a
+// cell card still describing token 5. Sampling started moving the selection in round 245 and did it with a bare
+// assignment, so it was the one path that left the two disagreeing. Measured before this fix: pin (5,3), sample, header
+// says "query = token 15" while the cell card still says 'query 5 "r" key 3 "␣"'.
+func TestSamplingDropsAPinItWouldContradict(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "The transformer"
+	a.recompute()
+	a.Step = 2
+	a.SelToken = 5
+	a.KeyQ, a.KeyK = 5, 3
+
+	a.sampleNext()
+
+	if a.SelToken == 5 {
+		t.Fatal("sampling did not move the selection; this test needs it to")
+	}
+	if a.KeyQ >= 0 || a.KeyK >= 0 {
+		t.Fatalf("the pin survived at (%d,%d) while the selection is token %d; the inspector would head one token "+
+			"and describe another", a.KeyQ, a.KeyK, a.SelToken)
+	}
+
+	// And the card is gone from the frame rather than merely unset in state.
+	tr := ui.NewTester(a.View, 1500, 2000)
+	tr.Frame()
+	if tr.HasText("注意力格子") {
+		t.Fatal("the pinned cell card is still drawn after sampling")
+	}
+	// The header, meanwhile, describes the token that was produced.
+	if !tr.HasText(fmt.Sprintf("query = token %d", a.SelToken)) {
+		t.Fatalf("the inspector does not name the new token %d", a.SelToken)
+	}
+}
