@@ -184,18 +184,45 @@ func TestReadmeStrideRuleIsTheOneImplemented(t *testing.T) {
 		}
 		return s
 	}
-	avail := float32(420) // the matrix box's default width
-	cell36, cell64 := avail/36, avail/64
-	if got := strideFor(cell36); got != 3 {
-		t.Fatalf("36 tokens: stride %d, but the README and this test say 3", got)
-	}
-	if got := strideFor(cell64); got != 4 {
-		t.Fatalf("64 tokens: stride %d, but the README and this test say 4", got)
+	// The matrix box is not a fixed 420 DIP: it shrinks with the window, and the README
+	// used to quote 3 and 4 as though it were. Measured from the layout arithmetic in
+	// widgets.go — avail starts at 420 and takes the room the window leaves, floored at
+	// 160 — the narrowest supported window gives 324 DIP, where a 64-token matrix labels
+	// every 6th cell rather than every 4th. The snapshot size-longprompt-1180.png shows
+	// exactly that: 0, 6, 12, … 60.
+	app := newTestApp(t)
+	availAt := func(windowW int) float32 {
+		avail := float32(420)
+		room := float32(windowW) - app.SidebarW - app.InspectorW - 2 - 32 - 28 - 240
+		if room < avail {
+			avail = room
+		}
+		if avail < 160 {
+			avail = 160
+		}
+		return avail
 	}
 
-	// And the document must say those numbers.
+	for _, c := range []struct {
+		windowW, tokens, want int
+	}{
+		{1180, 36, 3},
+		{1180, 64, 6}, // the case the README used to get wrong
+		{1500, 36, 3},
+		{1500, 64, 4},
+		{1920, 36, 3},
+		{1920, 64, 4},
+	} {
+		avail := availAt(c.windowW)
+		if got := strideFor(avail / float32(c.tokens)); got != c.want {
+			t.Fatalf("window %d, %d tokens: avail %.0f, stride %d, want %d",
+				c.windowW, c.tokens, avail, got, c.want)
+		}
+	}
+
+	// And the document must say those numbers, including the narrow case.
 	doc := readREADME(t)
-	for _, want := range []string{"每 3 个标一次", "每 4 个标一次"} {
+	for _, want := range []string{"每 3 个标一次", "每 4 个标一次", "每 6 个标一次"} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("the README does not state %q, so its stride parenthetical is stale", want)
 		}
