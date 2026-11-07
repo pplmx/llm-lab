@@ -7669,6 +7669,8 @@ func TestStatusLineHasThreeStates(t *testing.T) {
 // stage explains it in words, so it is content rather than a formatting failure.
 func TestNoMalformedTextAcrossTheSweep(t *testing.T) {
 	bad := []string{"NaN", "0.0e+00", "null", "%!", "<nil>", "-0.0000", "+0.0000", "e+308"}
+	// "3/0 行" and the like: a proportion with nothing in the denominator.
+	zeroDenom := regexp.MustCompile(`\d+/0\b`)
 	prompts := []string{"", "a", "hi", "The transformer reads the tokens and", "注意力就是加权求和"}
 	temps := []float64{0.1, 0.8, 2.0}
 
@@ -7699,6 +7701,13 @@ func TestNoMalformedTextAcrossTheSweep(t *testing.T) {
 							if s == "" {
 								t.Fatalf("stage %d, prompt %q: an empty text was laid out",
 									step, prompt)
+							}
+							// A ratio over zero is not a proportion. "0/0 行" shipped in round 213
+							// because the numerator and denominator were computed but neither
+							// was checked; the sweep now looks for any a/0 on screen.
+							for _, m := range zeroDenom.FindAllString(s, -1) {
+								t.Fatalf("stage %d, prompt %q: the zero-denominator ratio %q "+
+									"appears in %q", step, prompt, m, truncateForTest(s, 90))
 							}
 							// Nothing on screen is a paragraph. The longest strings are the
 							// stage bodies and the misconception corrections; a much longer
