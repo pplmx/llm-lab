@@ -7001,3 +7001,39 @@ func TestWeightedSumCardSaysTheStripsHaveDifferentWidths(t *testing.T) {
 		t.Fatalf("the description sits at y=%.0f, below the first label at y=%.0f", lineY, firstY)
 	}
 }
+
+// TestOnlyWarningsUseTheWarmLabelColour keeps colWarm out of ordinary labels.
+//
+// The palette documents colWarm as a data colour — the warm end of the score ramp — and the app
+// also uses it for warnings: the untrained banner, the dropped-bytes note, the "常见误解"
+// heading. Those are consistent.
+//
+// The residual stage's LN(x) label had drifted into it. Nothing about the normalised row is a
+// warning, and at 11.09:1 against the background it was the brightest label on a card where it
+// is the middle quantity, brighter than the results below it. It now takes colAccent2, which
+// the palette defines as "what came out of the step" — the same colour as the two sums it feeds.
+//
+// The test pins which labels may be warm, so a future colour choice has to be deliberate.
+func TestOnlyWarningsUseTheWarmLabelColour(t *testing.T) {
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := string(src)
+	for _, allowed := range []string{
+		`"丢弃前 %d 字节"`, // truncated prompt: bytes the model will not see
+	} {
+		if !strings.Contains(file, allowed) {
+			t.Fatalf("the warm label %s is gone; update this list if that was intended", allowed)
+		}
+	}
+
+	// The normalised row is a result, not a warning.
+	if strings.Contains(file, `"LN(x) — 子层实际读到的输入").FontSize(fontMicro).TextColor(colWarm)`) {
+		t.Fatal("the LN(x) label is warm again; colWarm means a scored matrix or a warning, " +
+			"and this row is neither")
+	}
+	if !strings.Contains(file, `"LN(x) — 子层实际读到的输入").FontSize(fontMicro).TextColor(colAccent2)`) {
+		t.Fatal("the LN(x) label lost its result colour")
+	}
+}

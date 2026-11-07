@@ -659,7 +659,11 @@ func (a *App) stageResidual(c *ui.Context) {
 		// makes that visible at the point where the reader is looking at both.
 		ui.Text(c, "残差流 x（进入本层，未归一化）").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.In[i], 16, &a.HoverDimIn)
-		ui.Text(c, "LN(x) — 子层实际读到的输入").FontSize(fontMicro).TextColor(colWarm)
+		// LN(x) is what the normalisation produced, so it takes colAccent2 — the palette's
+		// "what came out of the step". It was colWarm, which is a data colour for a scored
+		// matrix: on a text label it reads as a warning and, at 11.09:1, as the most
+		// important line on a card where it is the middle quantity.
+		ui.Text(c, "LN(x) — 子层实际读到的输入").FontSize(fontMicro).TextColor(colAccent2)
 		vectorStrip(c, l.Norm1[i], 16, &a.HoverDimIn)
 		ui.Text(c, "注意力子层输出 Δ_attn").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, l.AttnProj[i], 16, &a.HoverDimIn)
