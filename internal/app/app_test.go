@@ -7480,3 +7480,56 @@ func TestTailProbabilityIsNotFormattedAsResidue(t *testing.T) {
 		t.Fatalf("temp 0.8: a small tail should stay in scientific notation, got %q", line)
 	}
 }
+
+// TestRowZeroExplainsItsEmptyEntropyChart keeps a chart with no information out of the panel.
+//
+// Row 0 attends to exactly one key — itself — because of the causal mask, so every head's entropy
+// there is exactly 0 and the chart was four zero-length bars on a log(1) = 0 scale. That is a fact
+// about the mask, not about the model, and a reader seeing four empty bars has no way to tell.
+//
+// The row now says so in words. Any later row still gets the chart, because its values differ.
+func TestRowZeroExplainsItsEmptyEntropyChart(t *testing.T) {
+	// Row 0: words instead of a chart that cannot vary.
+	a := newTestApp(t)
+	a.Step = 3
+	a.SelToken = 0
+	tr := ui.NewTester(a.View, 1500, 900)
+	tr.Frame()
+
+	var explained bool
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "第 0 行只能看到它自己") && strings.Contains(s, "必然都是 0") {
+			explained = true
+		}
+	}
+	if !explained {
+		t.Fatal("row 0 draws an all-zero entropy chart without saying why")
+	}
+	if tr.HasText("这一行在各头的熵（越小越专注）") {
+		t.Fatal("row 0 still draws the entropy chart, which cannot show anything there")
+	}
+
+	// A later row keeps the chart, and it must actually vary.
+	b := newTestApp(t)
+	b.Step = 3
+	b.SelToken = 5
+	bt := ui.NewTester(b.View, 1500, 900)
+	bt.Frame()
+	if !bt.HasText("这一行在各头的熵（越小越专注）") {
+		t.Fatal("row 5 lost the entropy chart")
+	}
+	var vals []string
+	for _, s := range bt.Texts() {
+		if len(s) == 4 && s[0] >= '0' && s[0] <= '9' && s[1] == '.' {
+			vals = append(vals, s)
+		}
+	}
+	distinct := map[string]bool{}
+	for _, v := range vals {
+		distinct[v] = true
+	}
+	if len(distinct) < 2 {
+		t.Fatalf("row 5's per-head entropies are all the same (%v), so this test's premise "+
+			"that later rows differ does not hold", vals)
+	}
+}

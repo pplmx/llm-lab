@@ -303,13 +303,18 @@ func TestAllNegativeMatrixIsSnapshot(t *testing.T) {
 	}
 }
 
-// TestShortPromptBranchesAreSnapshot keeps a picture of the two cards that change when a prompt has
-// almost nothing in it.
+// TestEdgeCaseBranchesAreSnapshot keeps a picture of the states the default snapshot prompts never
+// reach.
 //
-// Step 1's byte card switches its question (ASCII versus CJK) and step 2's position table switches
-// from "the first four positions" to "this prompt only has N". Every bundled prompt is at least two
-// tokens, so the one-token branch of both would never be compared.
-func TestShortPromptBranchesAreSnapshot(t *testing.T) {
+// Three cards change shape at an input extreme: step 1's byte card switches its question (ASCII
+// versus CJK), step 2's position table switches from "the first four positions" to "this prompt only
+// has N", and step 4's entropy chart gives way to a sentence on row 0, where the causal mask leaves
+// one key and every head's entropy is exactly 0. A fourth snapshot covers a head whose scores are all
+// negative, where the legend must drop its warm swatch.
+//
+// The bundled prompts are all at least two tokens and never select row 0, so without these four
+// files none of those branches would be compared.
+func TestEdgeCaseBranchesAreSnapshot(t *testing.T) {
 	src, err := os.ReadFile("render_sizes_test.go")
 	if err != nil {
 		t.Fatal(err)
@@ -318,6 +323,7 @@ func TestShortPromptBranchesAreSnapshot(t *testing.T) {
 	for _, c := range []struct{ name, setup string }{
 		{"size-onetoken-1180.png", `one.Prompt = "a"`},
 		{"size-allnegative-1180.png", `neg.Prompt = "hi"`},
+		{"size-rowzero-1180.png", `row0.SelToken = 0`},
 	} {
 		if !strings.Contains(text, c.name) {
 			t.Fatalf("the snapshot set no longer renders %q", c.name)

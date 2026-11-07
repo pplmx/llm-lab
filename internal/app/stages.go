@@ -1501,6 +1501,13 @@ func (a *App) inspectorAttention(c *ui.Context, tr *model.Trace) {
 				fmt.Sprintf("%.2f（0 = 相同，1 = 不重叠）", d.TV))
 		}
 		mutedText(c, "熵越接近 0 越专注；越接近 log(n) 越分散。")
+		// Row 0 can only see itself, so every head's entropy there is exactly 0 and the
+		// chart is four empty bars against a log(1) = 0 scale. State the reason instead of
+		// drawing it: the causal mask, not the model, is what makes this row trivial.
+		if i == 0 {
+			mutedText(c, "第 0 行只能看到它自己，四个头的熵必然都是 0——从第 1 行起才有可比较的分配。")
+			return
+		}
 		// The four heads are a segmented control above the stage, and switching
 		// between them shows different bars but no way to compare. One compact
 		// block per head, with the current one marked, makes "this head is the

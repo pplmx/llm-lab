@@ -105,6 +105,14 @@ func TestRenderSizes(t *testing.T) {
 	neg.Step = 2
 	writeSnapshot(t, dir, "size-allnegative-1180.png", ui.Render(neg.View, 1180, 900, 1))
 
+	// Row 0 of the attention matrix, where the causal mask leaves one key and every head's
+	// entropy is exactly 0. The panel states that instead of drawing four empty bars, and no
+	// other snapshot selects the first row.
+	row0 := newTestApp(t)
+	row0.Step = 3
+	row0.SelToken = 0
+	writeSnapshot(t, dir, "size-rowzero-1180.png", ui.Render(row0.View, 1180, 900, 1))
+
 	// A one-token prompt, which is the only state where step 2's position table has nothing to
 	// compare: the heading has to state the rule instead of claiming variation, and the note has
 	// to stop promising four rows. No other snapshot has fewer than two tokens.
