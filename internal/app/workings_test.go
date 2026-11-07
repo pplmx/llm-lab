@@ -901,3 +901,111 @@ func TestPrintedLNLineUsesTheComputedNumbers(t *testing.T) {
 			"printed result %.6f", hand, gap, p.out)
 	}
 }
+
+// TestPrintedResidualChainUsesTheComputedSteps reads the rendered residual chain.
+//
+// The same blind spot the last round found in three other blocks: the residual tests
+// call residualChain and check the steps close with each other, but never read the
+// panel. Three mutations passed — printing the first line's sum where the term
+// belongs, printing each step's term where its sum belongs, and not carrying the
+// running total forward at all.
+func TestPrintedResidualChainUsesTheComputedSteps(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4 // the residual stage
+	a.SelToken = 10
+	a.Layer = 1
+	a.HoverDimIn = 7
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	l := a.layer()
+	const dim = 7
+	steps, ok := residualChain(*l, 10, dim)
+	if !ok {
+		t.Fatal("residualChain declined")
+	}
+
+	// First line: "<label> = <term>".
+	wantFirst := fmt.Sprintf("d%d 的残差流在第 %d 层：%s = %+.4f",
+		dim, a.Layer+1, steps[0].Label, steps[0].Term)
+	var sawFirst bool
+	for _, s := range tr.Texts() {
+		if s == wantFirst {
+			sawFirst = true
+		}
+	}
+	if !sawFirst {
+		t.Fatalf("the panel does not print the chain's first line %q", wantFirst)
+	}
+
+	// Every later line: "<running> <label> <term> = <sum>".
+	running := steps[0].Sum
+	for _, s := range steps[1:] {
+		term := fmt.Sprintf("%+.4f", s.Term)
+		if s.Term < 0 {
+			term = fmt.Sprintf("(%+.4f)", s.Term)
+		}
+		want := fmt.Sprintf("%+.4f %s %s = %+.4f", running, s.Label, term, s.Sum)
+		found := false
+		for _, got := range tr.Texts() {
+			if got == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("the panel does not print the chain step %q", want)
+		}
+		running = s.Sum
+	}
+}
+
+// TestPrintedFFNTermsUseTheComputedValues reads the rendered FFN workings.
+//
+// Two mutations passed: the printed output replaced by the remainder, and each
+// term's value replaced by its key index. The second is the more instructive — it
+// prints a plausible-looking four-decimal number in the right column, so only a test
+// that recomputes the term can tell.
+func TestPrintedFFNTermsUseTheComputedValues(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	l := a.layer()
+	w2 := a.W.Layers[a.Layer].W2
+	const dim = 0
+	p := computeFFN(l.Hidden[10], w2, a.W.Config.DFF, a.W.Config.DModel, dim)
+	if !p.OK {
+		t.Fatal("computeFFN declined")
+	}
+
+	var terms []string
+	for _, tm := range p.Top {
+		terms = append(terms, fmt.Sprintf("k%d %+.4f", tm.K, tm.V))
+	}
+	wantHead := fmt.Sprintf("out[%d] 的三项最大贡献：%s", dim, strings.Join(terms, "  "))
+	wantFoot := fmt.Sprintf("+ 其余 %d 项 %+.4f ≈ %+.4f",
+		a.W.Config.DFF-len(p.Top), p.Rest, p.Out)
+
+	var sawHead, sawFoot bool
+	for _, s := range tr.Texts() {
+		if s == wantHead {
+			sawHead = true
+		}
+		if s == wantFoot {
+			sawFoot = true
+		}
+	}
+	if !sawHead {
+		t.Fatalf("the panel does not print %q", wantHead)
+	}
+	if !sawFoot {
+		t.Fatalf("the panel does not print %q", wantFoot)
+	}
+
+	// The printed output must be the trace's, not merely computeFFN's own field.
+	if got, want := p.Out, float64(l.FFNOut[10][dim]); math.Abs(got-want) > 1e-4 {
+		t.Fatalf("the printed output is %.6f, the trace holds %.6f", got, want)
+	}
+}
