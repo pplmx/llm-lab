@@ -1085,10 +1085,20 @@ func (a *App) softmaxWorkings(c *ui.Context, h model.HeadTrace, q, k int) {
 	// Two lines: the row maximum is subtracted first (that is why the exponent
 	// is negative even when the score is not), then the numerator over the
 	// denominator. The result printed here is the weight line above.
+	// Subtracting the row maximum is what keeps the exponent negative; if the maximum is
+	// itself negative the line used to read "score − -3.7133", two signs in a row that a
+	// reader has to decode before the arithmetic makes sense. Bracketing the subtrahend
+	// keeps the expression unambiguous either way.
+	// A positive subtrahend needs no sign — "− 2.9311" reads as subtraction — while a
+	// negative one needs brackets, since "− -3.7133" is two signs in a row.
+	sub := fmt.Sprintf("%.4f", rowMax)
+	if rowMax < 0 {
+		sub = fmt.Sprintf("(%+.4f)", rowMax)
+	}
 	workingsLines(c, []string{
-		fmt.Sprintf("分母 = Σ exp(score − %+.4f) = %.4f", rowMax, denom),
-		fmt.Sprintf("α = exp(%+.4f − %+.4f) ÷ %.4f = %.4f",
-			h.Scores[q][k], rowMax, denom, num/denom),
+		fmt.Sprintf("分母 = Σ exp(score − %s) = %.4f", sub, denom),
+		fmt.Sprintf("α = exp(%+.4f − %s) ÷ %.4f = %.4f",
+			h.Scores[q][k], sub, denom, num/denom),
 	})
 }
 

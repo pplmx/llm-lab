@@ -817,9 +817,17 @@ func TestPrintedSoftmaxLinesUseTheComputedNumbers(t *testing.T) {
 		t.Fatal("computeSoftmaxParts declined")
 	}
 
-	wantDenom := fmt.Sprintf("分母 = Σ exp(score − %+.4f) = %.4f", p.rowMax, p.denom)
-	wantWeight := fmt.Sprintf("α = exp(%+.4f − %+.4f) ÷ %.4f = %.4f",
-		h.Scores[10][5], p.rowMax, p.denom, p.num/p.denom)
+	// The subtrahend is formatted the way the panel formats it: unsigned when positive,
+	// bracketed when negative, so the line never runs two signs together. Rebuilding the
+	// string with %+.4f here would pin the old double-sign form instead of what a reader
+	// should see.
+	sub := fmt.Sprintf("%.4f", p.rowMax)
+	if p.rowMax < 0 {
+		sub = fmt.Sprintf("(%+.4f)", p.rowMax)
+	}
+	wantDenom := fmt.Sprintf("分母 = Σ exp(score − %s) = %.4f", sub, p.denom)
+	wantWeight := fmt.Sprintf("α = exp(%+.4f − %s) ÷ %.4f = %.4f",
+		h.Scores[10][5], sub, p.denom, p.num/p.denom)
 
 	var sawDenom, sawWeight bool
 	for _, s := range tr.Texts() {
@@ -1348,4 +1356,45 @@ func TestPrintedArithmeticClosesAcrossTheControls(t *testing.T) {
 			"not land on the printed result", worst, where)
 	}
 	t.Logf("worst gap %.2e at %s", worst, where)
+}
+
+// TestSoftmaxLineDoesNotRunTwoSignsTogether checks the arithmetic line's readability.
+//
+// The line subtracts the row maximum, which is what keeps the exponent negative. It used to
+// print the subtrahend with %+.4f, so a positive maximum produced "score − +2.9311" and a
+// negative one produced "score − -3.7133". Both are arithmetically right and both make the
+// reader decode two signs before checking the maths — the opposite of what a workings line is
+// for.
+//
+// A positive subtrahend now prints unsigned and a negative one prints in brackets. Measured
+// on the default prompt: exp(-4.1091 − 2.9311) at one cell and exp(-3.7133 − (-3.7133)) at
+// another, where the row maximum is itself negative.
+func TestSoftmaxLineDoesNotRunTwoSignsTogether(t *testing.T) {
+	bad := []string{"− +", "− -", "- +", "- -"}
+	for _, prompt := range []string{"The transformer reads the tokens and", "hi", "a"} {
+		for _, token := range []int{0, 5, 10} {
+			a := newTestApp(t)
+			a.Prompt = prompt
+			a.recompute()
+			a.Step = 3
+			if token >= len(a.Trace.Tokens) {
+				continue
+			}
+			a.SelToken = token
+			a.KeyQ, a.KeyK = token, 0
+			tr := ui.NewTester(a.View, 1500, 940)
+			tr.Frame()
+			for _, s := range tr.Texts() {
+				if !strings.Contains(s, "exp(") {
+					continue
+				}
+				for _, b := range bad {
+					if strings.Contains(s, b) {
+						t.Fatalf("prompt %q token %d: the line runs two signs together: %q",
+							prompt, token, s)
+					}
+				}
+			}
+		}
+	}
 }
