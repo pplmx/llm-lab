@@ -1479,7 +1479,7 @@ func TestLNWorkingsFollowTheHoveredDimension(t *testing.T) {
 	tr.Frame()
 	first := ""
 	for _, s := range tr.Texts() {
-		if strings.HasPrefix(s, "d0：") {
+		if strings.HasPrefix(s, "LayerNorm d0：") {
 			first = s
 		}
 	}
@@ -1491,7 +1491,7 @@ func TestLNWorkingsFollowTheHoveredDimension(t *testing.T) {
 	tr.Frame()
 	var second string
 	for _, s := range tr.Texts() {
-		if strings.HasPrefix(s, "d47：") {
+		if strings.HasPrefix(s, "LayerNorm d47：") {
 			second = s
 		}
 	}

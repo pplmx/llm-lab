@@ -877,7 +877,7 @@ func TestPrintedLNLineUsesTheComputedNumbers(t *testing.T) {
 		t.Fatal("computeLN declined")
 	}
 
-	wantHeader := fmt.Sprintf("d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f",
+	wantHeader := fmt.Sprintf("LayerNorm d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f",
 		dim, p.mean, 1/p.invStd, p.invStd)
 	// The mean is bracketed when negative, the same rule the softmax line follows:
 	// "(x − -0.1499)" makes the reader decode two signs before checking the arithmetic.
@@ -1463,4 +1463,43 @@ func TestResidualChainClosesAcrossTokensAndLayers(t *testing.T) {
 		t.Fatalf("adding the printed residual terms moves the running total by %.2e", worst)
 	}
 	t.Logf("worst gap across prompts, layers and rows: %.2e", worst)
+}
+
+// TestEveryWorkingsLineNamesItsOwnSubject checks that a workings line can be read on its own.
+//
+// A tall card's arithmetic sits hundreds of DIP below the card's heading — measured at 1180×720,
+// the LayerNorm line is 243 DIP under its title, and a reader scrolling down loses the heading
+// before reaching it. So each block's first line has to say which quantity it is about.
+//
+// The residual chain already did ("d7 的残差流在第 1 层"). The LayerNorm header started at
+// "d7：μ = …", naming the dimension but not the operation, on a card that also discusses the
+// residual stream — the reader had to infer which of the card's two subjects they had arrived at.
+func TestEveryWorkingsLineNamesItsOwnSubject(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	a.SelToken = 10
+	a.HoverDimIn = 7
+	tr := ui.NewTester(a.View, 1180, 1400)
+	tr.Frame()
+
+	var lnLine, residualLine string
+	for _, s := range tr.Texts() {
+		switch {
+		case strings.HasPrefix(s, "LayerNorm d7："):
+			lnLine = s
+		case strings.Contains(s, "的残差流在第"):
+			residualLine = s
+		}
+	}
+	if residualLine == "" {
+		t.Fatal("the residual chain no longer names its own subject")
+	}
+	if lnLine == "" {
+		t.Fatal("the LayerNorm header no longer names its own subject; it must start with " +
+			"the operation, not just the dimension")
+	}
+	// And it must still carry the dimension, which is what ties it to the hovered strip.
+	if !strings.Contains(lnLine, "d7") {
+		t.Fatalf("the LayerNorm header lost its dimension: %q", lnLine)
+	}
 }

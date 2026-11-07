@@ -74,6 +74,17 @@
   - 最终用「**Key（位置 4）**」——直接对应矩阵列标 `4` 和检查器的 `key 4`。渲染出非对角格截图逐处比对确认三处说法一致
 - 顺带把回归测试从「标签里有数字 4」加强成端到端断言：用卡片画出的 `K[4]` 重算点积，必须复现这一格的分数（实测差 5e-08）
 
+### Fixed
+
+- 第 5 步 LayerNorm 的算式首行**没有自带主语**：写的是 `d7：μ = ...`，只点了维度、没点是哪个运算。而这张卡同时讲残差流和 LayerNorm 两件事，读者滚动到算式时（实测 1180×720 下这行在卡片标题下方 **243 DIP**，再往下一点标题就滚走了）没法确定自己看的是哪一段
+  - 残差链的首行早就写了「d7 的残差流在第 1 层」，只有 LN 这行缺
+  - 改成 `LayerNorm d7：μ = ...`，一行内加主语，不增加高度
+  - 两个按前缀定位的测试同步更新（`TestLNWorkingsFollowTheHoveredDimension`、`TestPrintedLNLineUsesTheComputedNumbers`），它们的断言内容不变
+  - 补 `TestEveryWorkingsLineNamesItsOwnSubject` 锁住「每一块算式的首行都要能独立读懂」
+  - 已验证：改回 `d7：μ = ...`，测试报 `the LayerNorm header no longer names its own subject; it must start with the operation, not just the dimension`
+  - 截图 0 变化——算式行只在悬停某个维度时才出现，快照集不含悬停态；另外单独渲染了一张悬停态确认排版
+- 顺带核查了四块算式的**可达性**：1180×720 首屏可见的是第 1、2、3、4 步；第 5 步（残差）和第 6 步（FFN）的算式需要滚动才能看到，这是卡片长度的自然结果、叙事顺序（先数据后算式）也正确，**不改**
+
 ### Added
 
 - 滚动可用之后，把「换页 vs 页内调整」这条交互约定立下来。之前没有任何测试区分这两件事，而它们的行为**必须相反**：

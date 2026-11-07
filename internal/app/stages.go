@@ -843,7 +843,13 @@ func lnWorkings(c *ui.Context, dim int, p lnParts) {
 		mu = "(" + mu + ")"
 	}
 	workingsLines(c, []string{
-		fmt.Sprintf("d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f", dim, p.mean, 1/p.invStd, p.invStd),
+		// The line travels with its own subject. By the time a reader scrolls a tall card down
+		// to the arithmetic, the card's title is off screen — measured at 1180×720, the
+		// LayerNorm line sits 700 DIP below its heading. The residual chain's first line
+		// already opens with "d7 的残差流在第 1 层"; this one started at "d7：μ = …" and a
+		// reader arriving at it could not tell which of the card's two subjects it belonged
+		// to.
+		fmt.Sprintf("LayerNorm d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f", dim, p.mean, 1/p.invStd, p.invStd),
 		fmt.Sprintf("(%.4f − %s) × %.4f × γ %.5f + β %.5f ≈ %.4f",
 			p.x, mu, p.invStd, p.gamma, p.beta, p.out),
 	})
