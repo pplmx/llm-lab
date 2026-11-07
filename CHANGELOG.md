@@ -34,6 +34,16 @@
   - 掩码格子不显示算式，改为说明「掩码位置不进 softmax，分母只对第 0 到第 q 列求和」
 - 算式逻辑抽成 `computeSoftmaxParts`，打印与计算同源；测试直接比对它与 `HeadAttn` 的值（误差 ≤1e-6），改错分母或分子都会失败
 
+### Added
+
+- 补齐「**减少动效**」这个偏好下**除阶段切换以外**的行为验证。此前只有 `TestReduceMotionSkipsTheStageFade` 一条，测的是切换阶段不播动画；**七个阶段的静止画面、滚动、hover、键盘都没测过**
+  - 实测：七个阶段在 `ReduceMotion` 开/关下**静止帧逐字节相同**（`0 of 5640000 bytes differ`），滚动、hover 命中格子、键盘切阶段全部照常
+  - 补两条测试：
+    - `TestReduceMotionChangesTheRestingFrameNowhere`——七个阶段两两比对，静止帧必须逐字节一致；将来若有人加一个「`ReduceMotion` 时换布局/隐藏卡片」的分支，会失败并指出是哪个阶段
+    - `TestReduceMotionLeavesInteractionAlone`——滚动、hover、键盘在偏好开启时照常工作（它们不是动画）
+  - 已验证：在某处插入 `if c.Preferences().ReduceMotion { return }` 跳过一张卡片，测试报 `stage 0 draws differently under ReduceMotion (first difference at byte 3541176)`
+  - 这个偏好不是「少画东西」，是「不要动画」——这条边界现在有了断言
+
 ### Fixed
 
 - **CONTRIBUTING.md 与 README.md 对同一件事各写了一份数字，两份都对不上模型**。热力图色深上限取决于提示词、层、头，README 说「第 0 层 4.6–12.5、第 1 层 8.1–15.2」，CONTRIBUTING 另一处说「本模型 5.4–8.3」

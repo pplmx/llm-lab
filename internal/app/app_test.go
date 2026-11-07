@@ -9069,3 +9069,81 @@ func TestTopAbsBarsKeepsTheLargestMagnitudes(t *testing.T) {
 		}
 	}
 }
+
+// TestReduceMotionChangesTheRestingFrameNowhere keeps the preference to what it means.
+//
+// The desktop preference asks for no animation. It does not ask for a different layout, different colours or different
+// content, so a stage's resting frame has to be identical either way — and the only place the app reads the preference
+// is the stage transition, which decides whether a fade plays, not how anything is drawn.
+//
+// Nothing checked that. A future branch that skipped a card or dimmed something under ReduceMotion would have passed every
+// test here; this fails, and names the stage.
+func TestReduceMotionChangesTheRestingFrameNowhere(t *testing.T) {
+	for step := 0; step < len(lessons); step++ {
+		a := newTestApp(t)
+		a.Step = step
+		a.SelToken = 20
+		plain := ui.Render(a.View, 1500, 940, 1)
+
+		b := newTestApp(t)
+		b.Step = step
+		b.SelToken = 20
+		tr := ui.NewTester(b.View, 1500, 940)
+		tr.SetPreferences(ui.Preferences{ReduceMotion: true})
+		tr.Frame()
+		tr.Frame()
+		got := tr.Image()
+
+		if len(got.Pix) != len(plain.Pix) {
+			t.Fatalf("stage %d renders a different size under ReduceMotion: %d vs %d bytes",
+				step, len(got.Pix), len(plain.Pix))
+		}
+		for i := range plain.Pix {
+			if plain.Pix[i] != got.Pix[i] {
+				t.Fatalf("stage %d draws differently under ReduceMotion (first difference at byte %d); "+
+					"the preference should silence animation, not change the picture", step, i)
+			}
+		}
+	}
+}
+
+// TestReduceMotionLeavesInteractionAlone is the other half: scrolling, hovering and the keyboard are not animations and
+// must behave the same with the preference on.
+func TestReduceMotionLeavesInteractionAlone(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.SetPreferences(ui.Preferences{ReduceMotion: true})
+	tr.Frame()
+
+	// Scrolling reaches the stage column.
+	if a.Scroll.Y != 0 {
+		t.Fatalf("scrolled before touching anything: %v", a.Scroll.Y)
+	}
+	tr.Scroll(400, 400, 0, 200)
+	tr.Frame()
+	if a.Scroll.Y == 0 {
+		t.Fatal("the stage column did not scroll under ReduceMotion")
+	}
+
+	// Hovering the matrix still identifies a cell.
+	found := false
+	for y := float32(700); y > 240 && !found; y -= 8 {
+		for x := float32(240); x < 420 && !found; x += 8 {
+			tr.Move(x, y)
+			tr.Frame()
+			found = a.HoverQ >= 0
+		}
+	}
+	if !found {
+		t.Fatal("moving over the attention matrix set no hovered cell under ReduceMotion")
+	}
+
+	// And the keyboard still changes stage.
+	before := a.Step
+	tr.Key(0, ui.KeyRight)
+	tr.Frame()
+	if a.Step != before+1 {
+		t.Fatalf("Right moved the stage from %d to %d under ReduceMotion", before, a.Step)
+	}
+}
