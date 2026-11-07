@@ -41,6 +41,14 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Fixed
+
+- token chip 上那段对比度注释里**引用的数字不准**：写的是「4.46:1 和 3.84:1」，而从注释的措辞看只核过 `16% 叠在 colPanel` 这一种
+  - 实测全部三种染色：16% 叠 panel 是 **3.88**、16% 叠 panel2 是 **3.58**、14% 叠 panel2 是 **3.69**——比注释暗示的范围更宽，且全部低于 4.5
+  - 注释已按实测值改写
+  - 补齐 `TestPaletteContrast` 缺失的两个组合：**染色叠在 `colPanel2` 上**（chip 选中态、stepper 当前行）。原来的 13 个组合只覆盖了 `over(accent 16%, colPanel)`，没有 panel2 变体
+  - 已验证：把新组合里的 `colMuted` 换成 `colFaint` 立刻失败（**3.56:1**）
+
 ### Added
 
 - 调色板里九个颜色**没有一句说明各自答什么问题**，而两个强调色仅看名字分不出：

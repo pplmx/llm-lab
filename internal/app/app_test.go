@@ -1145,6 +1145,13 @@ func TestPaletteContrast(t *testing.T) {
 		{"rail id on a hovered chip", colMuted, colPanel2, small},
 		{"rail id on the selected chip", colMuted, over(colAccent.Alpha(0.16), colPanel), small},
 		{"inspector glyph on its tint", colAccentOnTint, over(colAccent.Alpha(0.16), colPanel), small},
+		// The two tinted-chip states the audit above did not reach: the chip's
+		// base is colPanel2 when hovered, and the current stepper row sits on
+		// colPanel2 with a 14% tint. colFaint measures 3.58:1 and 3.69:1 there —
+		// worse than the 3.84:1 the widget's comment quoted — which is why both
+		// use colMuted.
+		{"rail id on a selected chip over colPanel2", colMuted, over(colAccent.Alpha(0.16), colPanel2), small},
+		{"stepper name on the current row", colText, over(colAccent.Alpha(0.14), colPanel2), small},
 		// Text on a filled accent/badge surface runs the other way.
 		{"stage badge", colBg, colAccent, small},
 		{"stepper number on a done dot", colBg, colMuted, small},
