@@ -123,7 +123,12 @@ func TestBundledParity(t *testing.T) {
 		t.Skipf("no bundled weights: %v", err)
 	}
 	if w.Reference == nil {
-		t.Skip("bundled weights carry no reference")
+		// The reference is recorded by the training run into the same weights.json that
+		// ships with the binary, so its absence means the weights were replaced by
+		// something this test cannot check — which is exactly when the check matters.
+		// Skipping would leave the forward pass compared against nothing.
+		t.Fatal("bundled weights carry no reference logits; tools/train.py records them, " +
+			"so these weights came from somewhere else")
 	}
 	tr := Forward(w, w.Reference.IDs)
 	var maxDiff float64

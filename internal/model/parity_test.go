@@ -73,7 +73,14 @@ func loadParity(t *testing.T) *parityFixture {
 	path := filepath.Join("testdata", "parity.json.gz")
 	fh, err := os.Open(path)
 	if err != nil {
-		t.Skipf("no parity fixture (run tools/parity.py): %v", err)
+		// This used to skip, which meant the strongest correctness check in the
+		// repository could disappear without a trace: delete or omit the fixture and the
+		// suite still reports PASS, with the only remaining coverage of the per-tensor
+		// layout being whatever the render tests happen to notice. The fixture is
+		// tracked, so its absence is a broken checkout, not a configuration choice.
+		t.Fatalf("parity fixture missing: %v\n"+
+			"it is tracked in git; restore it with `git checkout internal/model/testdata`,"+
+			" or regenerate it with `python3 tools/parity.py`", err)
 	}
 	defer func() {
 		if err := fh.Close(); err != nil {

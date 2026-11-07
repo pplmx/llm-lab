@@ -43,6 +43,15 @@
 
 ### Fixed
 
+- 两条**最核心的正确性检查会在缺少数据时静默跳过**：
+  - `TestParityEveryTensor` 在 `testdata/parity.json.gz` 缺失时用 `t.Skipf`，实测把 fixture 移走后 `go test` 仍然报 **PASS**。这个 fixture 是 PyTorch 导出的逐层中间张量，正是「比只比最终 logits 严格得多」那条 README 承诺的依据；它被 git 跟踪，缺失属于**检出损坏**而不是配置选择
+  - `TestBundledParity` 在权重没有 `Reference` 时 `t.Skip` 跳过。参考 logits 由 `tools/train.py` 写进同一份 `weights.json`，缺失意味着权重来自别处——**那正是该检查最要紧的时候**
+  - 两处都改成 `t.Fatalf`，并给出恢复方法（`git checkout internal/model/testdata` / `python3 tools/parity.py`）
+  - 已验证：移走 fixture 后测试失败并打印上述提示
+- 顺带核查测试基础设施其余部分无问题：`newTestApp` 的 `sync.Once` 权重只读共享、`TestUntrainedWeightsWarned` 用独立 `model.Random` 不污染共享状态、`writeSnapshot` 会自建目录、11 处 `t.Skip`（app 侧）全是显式前提检查
+
+### Fixed
+
 - 全仓搜「只记录、不断言」的测试分支，又找到两处：
   - `TestFFNShareUsesAbsoluteMass`：注释写着「the point of the absolute denominator: it must report a materially smaller share」，代码却是 `if naive <= want*2 { t.Logf(...) }`。而且测试用的那一行（默认 token 35）实测比值 **3.05**，远大于 2，**这个分支从未执行过**——是死代码加假断言。改成 `t.Fatalf`，并记录实测：绝对值分母 **16.05%** vs 有符号分母 **48.95%**
   - `TestScaleReadoutIsTheSameOnBothPanels`：注释说「assert the printed form is the same」，代码同样只 `t.Logf`。核查后发现**前一条断言已经覆盖了这个意图**（`want` 按面板的构造方式生成，改精度就会对不上计数），所以这段是冗余的——**删掉**而不是改成第二条断言
