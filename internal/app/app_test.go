@@ -8556,3 +8556,50 @@ func TestGeluIsStatedToBeAFixedFunction(t *testing.T) {
 			truncateForTest(body, 160))
 	}
 }
+
+// TestHeadControlIsNotTabReachable records a limitation rather than a behaviour to preserve.
+//
+// The layer, head and temperature controls sit in the top bar. Tabbing reaches the layer control and the
+// temperature slider — arrow keys then change the focused one, so the app's global Right/Left shortcut does
+// not swallow them — but the head control is never focused, however many times Tab is pressed. Adding
+// Focusable() to both Segmented controls changes nothing, so the cause is in how the toolkit assigns focus
+// within a segmented group, not in this app.
+//
+// It is recorded because the next person to look at keyboard reachability will ask this exact question, and
+// because the failure is silent: the control draws and responds to the mouse, so nothing on screen suggests
+// it is unreachable from the keyboard.
+//
+// The head can still be changed without the mouse, but only indirectly: shift+arrows walk the matrix on the
+// two attention stages, which shows the effect of one head at a time without selecting another.
+func TestHeadControlIsNotTabReachable(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2 // attention stage: layer and head are both enabled here
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	seen := map[string]bool{}
+	for i := 0; i < 24; i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
+		l0, h0, tp0 := a.Layer, a.Head, a.Temp
+		tr.Key(0, ui.KeyRight)
+		tr.Frame()
+		if a.Layer != l0 {
+			seen["layer"] = true
+		}
+		if a.Head != h0 {
+			seen["head"] = true
+		}
+		if a.Temp != tp0 {
+			seen["temp"] = true
+		}
+	}
+	if !seen["layer"] || !seen["temp"] {
+		t.Fatalf("tabbing no longer reaches the controls it used to (%v); if the toolkit gained focus "+
+			"support, head may be reachable too and this record should be replaced by a positive test",
+			seen)
+	}
+	if seen["head"] {
+		t.Fatal("the head control is tab reachable now; replace this record with a test that requires it")
+	}
+}
