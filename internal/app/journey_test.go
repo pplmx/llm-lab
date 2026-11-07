@@ -634,3 +634,55 @@ func TestPauseResumeAndRestartAtTheEnd(t *testing.T) {
 		t.Fatalf("after restarting from the end, an interval moved the reader to stage %d, want 2", b.Step+1)
 	}
 }
+
+// TestEveryShortcutHasAVisibleAlternative is the answer to "the help is below the fold".
+//
+// The shortcut line sits at the bottom of the lesson card, and at 1180×720 it is off-screen on all seven stages — measured,
+// it lands between y=852 and y=1538 in a 720-tall window. The matrix stages already work around this by repeating their own
+// two keys in the step bar, which is always visible. That works because every other shortcut has something on screen the
+// reader can click instead; this checks that, so the day a button is removed the fact that its key was the only path is a
+// test failure rather than something a reader discovers.
+//
+// The mapping is: arrows → the previous/next buttons, space → the play button, enter → the sample button, 1–7 → the sidebar
+// stage list. Shift+arrows are the exception and are handled by the step bar directly, which the last case checks.
+func TestEveryShortcutHasAVisibleAlternative(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+
+	visible := func(label string) bool {
+		r, ok := tr.Find(label)
+		return ok && r.Y+r.H <= 720 && r.X+r.W <= 1180
+	}
+	for _, label := range []string{"▶ 自动播放", "← 上一步", "下一步 →"} {
+		if !visible(label) {
+			t.Errorf("%q is not on screen at 1180×720, so its keyboard shortcut has no alternative there", label)
+		}
+	}
+	// The sample button is in the top bar, which never scrolls.
+	if !visible("采样下一个 token") {
+		t.Error("the sample button is not on screen at 1180×720, so Enter has no alternative")
+	}
+	// Every stage is reachable by clicking the sidebar, which is also always on screen.
+	for i := range lessons {
+		if !visible(fmt.Sprintf("步骤 %d %s", i+1, lessons[i].name)) {
+			t.Errorf("stage %d is not clickable at 1180×720, so its digit key has no alternative", i+1)
+		}
+	}
+
+	// The matrix keys are the ones with no button, so the step bar states them where they apply.
+	for _, step := range []int{2, 3} {
+		b := newTestApp(t)
+		b.Step = step
+		bt := ui.NewTester(b.View, 1180, 720)
+		bt.Frame()
+		r, ok := bt.Find("⇧ + 方向键 移动格子 · 点击固定")
+		if !ok {
+			t.Fatalf("stage %d draws a matrix but the step bar does not state the key for it", step+1)
+		}
+		if r.Y+r.H > 720 {
+			t.Fatalf("stage %d states the matrix key below the fold at y=%.0f", step+1, r.Y)
+		}
+	}
+}
