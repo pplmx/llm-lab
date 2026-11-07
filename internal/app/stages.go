@@ -881,16 +881,28 @@ func ffnParamShare(c model.Config) (ofAll, ofBlocks float64) {
 	return ffn / all, ffn / blocks
 }
 
+// activeThreshold is the cutoff behind the FFN card's "激活 > 0.01 的维度" line. The
+// stage and its inspector both quote it, so it lives in one place: two copies of the
+// number would let the two panels report different counts for the same row.
+const activeThreshold = 0.01
+
+// countActive returns how many of the hidden dimensions clear activeThreshold. Shared by
+// the FFN stage card and its inspector, which state the same count.
+func countActive(hidden []float32) int {
+	n := 0
+	for _, v := range hidden {
+		if v > activeThreshold {
+			n++
+		}
+	}
+	return n
+}
+
 func (a *App) stageFFN(c *ui.Context) {
 	l := a.layer()
 	i := clampIndex(a.SelToken, len(a.Trace.Tokens))
 	hidden := l.Hidden[i]
-	active := 0
-	for _, v := range hidden {
-		if v > 0.01 {
-			active++
-		}
-	}
+	active := countActive(hidden)
 	card(c, func() {
 		ofAll, ofBlocks := ffnParamShare(a.Trace.Config)
 		sectionTitle(c, "升维 → GELU → 降维",
@@ -1395,12 +1407,7 @@ func (a *App) inspectorFFN(c *ui.Context) {
 	l := a.layer()
 	i := clampIndex(a.SelToken, len(a.Trace.Tokens))
 	hidden := l.Hidden[i]
-	active := 0
-	for _, v := range hidden {
-		if v > 0.01 {
-			active++
-		}
-	}
+	active := countActive(hidden)
 	mean, std := meanStd(hidden)
 	_, hi := minMaxFloat(hidden)
 	card(c, func() {

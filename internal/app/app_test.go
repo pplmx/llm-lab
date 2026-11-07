@@ -5935,3 +5935,55 @@ func TestCJKTruncationKeepsWholeCharacters(t *testing.T) {
 	}
 	t.Fatalf("the card does not report %q", wantDropped)
 }
+
+// TestFFNStageAndInspectorAgreeOnTheActiveCount keeps the two panels showing one number.
+//
+// "激活 > 0.01 的维度" appears twice on the FFN stage — once on the card, once in the
+// inspector — and both used to compute it with their own loop over the same threshold.
+// Two copies of a cutoff are two chances for the panels to disagree about the same row,
+// and a reader comparing them would have no way to tell which was right.
+//
+// They now share countActive. This asserts the shared count is what both render, and
+// pins the threshold itself, since a change to it is a change to the lesson's claim about
+// sparsity.
+func TestFFNStageAndInspectorAgreeOnTheActiveCount(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	hidden := a.layer().Hidden[10]
+	want := fmt.Sprintf("%d / %d (%.0f%%)", countActive(hidden), len(hidden),
+		100*float64(countActive(hidden))/float64(len(hidden)))
+
+	// The inspector prints the count in that exact form; the card prefixes it.
+	inInspector := false
+	for _, s := range tr.Texts() {
+		if s == want {
+			inInspector = true
+		}
+	}
+	if !inInspector {
+		t.Fatalf("the inspector does not print %q", want)
+	}
+
+	// And the card's line must use the same count, not a count of its own.
+	// The card words it "输出 > 0.01" where the inspector says "激活 > 0.01" — the same
+	// count described from the two ends of the same row.
+	wantCard := fmt.Sprintf("输出 > 0.01 的维度 %s", want)
+	var sawCard bool
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, wantCard) {
+			sawCard = true
+		}
+	}
+	if !sawCard {
+		t.Fatalf("the stage card does not print %q", wantCard)
+	}
+
+	// The threshold the sentence names has to be the one the code uses.
+	if activeThreshold != 0.01 {
+		t.Fatalf("the cutoff moved to %v but the card still says 0.01", activeThreshold)
+	}
+}
