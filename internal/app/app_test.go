@@ -6287,3 +6287,48 @@ func TestTopHeadingCountsTheRowsItLists(t *testing.T) {
 		t.Fatal("the heading is still written out as a literal")
 	}
 }
+
+// TestTokenLessonExplainsMultiRuneSymbols checks the example that breaks the lesson's own
+// rule of thumb.
+//
+// The stage says a hanzi costs three tokens, which invites the reader to model this as
+// "three bytes per character". The family emoji is the counter-example: five runes, none of
+// them the thing the reader sees — one picture — and eighteen tokens. Without it the rule of
+// thumb reads as the whole truth.
+//
+// The claim is checked against the tokenizer rather than trusted: the example is quoted by
+// name in the text (the glyph itself renders as a box, since the font has no combined-emoji
+// support), and the number beside it has to be the token count that prompt really produces.
+func TestTokenLessonExplainsMultiRuneSymbols(t *testing.T) {
+	const family = "\U0001F468\u200D\U0001F469\u200D\U0001F467"
+	a := newTestApp(t)
+	a.Prompt = family
+	a.recompute()
+	got := len(a.Trace.Tokens)
+	if got != 18 {
+		t.Fatalf("the lesson quotes 18 tokens for the family emoji; the tokenizer gives %d", got)
+	}
+	if runes := utf8.RuneCountInString(family); runes != 5 {
+		t.Fatalf("the family emoji is %d runes, not 5", runes)
+	}
+
+	// And the sentence has to be in the rendered stage.
+	b := newTestApp(t)
+	b.Step = 0
+	tr := ui.NewTester(b.View, 1500, 940)
+	tr.Frame()
+	var para string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "模型不认识字母") {
+			para = s
+		}
+	}
+	if para == "" {
+		t.Fatal("the tokenisation paragraph is not rendered")
+	}
+	for _, want := range []string{"18 个 token", "零宽连接符", "四个字节"} {
+		if !strings.Contains(para, want) {
+			t.Fatalf("the paragraph does not mention %q", want)
+		}
+	}
+}
