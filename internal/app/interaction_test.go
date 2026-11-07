@@ -765,3 +765,51 @@ func TestEveryTabStopDrawsSomething(t *testing.T) {
 		t.Fatalf("walked %d tab stops, expected 6", seen)
 	}
 }
+
+// TestDiscoverabilityHintsAreCovered checks that the interactions a reader cannot infer from
+// the layout are advertised where they apply.
+//
+// Four things in this app are only learnable from text: that the arrows move a matrix cell,
+// that clicking a cell pins it, that some top-bar controls are off on this stage and where
+// they turn on, and that Shift+arrows mean something different on matrix stages. Three of
+// the four were added in response to a specific confusion; nothing checked them as a set, so
+// any one of them could have been dropped in a restyle.
+//
+// Each is asserted on the stage it belongs to and, for the matrix pair, on the stages it does
+// not belong to — a hint that shows everywhere is noise, not a signpost.
+func TestDiscoverabilityHintsAreCovered(t *testing.T) {
+	stageText := func(step int) string {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		var parts []string
+		for _, s := range tr.Texts() {
+			parts = append(parts, s)
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	for _, step := range []int{2, 3} {
+		text := stageText(step)
+		for _, want := range []string{"移动格子", "点击固定", "移动矩阵格子"} {
+			if !strings.Contains(text, want) {
+				t.Fatalf("stage %d draws a matrix but does not mention %q anywhere", step, want)
+			}
+		}
+	}
+	for _, step := range []int{0, 1, 4, 5, 6} {
+		text := stageText(step)
+		if strings.Contains(text, "移动格子") {
+			t.Fatalf("stage %d has no matrix but advertises moving a cell", step)
+		}
+	}
+
+	// The dimming explanation has to be reachable where the dimming happens: on a stage
+	// that disables at least one control.
+	for _, step := range []int{0, 1, 4, 5, 6} {
+		if !strings.Contains(stageText(step), "不生效") {
+			t.Fatalf("stage %d dims a control but never says where it turns on", step)
+		}
+	}
+}
