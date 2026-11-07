@@ -378,3 +378,52 @@ func TestClearingThePromptResetsEverythingThatPointedIntoIt(t *testing.T) {
 		t.Fatalf("after typing, SelToken is %d and there are %d tokens", a.SelToken, len(a.Trace.Tokens))
 	}
 }
+
+// TestStageSwitchKeepsTheTokenAndDropsTheCell draws the line between the three kinds of positional state.
+//
+// Seven stages describe the same prompt, so the selected token is meaningful in all of them: a reader who looks at token
+// 10's embedding and then moves to the score stage wants token 10's scores, not token 35's. The keyboard's matrix cell and
+// the hovered cell are the opposite — they name a position inside one stage's drawing, and number 10 in the softmax matrix
+// is not the same place as number 10 in the residual strips.
+//
+// So one survives a switch and two are cleared. That split is a decision, and nothing stated it in one place; each half was
+// covered incidentally by tests for other things.
+func TestStageSwitchKeepsTheTokenAndDropsTheCell(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 5, 3
+	a.HoverQ, a.HoverK = 4, 2
+
+	// Leaving an attention stage for one that draws no matrix.
+	a.selectStep(0)
+	if a.SelToken != 10 {
+		t.Fatalf("switching to stage 1 moved the selection to token %d; the token means the same thing on every stage",
+			a.SelToken)
+	}
+	if a.KeyQ >= 0 || a.KeyK >= 0 {
+		t.Errorf("the matrix cell survived a switch to a stage with no matrix: %d,%d", a.KeyQ, a.KeyK)
+	}
+	if a.HoverQ >= 0 || a.HoverK >= 0 {
+		t.Errorf("the hovered cell survived a switch to a stage with no matrix: %d,%d", a.HoverQ, a.HoverK)
+	}
+
+	// Coming back does not resurrect the old cell: it belonged to a drawing the reader had left.
+	a.selectStep(3)
+	if a.SelToken != 10 {
+		t.Fatalf("returning to the softmax stage moved the selection to token %d", a.SelToken)
+	}
+	if a.KeyQ >= 0 || a.KeyK >= 0 {
+		t.Errorf("returning to the matrix stage restored a stale cell %d,%d", a.KeyQ, a.KeyK)
+	}
+
+	// And with a cell set, switching within the two matrix stages clears it as well — the rows mean different things.
+	a.KeyQ, a.KeyK = 6, 2
+	a.selectStep(2)
+	if a.KeyQ >= 0 || a.KeyK >= 0 {
+		t.Errorf("the cell survived moving between two matrix stages: %d,%d", a.KeyQ, a.KeyK)
+	}
+	if a.SelToken != 10 {
+		t.Fatalf("moving between matrix stages moved the selection to token %d", a.SelToken)
+	}
+}

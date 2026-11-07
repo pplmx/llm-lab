@@ -36,6 +36,15 @@
 
 ### Added
 
+- 补 `TestStageSwitchKeepsTheTokenAndDropsTheCell`：切换阶段时**三类位置状态各有各的处理**，此前只是零散地间接覆盖
+  - **选中的 token 保留**——七个阶段描述的是同一句话，读者看第 10 个 token 的嵌入后切到分数阶段，要的是第 10 个的分数
+  - **键盘矩阵格子清除**、**悬停格子清除**——它们指向的是**某一个阶段图里的位置**，softmax 矩阵里的第 10 号与残差条带里的第 10 号不是同一处
+  - 实测 `3 → 0`：`SelToken=10` 保留，`KeyQ/KeyK=-1`、`HoverQ/HoverK=-1`；`0 → 3` 回来也不恢复旧格子
+  - 也覆盖**两个矩阵阶段之间**切换（第 3 步 ↔ 第 4 步）：格子照样清除，token 照样保留
+  - 已验证：把 `clearHover` 里的 `a.KeyQ, a.KeyK = -1, -1` 删掉，测试报 `the matrix cell survived a switch to a stage with no matrix: 5,3`
+
+### Added
+
 - 补 `TestClearingThePromptResetsEverythingThatPointedIntoIt`：把「清空提示词」这一个动作**同时让哪些状态失效**收在一处验证
   - `App` 里有四个字段是**指向当前提示词的索引**：选中的 token、键盘所在的矩阵格子、指针所在的格子、上一次采样的描述。提示词没了，它们都不再有意义——残留的 `SelToken` 会指到数组外，残留的 `LastSample` 会描述一段读者已看不见的文本
   - 实测清空后：`SelToken = -1`、`KeyQ/KeyK = -1`、`HoverQ/HoverK = -1`、`LastSample = ""`，全部归位
