@@ -171,3 +171,38 @@ func TestCheckCIRecipeMatchesTheWorkflow(t *testing.T) {
 		}
 	}
 }
+
+// TestSnapshotRecipesExist keeps the visual gate runnable without hand-written shell.
+//
+// Comparing 39 PNGs was done by hand every time the UI changed, and the hand version failed
+// twice in ways worth encoding: once against an empty baseline directory, which reported
+// every file as changed, and once against a stale directory from a round that had rendered
+// nothing. A recipe that refuses an empty baseline turns both into a clear error.
+//
+// The test checks the recipes exist and that the diff one guards the empty case, since that
+// guard is the part a future edit is most likely to drop.
+func TestSnapshotRecipesExist(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "justfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+
+	for _, want := range []string{"\nsnapshots dir=", "\nsnapshots-diff base "} {
+		if !strings.Contains(src, want) {
+			t.Fatalf("the justfile has no %q recipe", strings.TrimSpace(want))
+		}
+	}
+
+	// The render recipe must go through RENDER_DIR, or it would write to /tmp and the
+	// diff would compare against whatever happened to be there.
+	if !strings.Contains(src, `RENDER=1 RENDER_DIR="{{dir}}" go test`) {
+		t.Fatal("the snapshots recipe does not render into its argument")
+	}
+
+	// And the diff must refuse an empty baseline.
+	if !strings.Contains(src, "基线目录是空的") {
+		t.Fatal("snapshots-diff no longer rejects an empty baseline; an empty directory " +
+			"would report every file as changed")
+	}
+}

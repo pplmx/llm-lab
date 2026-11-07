@@ -103,6 +103,37 @@ doctor:
 clean:
     rm -rf build
 
+# 渲染全部截图到指定目录（默认 /tmp/llm-lab-shots）
+snapshots dir="/tmp/llm-lab-shots":
+    RENDER=1 RENDER_DIR="{{dir}}" go test ./internal/app -run 'TestRenderSteps|TestRenderSizes' -count=1
+    @echo "截图已写入 {{dir}}（$(ls {{dir}}/*.png | wc -l) 张）"
+
+# 与另一份截图逐字节对比：just snapshots-diff <基线目录> [新目录]
+#
+# 改界面时先说清楚预期：不改变视觉的改动应当 0 差异，故意改视觉的应当只差在
+# 动手的那几个阶段。两者都靠这个配方核对，比手写 cmp 循环可靠——手写时漏掉
+# 一张、或者把空目录当基线（会误报「全部变化」）都不会有人发现。
+snapshots-diff base new="/tmp/llm-lab-shots":
+    #!/usr/bin/env bash
+    if [ ! -d "{{base}}" ]; then echo "基线目录不存在：{{base}}"; exit 1; fi
+    if [ -z "$(ls -A {{base}} 2>/dev/null)" ]; then echo "基线目录是空的：{{base}}"; exit 1; fi
+    changed=0 missing=0 added=0
+    for f in "{{base}}"/*.png; do
+        n=$(basename "$f")
+        if [ ! -f "{{new}}/$n" ]; then
+            echo "缺失：$n"; missing=$((missing+1))
+        elif ! cmp -s "$f" "{{new}}/$n"; then
+            echo "变化：$n"; changed=$((changed+1))
+        fi
+    done
+    for f in "{{new}}"/*.png; do
+        n=$(basename "$f")
+        if [ ! -f "{{base}}/$n" ]; then echo "新增：$n"; added=$((added+1)); fi
+    done
+    total=$(ls "{{base}}"/*.png 2>/dev/null | wc -l)
+    echo "基线 $total 张：$changed 变化、$missing 缺失、$added 新增"
+    if [ "$missing" -gt 0 ]; then exit 1; fi
+
 # 列出已有产物及体积
 artifacts:
     @files="$(du -sh build/*/* 2>/dev/null | sort -k2)"; \
