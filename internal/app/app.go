@@ -159,9 +159,19 @@ func (a *App) applyPrompt(p string) {
 // which is why the assignment stays in applyPrompt rather than moving in here.
 func (a *App) promptChanged() {
 	a.LastSample = ""
+	a.stopPlayback()
+	a.recompute()
+}
+
+// stopPlayback halts the automatic advance and drops its pending deadline. Every path
+// that replaces the prompt calls it: the prompt being played no longer exists, so
+// continuing would move the reader away from whatever they just did.
+//
+// It lives apart from promptChanged because the sample path also needs it but must keep
+// LastSample — the record of what was drawn is the point of sampling.
+func (a *App) stopPlayback() {
 	a.Playing = false
 	a.NextAt = time.Time{}
-	a.recompute()
 }
 
 func (a *App) recompute() {
@@ -435,8 +445,7 @@ func (a *App) selectStep(step int) {
 	}
 	a.Step = step
 	a.Scroll.X, a.Scroll.Y = 0, 0
-	a.Playing = false
-	a.NextAt = time.Time{}
+	a.stopPlayback()
 	a.clearHover()
 }
 
@@ -533,8 +542,7 @@ func (a *App) handleKeys(c *ui.Context) {
 		// Esc is the one "let go of everything" key: it stops playback and
 		// releases a pinned cell, so a reader who clicked the matrix can get
 		// back to plain hovering without hunting for the cell again.
-		a.Playing = false
-		a.NextAt = time.Time{}
+		a.stopPlayback()
 		a.KeyQ, a.KeyK = -1, -1
 	// Shift+arrows. On the two attention stages they walk the matrix, since a
 	// matrix cell is what those stages teach and was the last interaction only
@@ -1181,13 +1189,10 @@ func (a *App) sampleNext() {
 	a.LastSample = fmt.Sprintf("%q (id %d, p=%.3f)", byteText(pick), pick, probs[pick])
 	// A byte-level model predicts bytes, not runes: append exactly one byte.
 	a.Prompt += string([]byte{byte(pick)})
-	// Sampling edits the prompt, and the two other ways of editing it stop playback
-	// first: a reader who is watching the lesson play and then samples should stay on
-	// the stage they are looking at, not be carried to the next one a second later.
-	// LastSample is set above rather than through promptChanged because that helper
-	// clears it — the sample is the point here.
-	a.Playing = false
-	a.NextAt = time.Time{}
+	// Sampling edits the prompt like the other two paths, so it stops playback for the
+	// same reason. It does not go through promptChanged, which would clear the record
+	// set above — that record is the point of this path.
+	a.stopPlayback()
 	a.recompute()
 }
 

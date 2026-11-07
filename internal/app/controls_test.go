@@ -180,3 +180,52 @@ func TestTemperatureNoteFollowsItsRange(t *testing.T) {
 		t.Fatalf("the temperature stage moved to %d; the sampling stage is 7", tempFrom+1)
 	}
 }
+
+// TestStoppingPlaybackIsOneOperation keeps the four stop sites from drifting.
+//
+// "Stop playback" means two things everywhere it happens — set Playing false and drop
+// the pending deadline — and it happened at four sites: a prompt change, sampling, a
+// stage jump, and Escape. Three of them wrote both lines, and the sample path initially
+// wrote neither, which is how the reader got carried off the stage they had just sampled
+// from.
+//
+// The count is the assertion: the package should contain exactly one place that writes
+// Playing = false together with the clock reset (stopPlayback itself), plus play()'s own
+// halt at the end of the lesson, which needs only the flag because it is not going to be
+// restarted by a stale deadline.
+func TestStoppingPlaybackIsOneOperation(t *testing.T) {
+	src, err := os.ReadFile("app.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(src), "\n")
+
+	pairs := 0
+	var where []string
+	for i := 0; i+1 < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "a.Playing = false" &&
+			strings.TrimSpace(lines[i+1]) == "a.NextAt = time.Time{}" {
+			pairs++
+			where = append(where, fmt.Sprintf("app.go:%d", i+1))
+		}
+	}
+	if pairs != 1 {
+		t.Fatalf("the two-line stop appears %d times (%v); it belongs in stopPlayback "+
+			"alone, or the sites will drift the way they did before", pairs, where)
+	}
+	if !strings.Contains(string(src), "func (a *App) stopPlayback() {") {
+		t.Fatal("stopPlayback is gone; the sites it served are now independent again")
+	}
+
+	// The bare flag is still allowed once more, for play()'s halt at the end.
+	bare := 0
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "a.Playing = false" {
+			bare++
+		}
+	}
+	if bare != 2 {
+		t.Fatalf("%d writes of Playing = false; expected one in stopPlayback and one "+
+			"for the end-of-lesson halt", bare)
+	}
+}
