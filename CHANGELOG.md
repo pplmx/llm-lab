@@ -41,6 +41,15 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Added
+
+- 目标第 2 条要「跨视图联动」，但此前只验证过**联动发生了**（选中改变 → 画面变化），没验证**联到了正确的对象**
+  - 补 `TestSelectionReachesEveryStageCorrectly`：三个选中位（首 / 中 / 末）× 七个阶段，检查器表头必须写着 `token #N / T-1` 且 N 就是选中值——21 个组合
+  - 补 `TestLayerAndHeadReachTheCardSubtitles`：层/头控件改变后，第 3 步的三处副标题必须同时跟着变（4 个组合）
+  - 已验证会失败：把表头里的 `a.SelToken` 写死成 `0`，测试报 `stage 0 with token 10 selected does not show "token #10 / 35"; the inspector is describing something else`
+  - 实测当前全部正确：21/21 表头、4/4 组副标题
+- 本轮另两项静态检查无缺陷：主栏 13 张卡片的标题**都能回答「这张卡展示什么」**且副标题说明了范围；「为什么中文更长」的副标题是空字符串属于有意设计（标题本身已是完整问句，`sectionTitle` 遇空串不渲染）
+
 ### Changed
 
 - 第 5 步检查器第一张卡的标题是**笼统的「向量」**，真正说明内容的「残差流」在副标题里。同栏其他卡片都写了主语（「隐藏层统计」「分布统计」），只有这张要读者再读一行小字

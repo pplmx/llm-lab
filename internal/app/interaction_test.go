@@ -813,3 +813,63 @@ func TestDiscoverabilityHintsAreCovered(t *testing.T) {
 		}
 	}
 }
+
+// TestSelectionReachesEveryStageCorrectly checks that the inspector describes the token that
+// is actually selected, on every stage.
+//
+// An earlier test in this sweep proved that changing the selection changes the frame. That
+// says something moved, not that it moved to the right thing: an inspector stuck on token 10
+// while the strip highlights 35 would repaint just as convincingly.
+//
+// Measured across three selections (first, middle, last) and all seven stages: every header
+// reads "token #N / T-1" for the selected N. Twenty-one combinations, none wrong.
+func TestSelectionReachesEveryStageCorrectly(t *testing.T) {
+	a := newTestApp(t)
+	total := len(a.Trace.Tokens)
+
+	for _, token := range []int{0, 10, total - 1} {
+		for step := 0; step < len(lessons); step++ {
+			b := newTestApp(t)
+			b.Step = step
+			b.SelToken = token
+			tr := ui.NewTester(b.View, 1500, 940)
+			tr.Frame()
+			// The strip numbers tokens from zero and the header shows the last index
+			// beside the count, which is what a reader compares against.
+			want := fmt.Sprintf("token #%d / %d", token, total-1)
+			if !tr.HasText(want) {
+				t.Fatalf("stage %d with token %d selected does not show %q; the inspector "+
+					"is describing something else", step, token, want)
+			}
+		}
+	}
+}
+
+// TestLayerAndHeadReachTheCardSubtitles is the same check for the two other controls.
+//
+// Three subtitles on the attention stage quote "层 N · 头 N". They followed the controls when
+// measured, and a card still reporting layer 0 while the segmented control sits on 1 is the
+// same class of failure as a stale selection.
+func TestLayerAndHeadReachTheCardSubtitles(t *testing.T) {
+	for _, layer := range []int{0, 1} {
+		for _, head := range []int{0, 3} {
+			a := newTestApp(t)
+			a.Step = 3
+			a.Layer = layer
+			a.Head = head
+			tr := ui.NewTester(a.View, 1500, 940)
+			tr.Frame()
+			want := fmt.Sprintf("层 %d · 头 %d", layer, head)
+			found := 0
+			for _, s := range tr.Texts() {
+				if strings.Contains(s, want) {
+					found++
+				}
+			}
+			if found < 3 {
+				t.Fatalf("layer %d head %d: only %d subtitles say %q, expected 3",
+					layer, head, found, want)
+			}
+		}
+	}
+}
