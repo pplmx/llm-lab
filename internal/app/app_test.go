@@ -8890,3 +8890,49 @@ func TestAdvertisedShortcutsDoWhatTheLineSays(t *testing.T) {
 		}
 	}
 }
+
+// TestInspectorSubtitleMatchesTheCards checks the layer and head the inspector claims against the range table.
+//
+// The header's stage name comes from lessons[a.Step].name — the same value the cards are dispatched on — so it cannot
+// disagree with them, and asserting it would be a test that can never fail. The subtitle is different: it is built
+// separately as "层 %d · 头 %d", so it can claim a head on a stage whose cards show one head's row regardless.
+func TestInspectorSubtitleMatchesTheCards(t *testing.T) {
+	for step := 0; step < len(lessons); step++ {
+		a := newTestApp(t)
+		a.Step = step
+		a.SelToken = 20
+		tr := ui.NewTester(a.View, 1500, 2000)
+		tr.Frame()
+		texts := tr.Texts()
+
+		idx := -1
+		for i, s := range texts {
+			if s == "检查器" {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 || idx+1 >= len(texts) {
+			t.Fatalf("stage %d: no inspector header", step)
+		}
+		// Checked as a sanity anchor rather than a guard: both sides read the same slice.
+		if got := texts[idx+1]; got != lessons[step].name {
+			t.Fatalf("stage %d: header says %q, lessons say %q", step, got, lessons[step].name)
+		}
+
+		inLayer := inStages(step, layerFrom, layerTo)
+		inHead := inStages(step, headFrom, headTo)
+		var sub string
+		if idx+2 < len(texts) {
+			sub = texts[idx+2]
+		}
+		if got := strings.Contains(sub, "层"); got != inLayer {
+			t.Fatalf("stage %d (%s): subtitle %q reports a layer, but the range says %v",
+				step, lessons[step].name, sub, inLayer)
+		}
+		if got := strings.Contains(sub, "头"); got != inHead {
+			t.Fatalf("stage %d (%s): subtitle %q reports a head, but the range says %v",
+				step, lessons[step].name, sub, inHead)
+		}
+	}
+}
