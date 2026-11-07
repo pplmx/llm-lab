@@ -180,6 +180,20 @@ func TestTypingDoesNotTriggerShortcuts(t *testing.T) {
 	if a.Step != 0 {
 		t.Fatalf("left arrow in the input changed the step to %d", a.Step)
 	}
+
+	// Space is the one that matters most: it types a separator in prose and is also
+	// the play/pause key. Only digits and arrows were checked, so a regression that
+	// let Space through to the lesson would have left the reader unable to type a
+	// space in the prompt at all — every keystroke starting or stopping playback.
+	before = a.Prompt
+	tr.TypeKey(0, ui.KeySpace, " ")
+	tr.Frame()
+	if a.Playing {
+		t.Fatal("typing a space in the input started playback")
+	}
+	if a.Prompt == before {
+		t.Fatalf("typing a space did not reach the input: %q", a.Prompt)
+	}
 }
 
 // TestPresetPrompt clicks the long-prompt preset, which should switch the
