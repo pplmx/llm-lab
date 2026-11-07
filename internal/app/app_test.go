@@ -6109,3 +6109,65 @@ func TestFFNLessonQuotesTheLoadedWeights(t *testing.T) {
 		t.Fatal("the lesson paragraph still hard-codes 58%")
 	}
 }
+
+// TestSoftmaxLessonClaimsMatchTheAttention checks the empirical sentence in the Softmax
+// lesson.
+//
+// The paragraph says "第 0 层的头 0 几乎每个位置都盯着紧邻的前一个 token，第 1 层的几个头则
+// 反复回到同一小批位置上" — a claim about what this checkpoint's attention actually does.
+// Nothing verified it. If a new checkpoint, a different prompt or a changed forward pass
+// made layer 0's head 0 stop attending to the previous token, the lesson would keep
+// asserting it and the heatmap would quietly disagree.
+//
+// "几乎每个" is checked as "most rows"; "几个头…同一小批位置" is checked by the layer-0
+// head-0 peak count being far higher than layer 1's, which is the contrast the sentence
+// draws.
+func TestSoftmaxLessonClaimsMatchTheAttention(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	if len(tr.Layers) < 2 || len(tr.Layers[0].Heads) == 0 {
+		t.Skip("the claim names two layers and head 0")
+	}
+
+	peakOnPrevious := func(layer int) (hits, rows int) {
+		h := tr.Layers[layer].Heads[0]
+		for i := 1; i < len(tr.Tokens); i++ {
+			row := h.Attn[i]
+			best, bestJ := float32(-1), -1
+			for j := 0; j <= i; j++ {
+				if row[j] > best {
+					best, bestJ = row[j], j
+				}
+			}
+			if bestJ >= 0 {
+				rows++
+				if bestJ == i-1 {
+					hits++
+				}
+			}
+		}
+		return hits, rows
+	}
+
+	firstHits, firstRows := peakOnPrevious(0)
+	secondHits, secondRows := peakOnPrevious(1)
+	if firstRows == 0 || secondRows == 0 {
+		t.Skip("no rows to measure")
+	}
+
+	// "几乎每个位置" — the sentence says almost every position.
+	if frac := float64(firstHits) / float64(firstRows); frac < 0.8 {
+		t.Fatalf("the lesson says layer 0 head 0 watches the previous token almost "+
+			"everywhere, but only %d of %d rows peak there", firstHits, firstRows)
+	}
+
+	// "第 1 层的几个头则反复回到同一小批位置上" — the contrast is that layer 1 does not do
+	// the same thing, which is what the sentence is pointing out.
+	if frac1, frac0 := float64(secondHits)/float64(secondRows),
+		float64(firstHits)/float64(firstRows); frac1 >= frac0 {
+		t.Fatalf("the lesson contrasts layer 0 with layer 1, but layer 1's head 0 peaks "+
+			"on the previous token at %.0f%% against layer 0's %.0f%%",
+			frac1*100, frac0*100)
+	}
+	_ = secondHits
+}
