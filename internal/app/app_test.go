@@ -6439,3 +6439,81 @@ func TestTemperatureExtremesKeepTheDistributionValid(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddingsArePermutationInvariantWithoutPositions backs the embedding lesson's
+// argument for position encoding.
+//
+// The paragraph says attention scoring depends only on q·k, so the same words in a
+// different order produce the same weights — which is why position has to be added
+// explicitly. The claim rests on the embedding table alone: permuting a prompt must permute
+// the E[token] rows and leave the multiset of rows unchanged, and the position rows must be
+// what breaks the symmetry.
+//
+// Measured: "abc" and "cba" give the same three embedding rows in a different order, and
+// their Sum vectors (E + P) differ. If the first half ever stopped holding, the paragraph's
+// premise would be false and nothing else in the suite would notice.
+func TestEmbeddingsArePermutationInvariantWithoutPositions(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "abc"
+	a.recompute()
+	b := newTestApp(t)
+	b.Prompt = "cba"
+	b.recompute()
+
+	if len(a.Trace.Embed) != 3 || len(b.Trace.Embed) != 3 {
+		t.Fatalf("expected three tokens each, got %d and %d",
+			len(a.Trace.Embed), len(b.Trace.Embed))
+	}
+
+	rows := func(tr *model.Trace) map[string]int {
+		m := map[string]int{}
+		for _, v := range tr.Embed {
+			m[fmt.Sprint(v)]++
+		}
+		return m
+	}
+	ea, eb := rows(a.Trace), rows(b.Trace)
+	if len(ea) != len(eb) {
+		t.Fatalf("permuting the prompt changed the embedding rows: %d distinct vs %d",
+			len(ea), len(eb))
+	}
+	for k, n := range ea {
+		if eb[k] != n {
+			t.Fatal("permuting the prompt changed the multiset of embedding rows")
+		}
+	}
+
+	// The rows must actually be reordered, not identical in place — three identical
+	// rows would satisfy the multiset check without the permutation happening.
+	sameInPlace := true
+	for i := range a.Trace.Embed {
+		if fmt.Sprint(a.Trace.Embed[i]) != fmt.Sprint(b.Trace.Embed[i]) {
+			sameInPlace = false
+			break
+		}
+	}
+	if sameInPlace {
+		t.Fatal("the two prompts produced identical embedding rows in place, so the " +
+			"permutation was not exercised")
+	}
+
+	// And positions must be what differs: the sums are not permutations of each other.
+	sums := func(tr *model.Trace) map[string]int {
+		m := map[string]int{}
+		for _, v := range tr.Input {
+			m[fmt.Sprint(v)]++
+		}
+		return m
+	}
+	sa, sb := sums(a.Trace), sums(b.Trace)
+	same := len(sa) == len(sb)
+	for k, n := range sa {
+		if sb[k] != n {
+			same = false
+		}
+	}
+	if same {
+		t.Fatal("E+P is also permutation invariant, so the lesson's claim that position " +
+			"breaks the symmetry has nothing to show it")
+	}
+}
