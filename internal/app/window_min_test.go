@@ -212,3 +212,43 @@ func TestFixedChromeStaysInsideTheWindow(t *testing.T) {
 		}
 	}
 }
+
+// TestExtremeAspectRatiosKeepTheChromeInside covers window shapes the size floor does not
+// constrain.
+//
+// MinWidth and MinHeight bound each axis independently, so 1180×1440 and 2560×720 are both
+// legal — a reader can drag the window into a tall column or an ultrawide strip. The snapshot
+// set only covers the three diagonal sizes, so neither shape was ever rendered.
+//
+// Measured: all seven stages keep the title, the inspector header and the play button inside
+// the window at both extremes.
+//
+// What this cannot see: Tester.Find returns a text element's rect, not its container's, so an
+// over-subscribed row that squeezes a column narrow still passes — the label stays on screen,
+// just cramped. An attempt to catch that with column ordering did not work either: the columns
+// keep their order while being compressed. The floor in ClampWindowSize is what actually keeps
+// the layout out of that regime, and TestWindowMinimumMatchesTheSmallestSnapshot covers it.
+func TestExtremeAspectRatiosKeepTheChromeInside(t *testing.T) {
+	for _, size := range [][2]int{
+		{1180, 1440}, // tall: the width floor, unbounded height
+		{2560, 720},  // ultrawide: the height floor, unbounded width
+	} {
+		for step := 0; step < len(lessons); step++ {
+			a := newTestApp(t)
+			a.Step = step
+			tr := ui.NewTester(a.View, size[0], size[1])
+			tr.Frame()
+			for _, s := range []string{"LLM Lab", "检查器", "▶ 自动播放"} {
+				r, ok := tr.Find(s)
+				if !ok {
+					t.Fatalf("%dx%d stage %d: %q is not rendered", size[0], size[1], step, s)
+				}
+				if r.X < 0 || r.Y < 0 ||
+					r.X+r.W > float32(size[0]) || r.Y+r.H > float32(size[1]) {
+					t.Fatalf("%dx%d stage %d: %q sits at (%.0f,%.0f) %.0fx%.0f, outside the "+
+						"window", size[0], size[1], step, s, r.X, r.Y, r.W, r.H)
+				}
+			}
+		}
+	}
+}
