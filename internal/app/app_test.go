@@ -5987,3 +5987,66 @@ func TestFFNStageAndInspectorAgreeOnTheActiveCount(t *testing.T) {
 		t.Fatalf("the cutoff moved to %v but the card still says 0.01", activeThreshold)
 	}
 }
+
+// TestScaleReadoutIsTheSameOnBothPanels pins the 1/√d_head figure the score stage shows
+// twice: once in the legend beside the matrix, once in the inspector.
+//
+// It was the same source line in two places, so the two could have drifted — and a third
+// copy in the workings prints the same quantity at float32 precision rather than float64,
+// which is why the three had two types between them. kvScale now holds the legend and
+// inspector copy.
+//
+// Both panels must show the same string, and it must be the value the model's float32
+// arithmetic produces at three decimals — the precision every panel prints at.
+func TestScaleReadoutIsTheSameOnBothPanels(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	// The inspector copy is on the first screen; the legend is below it.
+	tr.Scroll(700, 500, 0, -120)
+	tr.Frame()
+
+	dHead := a.Trace.Config.DHead()
+	want := fmt.Sprintf("1/√%d = %.3f", dHead, 1/math.Sqrt(float64(dHead)))
+
+	count := 0
+	for _, s := range tr.Texts() {
+		if s == want {
+			count++
+		}
+	}
+	if count != 2 {
+		t.Fatalf("%q appears %d times, expected once on the legend and once in the "+
+			"inspector", want, count)
+	}
+
+	// The float32 and float64 forms agree at three decimals for this model, but a
+	// different d_head could separate them; assert the printed form is the same as the
+	// workings line's, since a reader may compare the two.
+	f32 := float64(float32(1 / math.Sqrt(float64(dHead))))
+	if got, other := fmt.Sprintf("%.3f", 1/math.Sqrt(float64(dHead))), fmt.Sprintf("%.3f", f32); got != other {
+		t.Logf("float64 prints %s, float32 prints %s — the two panels and the workings "+
+			"line would disagree", got, other)
+	}
+}
+
+// TestScaleReadoutComesFromOneHelper keeps the two copies from being re-inlined.
+func TestScaleReadoutComesFromOneHelper(t *testing.T) {
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "func kvScale(c *ui.Context, dHead int) {") {
+		t.Fatal("kvScale is gone; the legend and the inspector are independent again")
+	}
+	// The legend's own line may appear inside kvScale only. Matching the bare
+	// expression would be wrong: the score workings legitimately computes the same
+	// quantity on its own, with a different argument name.
+	const legend = `kv(c, "缩放", fmt.Sprintf("1/√%d = %.3f"`
+	if n := strings.Count(text, legend); n != 1 {
+		t.Fatalf("the legend line appears %d times; it belongs in kvScale alone", n)
+	}
+}

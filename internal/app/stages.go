@@ -360,6 +360,14 @@ func signed(v float32) string {
 	return fmt.Sprintf("%+.4f", v)
 }
 
+// kvScale states the 1/sqrt(d_head) scaling, which both the score stage's legend and
+// its inspector quote. It was the same line of code in two places, so the two panels
+// could have drifted to different precision — the workings line already computes the
+// same quantity as float32, and the three copies had two different types.
+func kvScale(c *ui.Context, dHead int) {
+	kv(c, "缩放", fmt.Sprintf("1/√%d = %.3f", dHead, 1/math.Sqrt(float64(dHead))))
+}
+
 func (a *App) stageScores(c *ui.Context) {
 	tr := a.Trace
 	l := a.layer()
@@ -401,7 +409,7 @@ func (a *App) stageScores(c *ui.Context) {
 						ui.Text(c, "负分（蓝色）").FontSize(fontMicro).TextColor(colMuted)
 					})
 				})
-				kv(c, "缩放", fmt.Sprintf("1/√%d = %.3f", tr.Config.DHead(), 1/math.Sqrt(float64(tr.Config.DHead()))))
+				kvScale(c, tr.Config.DHead())
 				kv(c, "可见", fmt.Sprintf("%d 个 key", i+1))
 				// The colour ramp is |score| / saturation, so its top is a fact
 				// about this matrix: state it, since it moves with the prompt
@@ -1305,7 +1313,7 @@ func (a *App) inspectorScores(c *ui.Context, tr *model.Trace) {
 		rows = topAbsBars(rows, 5)
 		bars(c, rows, maxAbs, colWarm)
 		kv(c, "可见 key", fmt.Sprintf("%d 个", i+1))
-		kv(c, "缩放", fmt.Sprintf("1/√%d = %.3f", tr.Config.DHead(), 1/math.Sqrt(float64(tr.Config.DHead()))))
+		kvScale(c, tr.Config.DHead())
 	})
 }
 
