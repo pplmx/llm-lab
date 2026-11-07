@@ -75,8 +75,11 @@ RENDER=1 RENDER_DIR=/tmp/after go test ./internal/app -run 'TestRenderSteps|Test
 5. **孤立数字要有量纲参照。** `熵 0.16 nats` 本身没有意义，加上「上限 log(256) = 5.55，当前占 3%」才读得懂。
 6. **切片要说清总体。** 「Top-12 概率」的 12 项覆盖了 99.99999% 的概率质量，读者很容易以为词表只有 12 个候选。
 7. **文档里的数字必须从代码派生。** README 曾写「36 token 逐个标、64 token 每 6 个标一次」，实测是每 3 个和每 4 个——两个数字都是估的。
+8. **成对的东西要由一个来源决定。** 这类缺陷的表现是「两个值必须一致，但没有任何机制保证」，改一边不会报警。实际发生过的：窗口最小尺寸 1180×720 与截图套件的最小尺寸脱钩（删掉任一边，另一边不会失败）；温度控件的提示写死「第 7 步」而层/头两个控件的提示是从区间常量生成的；README 说截图覆盖「七个阶段」而矩阵只渲染四个——文档超前于实现。
+9. **状态的生命周期要定义完整。** 读者做完一个动作后，另一个状态该不该跟着变，必须逐个说明并测到。实际发生过的：固定了热力图格子后在 token 条里换一个 token，检查器标题写新 token、下面的格子卡还描述旧 token；向量条带的高亮框在指针离开后继续画（值该留、框不该留，代码只做了前一半）。
+10. **「发生时对不对」和「结束后对不对」是两件事。** 上面的高亮框和固定格子都有测试覆盖「点击后正确」，没有一条覆盖「离开后正确」。补测试时把动作拆成「做 → 停 → 再观察」。
 
-改这四处时对应的测试：`app_test.go` 里 `TestLayerNormHistogramsShareOneAxis`、`TestScoreLegendStatesTheColorScale`、`TestFFNCardQuantifiesSparsity`、`TestOutputEntropyStatesItsCeiling`、`TestTop12StatesTheVocabularySize`，以及 `readme_test.go` 的整组断言。
+对应的测试：`app_test.go` 里 `TestLayerNormHistogramsShareOneAxis`、`TestScoreLegendStatesTheColorScale`、`TestFFNCardQuantifiesSparsity`、`TestOutputEntropyStatesItsCeiling`、`TestTop12StatesTheVocabularySize`；`readme_test.go` 的整组断言；第 8–10 类对应 `TestWindowMinimumMatchesTheSmallestSnapshot`、`TestEveryStageIsRenderedAtEverySize`、`TestTemperatureNoteFollowsItsRange`、`TestSelectingAnotherTokenDropsThePin`、`TestStripCaretDoesNotOutliveThePointer`。
 
 **写测试时注意两件事**，都是踩过的：
 
