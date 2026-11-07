@@ -6517,3 +6517,88 @@ func TestEmbeddingsArePermutationInvariantWithoutPositions(t *testing.T) {
 			"breaks the symmetry has nothing to show it")
 	}
 }
+
+// TestScoreScalingKeepsTheDistributionFromCollapsing backs the score stage's explanation of
+// why scores are divided by √d_head.
+//
+// The paragraph says the division keeps the variance stable, because otherwise higher
+// dimensions make scores explode and softmax saturates. On this trained model both forms
+// reach a maximum probability of 1.000 somewhere, so the top-row figure alone cannot show
+// the difference — but the distribution as a whole can. Measured over 280 rows: mean
+// attention entropy is 1.2508 nats with the scale and 0.1865 without it, a factor of 6.7.
+//
+// That is the claim worth pinning: the scale is what keeps a row from collapsing onto a
+// single key. The test recomputes both forms from the traces rather than trusting a stored
+// number, and requires the scaled form to stay clearly more spread out.
+func TestScoreScalingKeepsTheDistributionFromCollapsing(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	dHead := tr.Config.DHead()
+	scale := math.Sqrt(float64(dHead))
+	dot := func(x, y []float32) float64 {
+		s := 0.0
+		for i := 0; i < dHead && i < len(x) && i < len(y); i++ {
+			s += float64(x[i]) * float64(y[i])
+		}
+		return s
+	}
+
+	var scaledSum, rawSum float64
+	rows := 0
+	for li := range tr.Layers {
+		for h := range tr.Layers[li].Heads {
+			head := tr.Layers[li].Heads[h]
+			for q := 1; q < len(tr.Tokens) && q < len(head.Q); q++ {
+				var raw, sc []float64
+				for k := 0; k <= q && k < len(head.K); k++ {
+					d := dot(head.Q[q], head.K[k])
+					raw = append(raw, d)
+					sc = append(sc, d/scale)
+				}
+				if len(raw) < 2 {
+					continue
+				}
+				scaledSum += rowEntropy(sc)
+				rawSum += rowEntropy(raw)
+				rows++
+			}
+		}
+	}
+	if rows == 0 {
+		t.Skip("no multi-key rows to measure")
+	}
+	scaled, raw := scaledSum/float64(rows), rawSum/float64(rows)
+	if scaled <= raw {
+		t.Fatalf("scaling does not widen the distribution: %.4f scaled vs %.4f raw", scaled, raw)
+	}
+	// The paragraph's point is that the difference is large, not marginal.
+	if scaled < raw*2 {
+		t.Fatalf("scaling only raises mean entropy from %.4f to %.4f; that is too small "+
+			"a gap to support the lesson's explanation", raw, scaled)
+	}
+	t.Logf("%d rows: mean entropy %.4f scaled, %.4f unscaled", rows, scaled, raw)
+}
+
+// rowEntropy is the Shannon entropy of softmax(v), in nats.
+func rowEntropy(v []float64) float64 {
+	m := v[0]
+	for _, x := range v {
+		if x > m {
+			m = x
+		}
+	}
+	p := make([]float64, len(v))
+	var s float64
+	for i, x := range v {
+		p[i] = math.Exp(x - m)
+		s += p[i]
+	}
+	var e float64
+	for _, q := range p {
+		pr := q / s
+		if pr > 0 {
+			e -= pr * math.Log(pr)
+		}
+	}
+	return e
+}
