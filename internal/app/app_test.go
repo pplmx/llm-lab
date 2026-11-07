@@ -8369,3 +8369,102 @@ func TestSoftmaxBodyAdmitsWhenThereIsNothingToMeasure(t *testing.T) {
 			truncateForTest(body, 160))
 	}
 }
+
+// TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned is the same guard as the weights one, for the other
+// input dimension.
+//
+// Round 213 found step 4 telling the reader layer 0 head 0 "在 0/0 行上" attends to the previous token — a
+// proportion over zero rows — and suggesting they switch heads when all four are identical. That is a
+// short-prompt defect, so short prompts need their own comparison.
+//
+// Numbers are stripped as before; two differences survive that are data rather than wording and are excluded:
+// a value's sign (which changes whether the printed term is parenthesised) and the glyph of the sampled token.
+func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
+	num := regexp.MustCompile(`[-+]?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?%?`)
+	// allowed lists, per stage, the fragments a designed difference is expected to contain.
+	allowed := map[int][]string{
+		2: {"所有分数都是负的"},                        // the all-negative legend note
+		3: {"行可以比较", "第 # 层的头 #"},              // the short-sample branch, then the long one
+		6: {"这么高的把握", "根本没有那么大的把握", "有那么大的把握"}, // confidence follows maxP
+	}
+
+	collect := func(prompt string) []map[string]bool {
+		out := make([]map[string]bool, len(lessons))
+		for step := range lessons {
+			a := newTestApp(t)
+			a.Prompt = prompt
+			a.recompute()
+			a.Step = step
+			a.SelToken = 0
+			tr := ui.NewTester(a.View, 1500, 2800)
+			tr.Frame()
+			set := map[string]bool{}
+			for _, s := range tr.Texts() {
+				if len([]rune(s)) <= 40 {
+					continue
+				}
+				// Not wording: the sampled glyph, and a term's sign deciding its parentheses.
+				if strings.Contains(s, "抽到 id ") || strings.Contains(s, "× γ ") {
+					continue
+				}
+				set[num.ReplaceAllString(s, "#")] = true
+			}
+			out[step] = set
+		}
+		return out
+	}
+
+	long := collect("The transformer reads the tokens and")
+	for _, prompt := range []string{"a", "hi", "abc"} {
+		short := collect(prompt)
+		for step := 0; step < len(lessons); step++ {
+			var diffs []string
+			for s := range long[step] {
+				if !short[step][s] {
+					diffs = append(diffs, s)
+				}
+			}
+			for s := range short[step] {
+				if !long[step][s] {
+					diffs = append(diffs, s)
+				}
+			}
+			for _, d := range diffs {
+				matched := false
+				for _, frag := range allowed[step] {
+					if strings.Contains(d, frag) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					t.Fatalf("prompt %q, stage %d: the prose differs from the long prompt's outside any "+
+						"designed branch: %q", prompt, step, truncateForTest(d, 200))
+				}
+			}
+		}
+	}
+
+	// Every allowed branch must still be reached somewhere, or it is not being tested.
+	all := map[string]bool{}
+	for _, prompt := range []string{"a", "hi", "abc", "The transformer reads the tokens and"} {
+		for step := range lessons {
+			for s := range collect(prompt)[step] {
+				all[s] = true
+			}
+		}
+	}
+	for step, frags := range allowed {
+		for _, frag := range frags {
+			found := false
+			for s := range all {
+				if strings.Contains(s, frag) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("stage %d: no prose contains %q, so that branch is gone", step, frag)
+			}
+		}
+	}
+}
