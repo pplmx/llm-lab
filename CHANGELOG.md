@@ -41,6 +41,15 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Added
+
+- README 里三个**看起来已被验证**的具体数字，实际没有任何测试盯着：
+  - **「46 token 提示词」**（对拍夹具的提示词长度）：实测 46 ✓，但重新生成夹具后可能变
+  - **「最多 8 个 worker」**（前向并行上限）：`tensor.go` 里确有 `workers > 8` 上限并附注释 ✓
+  - 参数量「25.3 万」**已有测试**（`paramCount()` vs README），所以本轮的测试只补前两项——初版把参数量也算了一遍，属于重复，已删
+  - 补测试并验证：把 worker 上限从 8 改成 16，测试报 `tensor.go no longer has that cap`
+- 其余 README 数字逐条核对，全部准确：46 token ✓、8 worker ✓、参数量 252864 → 25.3 万 ✓；性能数据（16 token 1.4/1.2 ms、64 token 6.2/2.4 ms）标注了「AMD EPYC 7742，单核 / 4 核」，本机 128 核实测 1.38 ms / 3.28 ms 落在同一量级，属于**特定硬件上的测量**而非保证值，表述无误
+
 ### Fixed
 
 - README 说热力图标签「64 token 的长提示词**每 4 个标一次**」——**这在最小窗口下是错的**

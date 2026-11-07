@@ -345,3 +345,31 @@ func TestReadmeExplainsTheStripColour(t *testing.T) {
 		}
 	}
 }
+
+// TestReadmeNumbersMatchTheCode holds the README's factual claims about this build to the
+// build.
+//
+// Three of them are the kind that look verified because they are specific: the parity prompt
+// is "46 token", the forward pass uses "最多 8 个 worker", and the model has "25.3 万" of
+// parameters. Each is true today — measured 46, capped at 8 in tensor.go, and 252864 which
+// rounds to 25.3万 — but a regenerated fixture, a changed worker cap or a retrained model
+// would leave the prose stale with nothing to notice.
+func TestReadmeNumbersMatchTheCode(t *testing.T) {
+	doc := readREADME(t)
+
+	// The parameter count is already covered by the test above (a.paramCount() against
+	// "参数量 25.3 万"), so this only adds the two claims nothing checked.
+
+	// The worker cap.
+	src, err := os.ReadFile(filepath.Join("..", "model", "tensor.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "workers > 8") {
+		t.Fatal("the README says the forward pass uses at most 8 workers; tensor.go no " +
+			"longer has that cap")
+	}
+	if !strings.Contains(doc, "最多 8 个 worker") {
+		t.Fatal("the README no longer states the worker cap")
+	}
+}
