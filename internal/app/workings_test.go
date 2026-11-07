@@ -879,8 +879,14 @@ func TestPrintedLNLineUsesTheComputedNumbers(t *testing.T) {
 
 	wantHeader := fmt.Sprintf("d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f",
 		dim, p.mean, 1/p.invStd, p.invStd)
-	wantBody := fmt.Sprintf("(%.4f − %.4f) × %.4f × γ %.5f + β %.5f ≈ %.4f",
-		p.x, p.mean, p.invStd, p.gamma, p.beta, p.out)
+	// The mean is bracketed when negative, the same rule the softmax line follows:
+	// "(x − -0.1499)" makes the reader decode two signs before checking the arithmetic.
+	mu := fmt.Sprintf("%.4f", p.mean)
+	if p.mean < 0 {
+		mu = "(" + mu + ")"
+	}
+	wantBody := fmt.Sprintf("(%.4f − %s) × %.4f × γ %.5f + β %.5f ≈ %.4f",
+		p.x, mu, p.invStd, p.gamma, p.beta, p.out)
 
 	var sawHeader, sawBody bool
 	for _, s := range tr.Texts() {
@@ -1358,40 +1364,48 @@ func TestPrintedArithmeticClosesAcrossTheControls(t *testing.T) {
 	t.Logf("worst gap %.2e at %s", worst, where)
 }
 
-// TestSoftmaxLineDoesNotRunTwoSignsTogether checks the arithmetic line's readability.
+// TestWorkingsLinesDoNotRunTwoSignsTogether checks the two lines that subtract a quantity
+// which can be negative.
 //
-// The line subtracts the row maximum, which is what keeps the exponent negative. It used to
-// print the subtrahend with %+.4f, so a positive maximum produced "score − +2.9311" and a
-// negative one produced "score − -3.7133". Both are arithmetically right and both make the
-// reader decode two signs before checking the maths — the opposite of what a workings line is
-// for.
+// The softmax line subtracts the row maximum; the LayerNorm line subtracts the mean, and
+// about 43 of 96 means are negative on the default prompt. Both formatted the subtrahend
+// with a sign, so a positive value produced "score − +2.9311" and a negative one produced
+// "(x − -0.1499)" — two signs in a row that the reader has to decode before the arithmetic
+// in the line makes sense.
 //
-// A positive subtrahend now prints unsigned and a negative one prints in brackets. Measured
-// on the default prompt: exp(-4.1091 − 2.9311) at one cell and exp(-3.7133 − (-3.7133)) at
-// another, where the row maximum is itself negative.
-func TestSoftmaxLineDoesNotRunTwoSignsTogether(t *testing.T) {
+// Positive subtrahends now print unsigned and negative ones print in brackets. The test walks
+// both stages over several tokens and rejects any run of two signs.
+func TestWorkingsLinesDoNotRunTwoSignsTogether(t *testing.T) {
 	bad := []string{"− +", "− -", "- +", "- -"}
-	for _, prompt := range []string{"The transformer reads the tokens and", "hi", "a"} {
-		for _, token := range []int{0, 5, 10} {
-			a := newTestApp(t)
-			a.Prompt = prompt
-			a.recompute()
-			a.Step = 3
-			if token >= len(a.Trace.Tokens) {
-				continue
-			}
-			a.SelToken = token
-			a.KeyQ, a.KeyK = token, 0
-			tr := ui.NewTester(a.View, 1500, 940)
-			tr.Frame()
-			for _, s := range tr.Texts() {
-				if !strings.Contains(s, "exp(") {
+	for _, stage := range []struct {
+		step   int
+		marker string
+	}{
+		{3, "exp("}, // softmax: subtracts the row maximum
+		{4, "× γ"},  // LayerNorm: subtracts the mean
+	} {
+		for _, prompt := range []string{"The transformer reads the tokens and", "hi", "a"} {
+			for _, token := range []int{0, 5, 10} {
+				a := newTestApp(t)
+				a.Prompt = prompt
+				a.recompute()
+				a.Step = stage.step
+				if token >= len(a.Trace.Tokens) {
 					continue
 				}
-				for _, b := range bad {
-					if strings.Contains(s, b) {
-						t.Fatalf("prompt %q token %d: the line runs two signs together: %q",
-							prompt, token, s)
+				a.SelToken = token
+				a.HoverDimIn = 7
+				tr := ui.NewTester(a.View, 1500, 940)
+				tr.Frame()
+				for _, s := range tr.Texts() {
+					if !strings.Contains(s, stage.marker) {
+						continue
+					}
+					for _, b := range bad {
+						if strings.Contains(s, b) {
+							t.Fatalf("stage %d prompt %q token %d: the line runs two "+
+								"signs together: %q", stage.step, prompt, token, s)
+						}
 					}
 				}
 			}

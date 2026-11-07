@@ -801,10 +801,17 @@ func lnWorkings(c *ui.Context, dim int, p lnParts) {
 	// half, and the line marks the result "≈" with a note underneath, because
 	// rounding five factors to a few decimals cannot close exactly and pretending
 	// otherwise sends the reader hunting for an error that is not there.
+	// The mean is the subtrahend and is negative on about half the rows, so it needs the
+	// same bracket the softmax line uses: "(x − -0.0958)" runs two signs together and makes
+	// the reader decode the expression before checking it.
+	mu := fmt.Sprintf("%.4f", p.mean)
+	if p.mean < 0 {
+		mu = "(" + mu + ")"
+	}
 	workingsLines(c, []string{
 		fmt.Sprintf("d%d：μ = %.4f，σ = %.4f，1/√(σ²+ε) = %.4f", dim, p.mean, 1/p.invStd, p.invStd),
-		fmt.Sprintf("(%.4f − %.4f) × %.4f × γ %.5f + β %.5f ≈ %.4f",
-			p.x, p.mean, p.invStd, p.gamma, p.beta, p.out),
+		fmt.Sprintf("(%.4f − %s) × %.4f × γ %.5f + β %.5f ≈ %.4f",
+			p.x, mu, p.invStd, p.gamma, p.beta, p.out),
 	})
 	mutedText(c, "算式按模型的 float32 精度算；这里把 μ、σ 舍到四位、γ 和 β 舍到五位，"+
 		"所以自己代入时末位可能有几个单位的出入。")
