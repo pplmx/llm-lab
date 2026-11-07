@@ -272,3 +272,49 @@ func TestRenderDirIsDocumentedAndWorks(t *testing.T) {
 		t.Fatalf("writeSnapshot did not create %s: %v", dir, err)
 	}
 }
+
+// TestReadmeExplainsTheStripColour checks the figure table carries the one reading
+// aid the strips themselves do not.
+//
+// The app has two diverging colour scales: valueColor paints a vector strip red for
+// positive and blue for negative, scoreColor paints a heatmap cell warm for a high
+// score and blue for a low one. Both are defensible and they are not the same thing —
+// "positive" and "high" are different questions. The heatmap has a legend beside it
+// ("正分（暖色）/负分（蓝色）"); the strips have none, so a reader looking at a red
+// and blue band has nothing on screen telling them which end is which.
+//
+// That makes the README row load-bearing rather than decorative, and it has to stay
+// accurate about which scale is which.
+func TestReadmeExplainsTheStripColour(t *testing.T) {
+	doc := readREADME(t)
+	i := strings.Index(doc, "向量条带的颜色")
+	if i < 0 {
+		t.Fatal("the figure table no longer explains the vector strip's colours")
+	}
+	end := strings.Index(doc[i:], "\n")
+	if end < 0 {
+		end = len(doc) - i
+	}
+	row := doc[i : i+end]
+
+	for _, want := range []string{"红色为正", "蓝色为负", "两套"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("the strip-colour row does not state %q: %s", want, row)
+		}
+	}
+
+	// And the claim that the strips have no legend of their own must hold: if one is
+	// ever added, this row's justification changes.
+	for _, step := range []int{1, 4, 5} {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "红") && strings.Contains(s, "蓝") {
+				t.Fatalf("stage %d now renders a colour legend %q; the README row says "+
+					"the strips have none", step+1, s)
+			}
+		}
+	}
+}
