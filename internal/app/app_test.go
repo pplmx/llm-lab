@@ -8477,3 +8477,41 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 		}
 	}
 }
+
+// TestCausalMaskIsStatedToBeArchitecture completes the learned-versus-given account the app gives of its numbers.
+//
+// Round 206 said the embedding table is trained; 207 said temperature is not a weight; 208 said the projection
+// matrices are trained. The causal mask was never classified, so a reader met it described by its effect only —
+// "the upper triangle is empty" — with no way to tell that it is written in code rather than derived by training.
+//
+// The mask belongs on the given side: it is part of the architecture.
+func TestCausalMaskIsStatedToBeArchitecture(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 20
+	tr := ui.NewTester(a.View, 1500, 2400)
+	tr.Frame()
+
+	var body string
+	for i, s := range tr.Texts() {
+		if s == "这一段在讲什么" && i+2 < len(tr.Texts()) {
+			body = tr.Texts()[i+2]
+		}
+	}
+	if body == "" {
+		t.Fatal("step 3 has no body prose")
+	}
+	if !strings.Contains(body, "代码写死的") {
+		t.Fatalf("the body still does not say the mask is fixed by the code: %q",
+			truncateForTest(body, 160))
+	}
+	if !strings.Contains(body, "不是训练出来的") {
+		t.Fatalf("the body does not rule out the trained reading: %q",
+			truncateForTest(body, 160))
+	}
+	// And it has to keep explaining what the mask does, or the clarification replaced the teaching.
+	if !strings.Contains(body, "看不到未来") {
+		t.Fatalf("the body lost the explanation of what the mask does: %q",
+			truncateForTest(body, 160))
+	}
+}
