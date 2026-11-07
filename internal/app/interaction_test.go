@@ -170,7 +170,9 @@ func TestShapeChipsJumpToTheirStage(t *testing.T) {
 		{fmt.Sprintf("[%d, %d]", T, d), 1},
 		{fmt.Sprintf("[%d, %d]", T, T), 3},
 		{fmt.Sprintf("[%d, %d]", T, dff), 5},
-		{fmt.Sprintf("[%d]", vocab), 6},
+		// The output shape keeps the leading axis as 1: only the last position is
+		// projected, so the token axis collapses rather than vanishing.
+		{fmt.Sprintf("[1, %d]", vocab), 6},
 	}
 	for _, c := range chips {
 		a := newTestApp(t)

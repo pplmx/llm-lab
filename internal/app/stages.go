@@ -77,7 +77,7 @@ var lessons = []lesson{
 	{
 		name:    "输出 / 采样",
 		title:   "从向量到下一个字",
-		body:    "最后一层的输出经过最终 LayerNorm，再与嵌入矩阵相乘（权重绑定），得到词表上每个 token 的 logit。logit 不是概率，要除以温度再做 softmax。温度趋近 0 等于贪心，温度大于 1 会让分布变平、输出更随机。",
+		body:    "最后一层的输出经过最终 LayerNorm，再与嵌入矩阵相乘（权重绑定），只把**最后一个位置**的向量投影到词表上（形状从 [T, 96] 变成 [1, 256]），得到下一个 token 的 logit——前面的位置也算得出来，但不参与这次预测。logit 不是概率，要除以温度再做 softmax。温度趋近 0 等于贪心，温度大于 1 会让分布变平、输出更随机。",
 		formula: "p = softmax(logits / T)",
 	},
 }
@@ -291,7 +291,10 @@ func (a *App) stageTokens(c *ui.Context) {
 			{3, "Softmax", fmt.Sprintf("[%d, %d]", T, T)},
 			{4, "残差 / LN", fmt.Sprintf("[%d, %d]", T, d)},
 			{5, "FFN", fmt.Sprintf("[%d, %d]", T, tr.Config.DFF)},
-			{6, "输出", fmt.Sprintf("[%d]", tr.Config.Vocab)},
+			// The first six shapes keep the token axis; this one drops it. Writing [256]
+			// beside six [36, …] entries leaves a reader asking where the 36 went — the
+			// answer is that only the last position is projected, so the axis becomes 1.
+			{6, "输出", fmt.Sprintf("[1, %d]", tr.Config.Vocab)},
 		}
 		ui.Row(c).Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 			for i, r := range rows {

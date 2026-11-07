@@ -709,14 +709,22 @@ func TestCalloutNumbersFollowTheModel(t *testing.T) {
 		a.Step = step
 		tr := ui.NewTester(a.View, 1500, 940)
 		tr.Frame()
-		// The callout's correction is the longest text in the stage.
-		longest := ""
-		for _, s := range tr.Texts() {
-			if len([]rune(s)) > len([]rune(longest)) {
-				longest = s
+		// A callout is three entries in order: the "常见误解" heading, the belief it is
+		// correcting, and the correction. The correction is the one carrying numbers —
+		// that is the whole point of this test — and the belief is fixed text.
+		//
+		// Picking the longest text in the stage instead was what this used to do; it
+		// worked until the output stage's body gained a clause and became the longest
+		// string, at which point the test was comparing two paragraphs that are not
+		// callouts. Picking i+1 would be just as wrong for a different reason: that is
+		// the belief, identical across prompts by design.
+		texts := tr.Texts()
+		for i, s := range texts {
+			if s == "常见误解" && i+2 < len(texts) {
+				return texts[i+2]
 			}
 		}
-		return longest
+		return ""
 	}
 
 	// Step 7 quotes the top-1 probability, which moves with the prompt.
@@ -7224,5 +7232,55 @@ func TestNegativeRegionAxisWidthIsRecomputed(t *testing.T) {
 	if !strings.Contains(string(src), "lo, hi = minMaxFloat(values)") {
 		t.Fatal("histogramRange no longer derives the axis from the data, so the caption's " +
 			"percentage would describe a different scale from the one drawn")
+	}
+}
+
+// TestShapeSequenceShowsWhereTheTokenAxisCollapses checks the data-flow card's last step.
+//
+// The first six shapes all begin with the token count — [36], [36, 96], [36, 36], [36, 384] — and
+// the seventh used to read [256]. Reading the row in order, that asks where the 36 went: only the
+// last position is projected to the vocabulary, so the axis becomes 1 rather than disappearing. The
+// stage body said "得到词表上每个 token 的 logit", which reads as if every position were projected.
+//
+// The card now writes [1, 256]. This test pins the shape of the collapse: every leading axis is the
+// token count until the projection, and the projection's leading axis is 1.
+func TestShapeSequenceShowsWhereTheTokenAxisCollapses(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	T := len(a.Trace.Tokens)
+	c := a.Trace.Config
+	want := []string{
+		fmt.Sprintf("[%d]", T),
+		fmt.Sprintf("[%d, %d]", T, c.DModel),
+		fmt.Sprintf("[%d, %d]", T, c.DModel),
+		fmt.Sprintf("[%d, %d]", T, T),
+		fmt.Sprintf("[%d, %d]", T, c.DModel),
+		fmt.Sprintf("[%d, %d]", T, c.DFF),
+		fmt.Sprintf("[1, %d]", c.Vocab),
+	}
+	for _, shape := range want {
+		if !tr.HasText(shape) {
+			t.Fatalf("the data-flow card does not show %q; the sequence of shapes has a gap "+
+				"or the output step still hides the collapsed axis", shape)
+		}
+	}
+
+	// The stage body has to say the same thing, since it is where a reader looks for the reason.
+	// It lives on the output stage, not this one.
+	b := newTestApp(t)
+	b.Step = 6
+	bt := ui.NewTester(b.View, 1500, 1400)
+	bt.Frame()
+	var body string
+	for _, s := range bt.Texts() {
+		if strings.Contains(s, "只把") && strings.Contains(s, "投影到词表上") {
+			body = s
+		}
+	}
+	if body == "" {
+		t.Fatal("the output stage body does not explain that only the last position is projected")
 	}
 }
