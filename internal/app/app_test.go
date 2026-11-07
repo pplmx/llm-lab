@@ -6896,3 +6896,56 @@ func TestKeyStripFollowsTheCellNotJustTheRow(t *testing.T) {
 		t.Fatalf("on the diagonal both labels should say 同位置; found %d", samePos)
 	}
 }
+
+// TestScoreStageShowsWhereQKVComesFrom checks the projection line above the strips.
+//
+// The stage draws Query, Key and Value as three bands of numbers and then shows how two of them
+// make a score. Nothing on that card said the bands are projections of x — the stage body does,
+// but it lives in the card below the heatmap, so a reader studying the strips had to scroll
+// past the matrix to learn where they came from.
+//
+// One line now says it, above the first strip, in the muted micro type the card already uses for
+// its readouts.
+func TestScoreStageShowsWhereQKVComesFrom(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	var line string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "W_Q") {
+			line = s
+		}
+	}
+	if line == "" {
+		t.Fatal("the score stage does not say how Query, Key and Value are made")
+	}
+	for _, want := range []string{"q = x·W_Q", "k = x·W_K", "v = x·W_V"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the projection line is missing %q: %q", want, line)
+		}
+	}
+
+	// It has to be above the first strip, not below the last one.
+	projY, ok := findY(tr, line)
+	if !ok {
+		t.Fatal("cannot locate the projection line")
+	}
+	queryY, ok := findY(tr, "Query")
+	if !ok {
+		t.Fatal("cannot locate the Query label")
+	}
+	if projY > queryY {
+		t.Fatalf("the projection line sits at y=%.0f, below the Query label at y=%.0f",
+			projY, queryY)
+	}
+}
+
+// findY returns the vertical position of a rendered text, or false when it is not drawn.
+func findY(tr *ui.Tester, text string) (float32, bool) {
+	if r, ok := tr.Find(text); ok {
+		return r.Y, true
+	}
+	return 0, false
+}

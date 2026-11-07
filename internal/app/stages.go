@@ -402,6 +402,11 @@ func (a *App) stageScores(c *ui.Context) {
 			key = k
 		}
 		sectionTitle(c, fmt.Sprintf("token %d 的 Q / K / V", i), fmt.Sprintf("头 %d · d_head = %d", a.Head, tr.Config.DHead()))
+		// Where these three vectors come from. The stage body says it, but that card
+		// sits below the matrix; a reader looking at three strips of numbers should not
+		// have to scroll past the heatmap to learn they are projections of x.
+		ui.Text(c, "q = x·W_Q，k = x·W_K，v = x·W_V（同一个 x，三个不同的投影矩阵）").
+			FontSize(fontMicro).TextColor(colFaint)
 		ui.Text(c, "Query").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, h.Q[i], 18, &a.HoverDimQ)
 		keyLabel := "Key（同位置）"
