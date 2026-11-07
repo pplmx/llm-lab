@@ -407,10 +407,11 @@ func (a *App) stageScores(c *ui.Context) {
 		keyLabel := "Key（同位置）"
 		valLabel := "Value（同位置）"
 		if key != i {
-			// The θ glyph would need a monospace explanation; naming the position is
-			// what the reader needs to match this strip against the matrix column.
-			keyLabel = fmt.Sprintf("Key（第 %d 个 key）", key)
-			valLabel = fmt.Sprintf("Value（第 %d 个 key）", key)
+			// Name the position the way every other label in the app does — "key 4",
+			// zero-based, matching the matrix's column header — rather than "第 4 个",
+			// which reads as one-based and would send the reader to the wrong column.
+			keyLabel = fmt.Sprintf("Key（位置 %d）", key)
+			valLabel = fmt.Sprintf("Value（位置 %d）", key)
 		}
 		ui.Text(c, keyLabel).FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, h.K[key], 18, &a.HoverDimK)

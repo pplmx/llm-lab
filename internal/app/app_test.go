@@ -6864,8 +6864,19 @@ func TestKeyStripFollowsTheCellNotJustTheRow(t *testing.T) {
 	if keyLabel == "" || valLabel == "" {
 		t.Fatalf("the Q/K/V card lost its Key or Value label (%q, %q)", keyLabel, valLabel)
 	}
-	if !strings.Contains(keyLabel, "4") || !strings.Contains(valLabel, "4") {
+	if !strings.Contains(keyLabel, "位置 4") || !strings.Contains(valLabel, "位置 4") {
 		t.Fatalf("cursor is on key column 4 but the labels read %q and %q", keyLabel, valLabel)
+	}
+
+	// The label is only half of it: the vector the strip draws has to be the one the
+	// score line used. Checking that closes the loop from "the card says column 4" to
+	// "dotting the drawn K reproduces the cell's score".
+	h := a.layer().Heads[a.Head]
+	p := computeScore(h.Q[12], h.K[4], a.Trace.Config.DHead(), h.Scores[12][4])
+	scale := float64(float32(1 / math.Sqrt(float64(a.Trace.Config.DHead()))))
+	if gap := math.Abs(p.Dot*scale - p.Score); gap > 1e-4 {
+		t.Fatalf("the score line for (12, 4) does not close when recomputed from K[4]: "+
+			"got %.6f, want %.6f (gap %.1e)", p.Dot*scale, p.Score, gap)
 	}
 
 	// On the diagonal there is nothing to distinguish, and the card says so.
