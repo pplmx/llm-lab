@@ -203,3 +203,50 @@ func TestShapeChipsListEveryStage(t *testing.T) {
 		}
 	}
 }
+
+// TestJumpingToAStageStopsPlayback pins the two side effects selectStep has beyond
+// changing the step.
+//
+// Mutation testing removed each and the suite stayed green. Both matter: pressing a
+// digit key while the lesson is auto-playing must leave the reader where they jumped
+// to, not be carried away 1.3 seconds later; and the pending clock has to be dropped,
+// or the next play session inherits a stale deadline.
+func TestJumpingToAStageStopsPlayback(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	// Start playback through the key, which is the path that does not depend on
+	// hitting a button's exact position.
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	if !a.Playing {
+		t.Fatal("space did not start playback")
+	}
+	if a.NextAt.IsZero() {
+		t.Fatal("playback started without scheduling a next step")
+	}
+
+	// Jump to stage 5.
+	tr.Key(0, ui.Key5)
+	tr.Frame()
+	if a.Step != 4 {
+		t.Fatalf("pressing 5 landed on stage %d", a.Step)
+	}
+	if a.Playing {
+		t.Fatal("jumping to a stage left playback running, so the reader will be " +
+			"carried away from the stage they asked for")
+	}
+	if !a.NextAt.IsZero() {
+		t.Fatalf("the pending clock survived the jump: %v", a.NextAt)
+	}
+
+	// And the jump must start at the top of the new stage, since the previous
+	// stage's scroll offset is meaningless in the new one.
+	a.Scroll.Y = 400
+	tr.Key(0, ui.Key2)
+	tr.Frame()
+	if a.Scroll.Y != 0 {
+		t.Fatalf("the scroll offset carried over as %v", a.Scroll.Y)
+	}
+}
