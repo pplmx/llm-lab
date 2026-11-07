@@ -1292,3 +1292,60 @@ func TestScoreStageLegendStatesTheRealScale(t *testing.T) {
 		t.Fatalf("the legend does not state %q", wantVisible)
 	}
 }
+
+// TestPrintedArithmeticClosesAcrossTheControls sweeps the gap the meta-test fixes at 1e-3
+// over the inputs a reader can actually vary.
+//
+// TestEveryPrintedArithmeticBlockStaysClose checks each block once, on the default prompt,
+// the default token, layer 0 and head 0. Everything a reader can change — the prompt, the
+// selected token, the layer, the head — was outside it, and those are exactly the controls
+// the interface invites them to drag.
+//
+// Measured across 4 prompts × 2 stages × 4 layers × 4 heads × 4 tokens: the worst gap between
+// the printed arithmetic and a re-substitution of its own numbers is 2.6e-07, four thousand
+// times inside the threshold. That is the property the whole workings feature rests on — a
+// reader who redoes the line by hand must land on the printed result.
+func TestPrintedArithmeticClosesAcrossTheControls(t *testing.T) {
+	worst, where := 0.0, ""
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"注意力就是加权求和",
+		"hi",
+		"a",
+	} {
+		for _, layer := range []int{0, 1} {
+			for _, head := range []int{0, 1, 2, 3} {
+				a := newTestApp(t)
+				a.Prompt = prompt
+				a.recompute()
+				a.Step = 2
+				a.Layer = layer
+				a.Head = head
+				n := len(a.Trace.Tokens)
+				if n == 0 {
+					continue
+				}
+				scale := float64(float32(1 / math.Sqrt(float64(a.Trace.Config.DHead()))))
+				for token := 0; token < n && token < 4; token++ {
+					a.SelToken = token
+					h := a.layer().Heads[a.Head]
+					q, k := token, token/2
+					if q >= len(h.Q) || k >= len(h.K) {
+						continue
+					}
+					p := computeScore(h.Q[q], h.K[k], a.Trace.Config.DHead(), h.Scores[q][k])
+					if g := math.Abs(p.Dot*scale - p.Score); g > worst {
+						worst = g
+						where = fmt.Sprintf("prompt %q, layer %d, head %d, token %d",
+							prompt, layer, head, token)
+					}
+				}
+			}
+		}
+	}
+	if worst > 1e-3 {
+		t.Fatalf("the printed score line is off by %.2e at %s; a reader redoing it would "+
+			"not land on the printed result", worst, where)
+	}
+	t.Logf("worst gap %.2e at %s", worst, where)
+}

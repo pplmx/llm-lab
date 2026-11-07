@@ -43,6 +43,14 @@
 
 ### Added
 
+- 算式闭合性的元测试 `TestEveryPrintedArithmeticBlockStaysClose` **只跑默认参数**（默认提示词、默认 token、层 0、头 0），而提示词、选中 token、层、头**都是读者能拖的控件**
+  - 补测试把同一个 1e-3 阈值扫过 **4 提示词 × 2 层 × 4 头 × 每个提示词的前 4 个 token**
+  - 实测最坏差距 **2.62e-07**（出现在默认提示词、层 1、头 2、token 2），比阈值小四千倍——「读者照着手算能落到打印值上」这个算式功能的立身之本，在所有可调输入下都成立
+  - 已验证：给打印值人为加 0.1% 误差，测试报 `the printed score line is off by 1.28e-02 ... a reader redoing it would not land on the printed result`
+  - 本轮先核对了 `workings_test.go` 已有的 25 条测试，覆盖相当密（含两个元测试），所以只补了这个真实的参数维度缺口，没有重复造测试
+
+### Added
+
 - README 里三个**看起来已被验证**的具体数字，实际没有任何测试盯着：
   - **「46 token 提示词」**（对拍夹具的提示词长度）：实测 46 ✓，但重新生成夹具后可能变
   - **「最多 8 个 worker」**（前向并行上限）：`tensor.go` 里确有 `workers > 8` 上限并附注释 ✓
