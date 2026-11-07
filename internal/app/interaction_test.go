@@ -936,3 +936,45 @@ func TestEnterIsAdvertised(t *testing.T) {
 		}
 	}
 }
+
+// TestHoveringACellShowsItsCardAtEverySize checks that the pointer reaches the matrix and the
+// card follows, at each supported window width.
+//
+// What it does not prove is same-frame latency. ui.Tester settles after every input, so a Move
+// already advances a frame — there is no way here to produce "state updated, picture not yet",
+// and this test would pass either way. The claim it can make is that the hit test tracks the
+// grid as the window resizes: the narrowest window shrinks the matrix, so a stale hit box would
+// make hovering miss while the drawn grid had moved, and that size would show it first.
+func TestHoveringACellShowsItsCardAtEverySize(t *testing.T) {
+	for _, size := range [][2]int{{1180, 720}, {1500, 940}, {1920, 1080}} {
+		a := newTestApp(t)
+		a.Step = 3
+		tr := ui.NewTester(a.View, size[0], size[1])
+		tr.Frame()
+
+		// The grid's origin moves with the window, so probe a few points rather than
+		// hard-coding one that only works at the default size.
+		var hit bool
+		for _, pt := range [][2]float32{{300, 620}, {260, 600}, {320, 640}, {280, 660}} {
+			tr.Move(pt[0], pt[1])
+			tr.Frame()
+			if a.HoverQ >= 0 && a.HoverK >= 0 {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			t.Fatalf("%dx%d: no matrix cell under the pointer at any probe point", size[0], size[1])
+		}
+		var found bool
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "注意力格子") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("%dx%d: hover reached (q=%d, k=%d) but no cell card was drawn on the same "+
+				"frame", size[0], size[1], a.HoverQ, a.HoverK)
+		}
+	}
+}
