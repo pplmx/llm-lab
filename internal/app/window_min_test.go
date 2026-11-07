@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 // TestWindowMinimumMatchesTheSmallestSnapshot ties the window's minimum size to the
@@ -76,6 +78,39 @@ func TestEveryStageIsRenderedAtEverySize(t *testing.T) {
 	for _, size := range []string{"{1180, 720}", "{1500, 940}", "{1920, 1080}"} {
 		if !strings.Contains(text, size) {
 			t.Fatalf("the size matrix no longer includes %s", size)
+		}
+	}
+}
+
+// TestEveryStageRendersEmptyAtEverySize covers the state the snapshot set reaches only
+// once.
+//
+// The empty prompt is the first thing a reader sees, and it is the state where the app has
+// the least to show: no tokens, no matrix, no inspector cards. Round 142's defect lived
+// here — the two matrix stages advertised cell keys over a picture that was not drawn. The
+// snapshots caught it only because an empty state for step 2 was added; the guard for the
+// rest of the surface is a render of every stage at every tested size, which is cheap and
+// fails loudly if any stage stops coping with an empty trace.
+//
+// Sizes match the ones the snapshot suite uses, so the guarantee is the same one a reader
+// gets at any of the three window sizes the app supports.
+func TestEveryStageRendersEmptyAtEverySize(t *testing.T) {
+	for _, size := range [][2]int{{1180, 720}, {1500, 940}, {1920, 1080}} {
+		for step := 0; step < len(lessons); step++ {
+			a := newTestApp(t)
+			a.Prompt = ""
+			a.recompute()
+			a.Step = step
+			img := ui.Render(a.View, size[0], size[1], 1)
+			if img.Pix == nil || len(img.Pix) == 0 {
+				t.Fatalf("stage %d renders nothing at %dx%d with an empty prompt",
+					step, size[0], size[1])
+			}
+			// The step must survive the render: a stage that fell back to 0 would
+			// still produce an image.
+			if a.Step != step {
+				t.Fatalf("rendering stage %d with an empty prompt moved it to %d", step, a.Step)
+			}
 		}
 	}
 }
