@@ -583,6 +583,13 @@ func (a *App) stageSoftmax(c *ui.Context) {
 
 	card(c, func() {
 		sectionTitle(c, "加权求和", "本头的输出，以及它在残差里的份额")
+		// Three strips, two different widths: the first is d_head, the other two are d_model,
+		// and they are all drawn across the same space. Without a word about that a reader
+		// compares them column by column, where cell 3 of the first sits over cell 12 of the
+		// second.
+		ui.Text(c, fmt.Sprintf("下面三条依次是：本头输出（%d 维）→ 投影回残差（%d 维）→ 四个头相加（%d 维）",
+			tr.Config.DHead(), tr.Config.DModel, tr.Config.DModel)).
+			FontSize(fontMicro).TextColor(colFaint)
 		ui.Text(c, fmt.Sprintf("Σ α·v（头内输出，d_head = %d）", tr.Config.DHead())).FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, h.Out[i], 18, &a.HoverDimHeadOut)
 		// Head h only multiplies the rows of Wo that belong to its own slice,

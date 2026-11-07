@@ -6949,3 +6949,55 @@ func findY(tr *ui.Tester, text string) (float32, bool) {
 	}
 	return 0, false
 }
+
+// TestWeightedSumCardSaysTheStripsHaveDifferentWidths checks the line that heads the card.
+//
+// The card draws three strips across the same width: the head output at d_head = 24, then the
+// head's projection into the residual and the sum of all four heads, both at d_model = 96. All
+// three are painted edge to edge, so the eye lines them up column by column — cell 3 of the
+// first strip sits directly above cell 12 of the second. Nothing on the card said so.
+//
+// The line now names each strip and its width, before any of the data.
+func TestWeightedSumCardSaysTheStripsHaveDifferentWidths(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1500, 1800)
+	tr.Frame()
+
+	var line string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "下面三条依次是") {
+			line = s
+		}
+	}
+	if line == "" {
+		t.Fatal("the weighted-sum card does not say what its three strips are")
+	}
+	// Compare against the model's own dimensions, not a second copy of the numbers: a
+	// literal "24 维" here would pass even if the card printed a stale constant.
+	c := a.Trace.Config
+	for _, want := range []string{
+		fmt.Sprintf("%d 维", c.DHead()),
+		fmt.Sprintf("%d 维", c.DModel),
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the strip description is missing %q: %q", want, line)
+		}
+	}
+	if strings.Contains(line, fmt.Sprintf("%d 维", c.DFF)) {
+		t.Fatalf("the description quotes d_ff, which no strip on this card has: %q", line)
+	}
+
+	// And the line comes before the first strip's own label.
+	lineY, ok := findY(tr, line)
+	if !ok {
+		t.Fatal("cannot locate the strip description")
+	}
+	firstY, ok := findY(tr, fmt.Sprintf("Σ α·v（头内输出，d_head = %d）", a.Trace.Config.DHead()))
+	if !ok {
+		t.Fatal("cannot locate the first strip label")
+	}
+	if lineY > firstY {
+		t.Fatalf("the description sits at y=%.0f, below the first label at y=%.0f", lineY, firstY)
+	}
+}
