@@ -7284,3 +7284,46 @@ func TestShapeSequenceShowsWhereTheTokenAxisCollapses(t *testing.T) {
 		t.Fatal("the output stage body does not explain that only the last position is projected")
 	}
 }
+
+// TestEveryInspectorFollowsThePrompt checks the right-hand column on all seven stages.
+//
+// Typing a new prompt reruns the forward pass, and the inspector is where a reader looks for the
+// numbers behind whatever the middle column is drawing. A panel that kept showing the previous
+// prompt's figures would look plausible — the shapes are identical, only the values differ — so the
+// failure would be invisible without comparing two runs.
+//
+// Measured: the inspector's text changes on every stage when the prompt changes from "hi" to a full
+// sentence. This is a coarse check on purpose: the per-figure agreement is covered by the tests
+// that recompute each number from the trace.
+func TestEveryInspectorFollowsThePrompt(t *testing.T) {
+	const short, long = "hi", "attention is all you need and the transformer"
+	inspectorText := func(prompt string, step int) string {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 1400)
+		tr.Frame()
+		// The inspector is the right-hand column. At 1500 wide with a 330-wide inspector
+		// it starts around x=1170, so keeping everything past 1200 selects it without
+		// hard-coding the exact edge.
+		var parts []string
+		for _, s := range tr.Texts() {
+			if r, ok := tr.Find(s); ok && r.X >= 1200 {
+				parts = append(parts, s)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+
+	for step := 0; step < len(lessons); step++ {
+		s, l := inspectorText(short, step), inspectorText(long, step)
+		if s == "" || l == "" {
+			t.Fatalf("stage %d: the inspector produced no text", step)
+		}
+		if s == l {
+			t.Fatalf("stage %d: the inspector reads the same for %q and %q; it is not showing "+
+				"the current prompt's numbers", step, short, long)
+		}
+	}
+}
