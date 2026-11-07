@@ -6628,3 +6628,47 @@ func rowEntropy(v []float64) float64 {
 	}
 	return e
 }
+
+// TestPureLayerNormPinsTheVarianceNearOne checks the inspector's untrained-weight branch
+// against the data it describes.
+//
+// When γ and β are still 1 and 0, the card says "这一步只是纯归一化". That is a claim about
+// what the numbers beside it should look like: normalising a row to zero mean and unit
+// variance, with nothing learned on top, has to leave mean ≈ 0 and std ≈ 1. Nothing checked
+// it — lnParamsAreLearned has a test, but only of its own return value, not of whether the
+// two rows it distinguishes actually differ the way the sentence says.
+//
+// Measured on random weights: mean -0.00000 and std 0.9885 / 0.9909. The tolerance allows
+// for the eps under the square root, which is what keeps std slightly below 1.
+func TestPureLayerNormPinsTheVarianceNearOne(t *testing.T) {
+	a := New(model.Random(model.DefaultConfig, 42))
+	if lnParamsAreLearned(a.W) {
+		t.Fatal("random weights report learned LayerNorm parameters")
+	}
+	l := a.layer()
+	if l == nil || len(l.Norm1) == 0 {
+		t.Fatal("no normalised rows to measure")
+	}
+	for i := 0; i < len(l.Norm1) && i < 8; i++ {
+		mean, std := meanStd(l.Norm1[i])
+		if math.Abs(float64(mean)) > 1e-3 {
+			t.Fatalf("row %d: mean %.5f; pure normalisation should centre it on zero", i, mean)
+		}
+		if std < 0.98 || std > 1.0 {
+			t.Fatalf("row %d: std %.5f; pure normalisation should land at 1 (eps keeps it "+
+				"just below)", i, std)
+		}
+	}
+
+	// And the trained model is the other side of the same sentence: its γ/β are not 1/0,
+	// so the variance is free to leave 1 — which the card says explicitly.
+	b := newTestApp(t)
+	if !lnParamsAreLearned(b.W) {
+		t.Fatal("the bundled weights report unlearned LayerNorm parameters")
+	}
+	_, std := meanStd(b.layer().Norm1[b.SelToken])
+	if math.Abs(float64(std)-1) < 1e-4 {
+		t.Fatalf("the bundled model's std is %.6f; if it lands exactly on 1 then the "+
+			"card's explanation of why it need not is describing nothing", std)
+	}
+}
