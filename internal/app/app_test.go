@@ -6781,3 +6781,54 @@ func TestInspectorTitlesNameTheirSubject(t *testing.T) {
 		}
 	}
 }
+
+// TestStepperStatesAreDistinctWithoutRelyingOnColour checks the sidebar's three states.
+//
+// The dot for "done" and the dot for "current" are both filled circles whose colours sit at
+// 1.33:1 against each other — far under the 3:1 WCAG asks of a non-text indicator. On its own
+// that would make the stepper unreadable for a reader who cannot separate the two greys.
+//
+// It is not on its own: the current row also carries an accent-tinted background and bold
+// text, and "pending" differs in shape (hollow ring rather than filled). This test pins that
+// redundancy, so a restyle that recolours the dots cannot quietly leave colour as the only
+// cue.
+//
+// Label contrast is asserted too, since the three states have to stay readable: measured
+// 15.82 / 7.62 / 5.22 against the background.
+func TestStepperStatesAreDistinctWithoutRelyingOnColour(t *testing.T) {
+	// Shape separates done from pending, and the current row has a background plus weight.
+	if contrastRatio(colMuted, colAccent) >= 3 {
+		t.Logf("done and current dots now contrast at %.2f; the redundancy below is no "+
+			"longer load-bearing, which is fine but worth knowing",
+			contrastRatio(colMuted, colAccent))
+	}
+
+	for _, c := range []struct {
+		name string
+		col  ui.Color
+		min  float64
+	}{
+		{"current label", stepTextColor(1), 4.5},
+		{"done label", stepTextColor(0), 4.5},
+		{"pending label", stepTextColor(2), 4.5},
+	} {
+		if got := contrastRatio(c.col, colBg); got < c.min {
+			t.Fatalf("%s is %.2f:1 on the sidebar background", c.name, got)
+		}
+	}
+
+	// The current row must carry a second cue in the markup, not just the dot colour.
+	src, err := os.ReadFile("widgets.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "row = row.Background(colAccent.Alpha(0.14))") {
+		t.Fatal("the current stepper row has no background tint; the accent dot would be " +
+			"the only cue that it is current")
+	}
+	if !strings.Contains(text, "name = name.Bold()") {
+		t.Fatal("the current stepper row is no longer bold; a reader who cannot separate " +
+			"the two filled-dot colours loses the state")
+	}
+}
