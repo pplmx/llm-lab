@@ -8057,3 +8057,68 @@ func TestSoftmaxBodyDescribesTheWeightsItHas(t *testing.T) {
 		t.Fatalf("random weights get neither branch's wording: %q", truncateForTest(random, 160))
 	}
 }
+
+// TestResidualNormFiguresKeepTheirMagnitude keeps step 5's callout from rounding a short residual stream
+// into a flat one.
+//
+// The sentence printed both norms with %.0f. On the trained weights that is fine — 13 to 67. On random
+// weights the stream is short: inMean 0.2233, outMean 0.6322, which %.0f renders as "从 0 长到 1". A reader
+// gets "it went from nothing to one" followed immediately by "约 2.8 倍，而且每一层都在变大", and the two
+// halves of one sentence disagree.
+//
+// Precision now follows the magnitude: two decimals below 10, none above.
+func TestResidualNormFiguresKeepTheirMagnitude(t *testing.T) {
+	read := func(w *model.Weights) (string, float64, float64) {
+		a := New(w)
+		a.Step = 4
+		tr := ui.NewTester(a.View, 1500, 2600)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "残差流确实会一路变长") {
+				inMean, outMean := residualNormMeans(a.Trace)
+				return s, inMean, outMean
+			}
+		}
+		return "", 0, 0
+	}
+
+	// Random weights: the case that was wrong.
+	body, inMean, outMean := read(model.Random(model.DefaultConfig, 42))
+	if body == "" {
+		t.Fatal("the residual callout is missing")
+	}
+	if inMean >= 10 || outMean >= 10 {
+		t.Fatalf("the random model's norms are %.3f and %.3f, so this no longer exercises the "+
+			"small-magnitude case", inMean, outMean)
+	}
+	if strings.Contains(body, "从块输入处的 0 长到") {
+		t.Fatalf("a stream of %.2f is printed as 0: %q", inMean, truncateForTest(body, 160))
+	}
+	wantIn := fmt.Sprintf("%.2f", inMean)
+	wantOut := fmt.Sprintf("%.2f", outMean)
+	if !strings.Contains(body, wantIn) || !strings.Contains(body, wantOut) {
+		t.Fatalf("the callout does not print the measured norms (%s, %s): %q",
+			wantIn, wantOut, truncateForTest(body, 160))
+	}
+
+	// Trained weights keep whole numbers, where the fraction is noise.
+	body, inMean, outMean = read(mustBundled(t))
+	if inMean < 10 {
+		t.Fatalf("the bundled model's input norm is %.2f, so the large-magnitude branch is no longer "+
+			"reachable", inMean)
+	}
+	if !strings.Contains(body, fmt.Sprintf("%.0f", inMean)) {
+		t.Fatalf("the trained model's norm %.2f is not printed as a whole number: %q",
+			inMean, truncateForTest(body, 160))
+	}
+}
+
+// mustBundled loads the bundled weights or fails the test.
+func mustBundled(t *testing.T) *model.Weights {
+	t.Helper()
+	w, err := model.Bundled()
+	if err != nil {
+		t.Fatalf("bundled weights: %v", err)
+	}
+	return w
+}

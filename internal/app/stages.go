@@ -831,11 +831,15 @@ func (a *App) stageResidual(c *ui.Context) {
 		inMean, outMean := residualNormMeans(tr)
 		misconception(c,
 			"「残差是加法，所以每加一次，数值就更大一点」",
-			fmt.Sprintf("残差流确实会一路变长：各位置平均 ‖x‖ 从块输入处的 %.0f 长到最后一层输出的 %.0f，"+
+			// %.0f is wrong for a model whose residual stream is short: random weights put inMean
+			// at 0.2233 and outMean at 0.6322, which rounds to "从 0 长到 1" — a sentence that reads
+			// as "it barely moved" immediately before the same sentence says "约 2.8 倍，而且每一层
+			// 都在变大". Scale the precision to the number.
+			fmt.Sprintf("残差流确实会一路变长：各位置平均 ‖x‖ 从块输入处的 %s 长到最后一层输出的 %s，"+
 				"约 %.1f 倍，而且每一层都在变大。但每个子层之前都先做 LayerNorm，"+
 				"它的输出长度几乎是常数：√d_model = %.2f，实测所有行落在 %.2f–%.2f，也就是 %.0f%%–%.0f%%。"+
 				"所以子层看到的输入幅度始终稳定，一路膨胀的只是「原始信息」那条旁路本身。",
-				inMean, outMean, outMean/inMean,
+				normText(inMean), normText(outMean), outMean/inMean,
 				pin, lnLo, lnHi, 100*lnLo/pin, 100*lnHi/pin))
 	})
 }
@@ -1693,4 +1697,16 @@ func previousTokenShare(attn [][]float32, tokens int) (prev, rows int) {
 		}
 	}
 	return prev, rows
+}
+
+// normText formats a residual-stream norm with enough precision to be meaningful.
+//
+// Two decimal places below 10, none above: the trained model's stream runs from 13 to 67, where the
+// fraction is noise, while a random model's sits under 1, where "%.0f" would print 0 and 1 for values
+// a factor of three apart.
+func normText(v float64) string {
+	if v < 10 {
+		return fmt.Sprintf("%.2f", v)
+	}
+	return fmt.Sprintf("%.0f", v)
 }
