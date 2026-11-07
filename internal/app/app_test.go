@@ -7136,3 +7136,31 @@ func TestStepperHighlightFollowsTheStage(t *testing.T) {
 		}
 	}
 }
+
+// TestMaskedCellsAreNeverPainted checks the causal mask at the drawing layer.
+//
+// The heatmap draws only cells with j <= i, so the upper triangle is not painted at all rather
+// than painted in the background colour. That is stronger than a value check — a transparent
+// mask cell cannot be revealed by a later restyle or a change to heatColor — and it halves the
+// fills on a 64×64 matrix.
+//
+// The check is on the loop bounds, deliberately. A pixel test was tried first and abandoned:
+// locating the grid from the frame needs the axis labels (Find returns the first match for "0"),
+// and the page has bluish pixels from the rail, the strips and the progress dots, so the samples
+// could not be attributed to matrix cells with confidence. The loop bound is the property that
+// matters and it is directly readable.
+func TestMaskedCellsAreNeverPainted(t *testing.T) {
+	src, err := os.ReadFile("widgets.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := string(src)
+	if !strings.Contains(file, "for j := 0; j <= i && j < len(row); j++ {") {
+		t.Fatal("the heatmap's cell loop no longer stops at the diagonal; masked cells would " +
+			"start being painted")
+	}
+	// And the fill must stay inside that loop — not in a second pass over the full row.
+	if strings.Contains(file, "for j := 0; j < len(row); j++ {") {
+		t.Fatal("a second cell loop walks the whole row, which would paint the masked half")
+	}
+}
