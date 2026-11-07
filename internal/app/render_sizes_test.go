@@ -105,6 +105,15 @@ func TestRenderSizes(t *testing.T) {
 	neg.Step = 2
 	writeSnapshot(t, dir, "size-allnegative-1180.png", ui.Render(neg.View, 1180, 900, 1))
 
+	// A one-token prompt, which is the only state where step 2's position table has nothing to
+	// compare: the heading has to state the rule instead of claiming variation, and the note has
+	// to stop promising four rows. No other snapshot has fewer than two tokens.
+	one := newTestApp(t)
+	one.Prompt = "a"
+	one.recompute()
+	one.Step = 1
+	writeSnapshot(t, dir, "size-onetoken-1180.png", ui.Render(one.View, 1180, 900, 1))
+
 	// The other way to reach an untrained model: -weights pointed at a file with no training
 	// metadata. untrainedWhy gives that case different advice — it must not claim the bundled
 	// file was missing — and no snapshot reached it. Source is display-only (json:"-"), so

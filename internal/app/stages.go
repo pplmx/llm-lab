@@ -365,7 +365,24 @@ func (a *App) stageEmbed(c *ui.Context) {
 	})
 
 	card(c, func() {
-		sectionTitle(c, "位置向量随位置变化", "取前四个位置的 P[t]")
+		// The heading and the note both described four rows whatever the prompt was. With a
+		// single-token prompt the card showed one row under "随位置变化" and a note promising
+		// four positions — a comparison with nothing to compare and a count that was not
+		// there. The table has one row per position the prompt uses, so say how many.
+		shown := len(tr.Pos)
+		if shown > 4 {
+			shown = 4
+		}
+		switch {
+		case shown <= 1:
+			sectionTitle(c, "位置向量是每个位置一行",
+				fmt.Sprintf("这个提示词只有 %d 个位置", shown))
+		case shown < 4:
+			sectionTitle(c, "位置向量随位置变化",
+				fmt.Sprintf("这个提示词只有 %d 个位置，都列在这里", shown))
+		default:
+			sectionTitle(c, "位置向量随位置变化", "取前四个位置的 P[t]")
+		}
 		for t := 0; t < 4 && t < len(tr.Pos); t++ {
 			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 				ui.Text(c, fmt.Sprintf("t=%d", t)).FontSize(fontMicro).TextColor(colFaint).Width(26)

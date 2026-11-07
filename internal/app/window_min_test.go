@@ -302,3 +302,28 @@ func TestAllNegativeMatrixIsSnapshot(t *testing.T) {
 		t.Fatal("the all-negative snapshot does not use the short prompt that produces the case")
 	}
 }
+
+// TestShortPromptBranchesAreSnapshot keeps a picture of the two cards that change when a prompt has
+// almost nothing in it.
+//
+// Step 1's byte card switches its question (ASCII versus CJK) and step 2's position table switches
+// from "the first four positions" to "this prompt only has N". Every bundled prompt is at least two
+// tokens, so the one-token branch of both would never be compared.
+func TestShortPromptBranchesAreSnapshot(t *testing.T) {
+	src, err := os.ReadFile("render_sizes_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	for _, c := range []struct{ name, setup string }{
+		{"size-onetoken-1180.png", `one.Prompt = "a"`},
+		{"size-allnegative-1180.png", `neg.Prompt = "hi"`},
+	} {
+		if !strings.Contains(text, c.name) {
+			t.Fatalf("the snapshot set no longer renders %q", c.name)
+		}
+		if !strings.Contains(text, c.setup) {
+			t.Fatalf("%q does not set up the state it is named for (%s)", c.name, c.setup)
+		}
+	}
+}

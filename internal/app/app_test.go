@@ -7380,3 +7380,49 @@ func TestScoreLegendListsOnlyTheSignsPresent(t *testing.T) {
 		t.Fatal("an all-negative matrix is drawn with no word about why that is fine")
 	}
 }
+
+// TestPositionCardMatchesHowManyPositionsThePromptHas keeps step 2's position table honest.
+//
+// The card was headed "位置向量随位置变化" with the note "取前四个位置的 P[t]" for every prompt. The
+// table has one row per position the prompt uses, so a one-token prompt showed a single row under a
+// heading about variation and a note promising four — a comparison with nothing to compare and a
+// count that was not on screen.
+//
+// Three cases now: one position states the rule instead of showing variation, two or three list what
+// is there, and four or more take the sample.
+func TestPositionCardMatchesHowManyPositionsThePromptHas(t *testing.T) {
+	cases := []struct {
+		prompt string
+		want   string
+	}{
+		{"a", "位置向量是每个位置一行"},
+		{"hi", "位置向量随位置变化"},
+		{"The transformer reads the tokens and", "位置向量随位置变化"},
+	}
+	for _, c := range cases {
+		a := newTestApp(t)
+		a.Prompt = c.prompt
+		a.recompute()
+		a.Step = 1
+		tr := ui.NewTester(a.View, 1500, 1400)
+		tr.Frame()
+		if !tr.HasText(c.want) {
+			t.Fatalf("prompt %q (%d tokens): the position card does not say %q",
+				c.prompt, len(a.Trace.Tokens), c.want)
+		}
+	}
+
+	// A single position must not claim variation.
+	a := newTestApp(t)
+	a.Prompt = "a"
+	a.recompute()
+	a.Step = 1
+	tr := ui.NewTester(a.View, 1500, 1400)
+	tr.Frame()
+	if tr.HasText("取前四个位置的 P[t]") {
+		t.Fatal("a one-token prompt is still told the table shows four positions")
+	}
+	if !tr.HasText("这个提示词只有 1 个位置") {
+		t.Fatal("a one-token prompt does not say how many positions it has")
+	}
+}
