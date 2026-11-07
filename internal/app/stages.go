@@ -1209,7 +1209,7 @@ func (a *App) lesson(c *ui.Context) {
 		if a.hasMatrix() {
 			shift = "Shift+← → ↑ ↓ 移动矩阵格子"
 		}
-		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · 1–7 跳转", shift)).
+		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · Enter 采样 · 1–7 跳转", shift)).
 			FontSize(fontMicro).TextColor(colFaint)
 	})
 }

@@ -873,3 +873,66 @@ func TestLayerAndHeadReachTheCardSubtitles(t *testing.T) {
 		}
 	}
 }
+
+// TestEnterSamplesOutsideTheInput covers the one primary action that had no key.
+//
+// Every other clickable surface already had a keyboard equivalent — stages have arrows and
+// digits, tokens have Shift+arrows, cells have Shift+arrows on the matrix stages. Sampling
+// did not, and it is the action a reader repeats, at the top bar and again on the output
+// stage.
+//
+// Enter is free and safe: the text field consumes it while focused, the same mechanism that
+// keeps Space out of the lesson. Both halves are asserted, because a shortcut that also fires
+// while typing would corrupt the prompt the reader is editing.
+func TestEnterSamplesOutsideTheInput(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	before := a.Prompt
+	tr.Key(0, ui.KeyEnter)
+	tr.Frame()
+	if len(a.Prompt) <= len(before) {
+		t.Fatalf("Enter outside the input did not sample: prompt is still %q", a.Prompt)
+	}
+	if !strings.HasPrefix(a.Prompt, before) {
+		t.Fatalf("sampling replaced the prompt instead of extending it: %q -> %q",
+			before, a.Prompt)
+	}
+
+	// And it must not fire while the reader is typing.
+	b := newTestApp(t)
+	bt := ui.NewTester(b.View, 1500, 940)
+	bt.Frame()
+	if err := bt.Click("输入"); err != nil {
+		t.Fatal(err)
+	}
+	bt.Frame()
+	promptBefore := b.Prompt
+	bt.Key(0, ui.KeyEnter)
+	bt.Frame()
+	if b.Prompt != promptBefore {
+		t.Fatalf("Enter in the text field sampled: %q -> %q", promptBefore, b.Prompt)
+	}
+}
+
+// TestEnterIsAdvertised keeps the new key in the shortcut line every stage shows.
+func TestEnterIsAdvertised(t *testing.T) {
+	for step := 0; step < len(lessons); step++ {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		var line string
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "快捷键：") {
+				line = s
+			}
+		}
+		if line == "" {
+			t.Fatalf("stage %d has no shortcut line", step)
+		}
+		if !strings.Contains(line, "Enter 采样") {
+			t.Fatalf("stage %d does not mention the sampling key: %q", step, line)
+		}
+	}
+}

@@ -547,6 +547,12 @@ func (a *App) handleKeys(c *ui.Context) {
 		a.selectStep(a.Step - 1)
 	case c.Shortcut(0, ui.KeySpace):
 		a.togglePlay()
+	case c.Shortcut(0, ui.KeyEnter):
+		// Sampling is the one primary action without a key, and it is the one a reader
+		// repeats. Enter is free: the text field consumes it while focused, so typing
+		// never samples — measured, and the same mechanism that keeps Space out of the
+		// lesson while the field has focus.
+		a.sampleNext()
 	case c.Shortcut(0, ui.KeyEscape):
 		// Esc is the one "let go of everything" key: it stops playback and
 		// releases a pinned cell, so a reader who clicked the matrix can get
