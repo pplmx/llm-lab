@@ -17,6 +17,11 @@ type lesson struct {
 	title   string
 	body    string
 	formula string
+	// bodyFn, when set, replaces body at render time. A sentence that quotes a
+	// number from the loaded weights cannot be a constant: change the checkpoint and
+	// the prose would keep claiming the old figures while the cards beside it show the
+	// new ones.
+	bodyFn func(model.Config) string
 }
 
 var lessons = []lesson{
@@ -51,9 +56,18 @@ var lessons = []lesson{
 		formula: "x ← x + Attn(LN₁(x));  x ← x + FFN(LN₂(x))",
 	},
 	{
-		name:    "FFN",
-		title:   "逐位置的前馈网络",
-		body:    "注意力负责在位置之间搬运信息，FFN 负责在每个位置上单独做非线性变换：先升维到 4 倍宽，过 GELU，再降回原维度。只看 transformer 块内部，三分之二的参数都在这里（算上嵌入表则是 58%）。GELU 在负值区不是硬零，而是平滑地趋近零，所以激活会呈现稀疏但连续的分布。",
+		name:  "FFN",
+		title: "逐位置的前馈网络",
+		bodyFn: func(c model.Config) string {
+			ofAll, _ := ffnParamShare(c)
+			width := float64(c.DFF) / float64(c.DModel)
+			return fmt.Sprintf(
+				"注意力负责在位置之间搬运信息，FFN 负责在每个位置上单独做非线性变换："+
+					"先升维到 %.0f 倍宽，过 GELU，再降回原维度。只看 transformer 块内部，"+
+					"三分之二的参数都在这里（算上嵌入表则是 %.0f%%）。"+
+					"GELU 在负值区不是硬零，而是平滑地趋近零，所以激活会呈现稀疏但连续的分布。",
+				width, ofAll*100)
+		},
 		formula: "FFN(x) = W₂ · GELU(W₁ · LN(x))",
 	},
 	{
@@ -1147,7 +1161,11 @@ func (a *App) lesson(c *ui.Context) {
 	l := lessons[a.Step]
 	card(c, func() {
 		sectionTitle(c, "这一段在讲什么", l.name)
-		mutedText(c, l.body)
+		body := l.body
+		if l.bodyFn != nil && a.Trace != nil {
+			body = l.bodyFn(a.Trace.Config)
+		}
+		mutedText(c, body)
 		// The top bar dims the controls this stage does not read; this line
 		// says where they do apply, so the dimming is a signpost instead of a
 		// dead end. Only the knobs that are off are named.

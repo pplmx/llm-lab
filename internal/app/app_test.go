@@ -6058,3 +6058,54 @@ func TestScaleReadoutComesFromOneHelper(t *testing.T) {
 		t.Fatalf("the legend line appears %d times; it belongs in kvScale alone", n)
 	}
 }
+
+// TestFFNLessonQuotesTheLoadedWeights checks the lesson footer's figures come from the
+// model, not from the prose.
+//
+// The FFN paragraph said "先升维到 4 倍宽 … 算上嵌入表则是 58%" as a literal. Both numbers
+// describe the bundled checkpoint, and both are also computed elsewhere on the same stage
+// — the card prints the share via ffnParamShare. A different checkpoint would move the
+// card and leave the paragraph claiming the old figures, which is the same class as the
+// printed-cutoff bug two rounds ago: a constant extracted in one place while prose kept a
+// literal.
+//
+// The paragraph's figures are derived now. This asserts the rendered text matches what the
+// config gives — with the deliberate exception of "三分之二", which is prose for roughly
+// two thirds and is left as words.
+func TestFFNLessonQuotesTheLoadedWeights(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	ofAll, _ := ffnParamShare(a.Trace.Config)
+	width := float64(a.Trace.Config.DFF) / float64(a.Trace.Config.DModel)
+	wantWidth := fmt.Sprintf("%.0f 倍宽", width)
+	wantShare := fmt.Sprintf("算上嵌入表则是 %.0f%%", ofAll*100)
+
+	var para string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "先升维到") {
+			para = s
+		}
+	}
+	if para == "" {
+		t.Fatal("the FFN lesson paragraph is not rendered")
+	}
+	if !strings.Contains(para, wantWidth) {
+		t.Fatalf("the paragraph does not state the derived width %q: %s", wantWidth, para)
+	}
+	if !strings.Contains(para, wantShare) {
+		t.Fatalf("the paragraph does not state the derived share %q: %s", wantShare, para)
+	}
+
+	// And the literal must be gone from the source, so a future checkpoint change cannot
+	// silently leave it behind.
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(src), "算上嵌入表则是 58%") {
+		t.Fatal("the lesson paragraph still hard-codes 58%")
+	}
+}
