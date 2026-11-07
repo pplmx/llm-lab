@@ -724,3 +724,44 @@ func TestEmptyAttentionStageDoesNotAdvertiseCellKeys(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryTabStopDrawsSomething checks focus feedback across the whole ring, not just the
+// first step.
+//
+// The test added earlier in this sweep pressed Tab once and required the frame to change,
+// which proves a ring exists but not that every stop has one. A control in the middle of
+// the ring with no visible focus would leave a keyboard reader pressing Tab through an
+// invisible cursor — the same failure, just further in.
+//
+// Measured: the ring has six stops and every one repaints between 1096 and 6083 pixels.
+// The test requires a minimum far below the smallest, so a restyle can shrink the ring
+// without failing this, but a stop that paints nothing cannot pass.
+func TestEveryTabStopDrawsSomething(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	const minPixels = 100
+	prev := append([]byte(nil), tr.Image().Pix...)
+	seen := 0
+	for i := 0; i < 6; i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
+		cur := tr.Image().Pix
+		changed := 0
+		for j := 0; j+3 < len(prev) && j+3 < len(cur); j += 4 {
+			if prev[j] != cur[j] || prev[j+1] != cur[j+1] || prev[j+2] != cur[j+2] {
+				changed++
+			}
+		}
+		if changed < minPixels {
+			t.Fatalf("tab stop %d repainted only %d pixels; that control has no visible "+
+				"focus", i+1, changed)
+		}
+		seen++
+		prev = append([]byte(nil), cur...)
+	}
+	if seen != 6 {
+		t.Fatalf("walked %d tab stops, expected 6", seen)
+	}
+}
