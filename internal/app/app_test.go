@@ -7876,3 +7876,39 @@ func TestNumbersShownTwiceAgree(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddingBodySaysTheTableIsLearned closes a gap in step 2's prose.
+//
+// The body explained what the embedding table is and how lookup works, but never that the table was
+// trained — a reader could reasonably take the rows for something derived rather than learned. Every
+// other learned quantity in the app says so: the position rows ("学出来的"), γ/β ("训练出来的"), and the
+// attention heads' behaviour ("学到的模式"). The table itself, and the three projection matrices, did not.
+func TestEmbeddingBodySaysTheTableIsLearned(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 1
+	a.SelToken = 20
+	tr := ui.NewTester(a.View, 1500, 1800)
+	tr.Frame()
+
+	// The body card is the one headed "这一段在讲什么"; the entry after it is the prose.
+	texts := tr.Texts()
+	var body string
+	for i, s := range texts {
+		if s == "这一段在讲什么" && i+2 < len(texts) {
+			body = texts[i+2]
+		}
+	}
+	if body == "" {
+		t.Fatal("step 2 has no body prose")
+	}
+	if !strings.Contains(body, "训练出来的") {
+		t.Fatalf("the embedding body still does not say the table is learned: %q",
+			truncateForTest(body, 120))
+	}
+	// And it should point at the other learned numbers rather than leaving the reader to wonder
+	// whether this one is special.
+	if !strings.Contains(body, "投影矩阵") || !strings.Contains(body, "γ") {
+		t.Fatalf("the body does not connect this to the other learned quantities: %q",
+			truncateForTest(body, 120))
+	}
+}
