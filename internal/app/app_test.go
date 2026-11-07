@@ -8392,9 +8392,11 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 	num := regexp.MustCompile(`[-+]?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?%?`)
 	// allowed lists, per stage, the fragments a designed difference is expected to contain.
 	allowed := map[int][]string{
-		2: {"所有分数都是负的"},                        // the all-negative legend note
-		3: {"行可以比较", "第 # 层的头 #"},              // the short-sample branch, then the long one
-		6: {"这么高的把握", "根本没有那么大的把握", "有那么大的把握"}, // confidence follows maxP
+		2: {"所有分数都是负的"},           // the all-negative legend note
+		3: {"行可以比较", "第 # 层的头 #"}, // the short-sample branch, then the long one
+		// Confidence follows maxP; the last-position note appears only when the selected token is
+		// not the last one, which a one-token prompt makes impossible.
+		6: {"这么高的把握", "根本没有那么大的把握", "有那么大的把握", "选中的 t=# 不参与预测"},
 	}
 
 	collect := func(prompt string) []map[string]bool {
@@ -8601,5 +8603,56 @@ func TestHeadControlIsNotTabReachable(t *testing.T) {
 	}
 	if seen["head"] {
 		t.Fatal("the head control is tab reachable now; replace this record with a test that requires it")
+	}
+}
+
+// TestOutputCardSaysWhenItIgnoresTheSelection closes the one stage where clicking a token does nothing visible.
+//
+// On the other six stages, changing the selected token redraws the stage: a different row of the matrix, a
+// different vector, a different row of the histogram. The output stage always shows the last position, because
+// that is the only one projected to the vocabulary. Selecting token 5 there leaves the card identical, so the
+// click reads as an interaction that failed.
+//
+// The card's note now names the position it is showing whenever that is not the selected one.
+func TestOutputCardSaysWhenItIgnoresTheSelection(t *testing.T) {
+	noteOf := func(sel int) (string, int) {
+		a := newTestApp(t)
+		a.Step = 6
+		a.SelToken = sel
+		tr := ui.NewTester(a.View, 1500, 1200)
+		tr.Frame()
+		texts := tr.Texts()
+		for i, s := range texts {
+			if s == "最后位置的向量" && i+1 < len(texts) {
+				return texts[i+1], len(a.Trace.Tokens) - 1
+			}
+		}
+		return "", 0
+	}
+
+	last := len(newTestApp(t).Trace.Tokens) - 1
+	if last < 6 {
+		t.Fatalf("the default prompt has only %d tokens; this test needs a non-last index", last)
+	}
+
+	// Selecting a non-last token must explain why the card did not change.
+	note, want := noteOf(5)
+	if note == "" {
+		t.Fatal("the output stage lost its vector card")
+	}
+	if !strings.Contains(note, fmt.Sprintf("t=%d", want)) {
+		t.Fatalf("the note does not say which position is drawn (t=%d): %q", want, note)
+	}
+	if !strings.Contains(note, fmt.Sprintf("选中的 t=%d", 5)) {
+		t.Fatalf("the note does not name the selection it is ignoring: %q", note)
+	}
+	if !strings.Contains(note, "不参与预测") {
+		t.Fatalf("the note does not say why: %q", note)
+	}
+
+	// Selecting the last token needs no explanation.
+	note, _ = noteOf(last)
+	if strings.Contains(note, "选中的") {
+		t.Fatalf("the note explains an ignored selection when there is none: %q", note)
 	}
 }

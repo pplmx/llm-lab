@@ -1218,7 +1218,16 @@ func (a *App) stageOutput(c *ui.Context) {
 	}
 
 	card(c, func() {
-		sectionTitle(c, "最后位置的向量", "最终 LayerNorm 之后")
+		// Every other stage redraws when the selected token changes; this one does not,
+		// because only the last position is projected. Selecting token 5 here leaves the
+		// card unchanged, which reads as an interaction that did nothing. Say which
+		// position the strip is showing whenever it is not the selected one.
+		note := "最终 LayerNorm 之后"
+		if a.SelToken != last && last >= 0 {
+			note = fmt.Sprintf("t=%d · 最终 LayerNorm 之后；只有这个位置会被投影，选中的 t=%d 不参与预测",
+				last, a.SelToken)
+		}
+		sectionTitle(c, "最后位置的向量", note)
 		vectorStrip(c, tr.FinalNorm[last], 22, &a.HoverDimIn)
 		// An entropy of 0.16 nats means nothing without a scale. The ceiling is
 		// log(vocab) — the entropy of a uniform distribution over all 256 bytes —
