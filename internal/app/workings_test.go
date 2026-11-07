@@ -1009,3 +1009,77 @@ func TestPrintedFFNTermsUseTheComputedValues(t *testing.T) {
 		t.Fatalf("the printed output is %.6f, the trace holds %.6f", got, want)
 	}
 }
+
+// TestPrintedHeadContributionsUseTheComputedValues reads the head-contribution card.
+//
+// The sixth block with the same blind spot, and the widest so far: six mutations
+// passed. Each head's bar could show the sum of all four norms, or the merged
+// vector's norm, instead of its own. The cancellation sentence could print the sum
+// where the total belongs or the total where the sum belongs — either way the ratio
+// it then states no longer divides the two numbers printed beside it. The ratio could
+// be inverted, and the row count could be replaced by the row total.
+//
+// The ratio one is the worst: "四个头的长度之和是 17.05，但它们相加后的长度只有
+// 9.70，比值 1.76" reads as a coherent sentence about reinforcement when the truth is
+// the opposite.
+func TestPrintedHeadContributionsUseTheComputedValues(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3 // the softmax stage, whose card computes the per-head norms
+	a.SelToken = 10
+	a.Layer = 1
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	l := a.layer()
+	hc := computeHeadContributions(*l, 10)
+	if !hc.OK {
+		t.Fatal("computeHeadContributions declined")
+	}
+
+	// Each head's own length must appear as a bar value.
+	for _, hh := range hc.Heads {
+		want := fmt.Sprintf("%.2f", hh.Norm)
+		var found bool
+		for _, s := range tr.Texts() {
+			if s == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("head %d's length %.2f does not appear on the panel", hh.Head, hh.Norm)
+		}
+	}
+
+	// The sentence must quote the sum, the total, and their ratio in that order.
+	st := a.cancellation()
+	want := fmt.Sprintf("范数不能直接相加。四个头的长度之和是 %.2f，但它们相加后的长度只有 %.2f，"+
+		"比值 %.2f", hc.SumNorm, hc.TotalNorm, hc.Cancellation)
+	var sawSentence bool
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, want) {
+			sawSentence = true
+		}
+	}
+	if !sawSentence {
+		t.Fatalf("the panel does not print %q", want)
+	}
+
+	// The ratio must be the total over the sum — reinforcement would be above 1.
+	if hc.SumNorm > 0 {
+		if got, wantRatio := hc.Cancellation, hc.TotalNorm/hc.SumNorm; math.Abs(got-wantRatio) > 1e-9 {
+			t.Fatalf("the printed ratio is %v, but total/sum is %v", got, wantRatio)
+		}
+	}
+
+	// And the row counts it cites must be the ones measured.
+	wantRows := fmt.Sprintf("%d 行里 %d 行都是这样", st.Rows, st.Below)
+	foundRows := false
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, wantRows) {
+			foundRows = true
+		}
+	}
+	if !foundRows {
+		t.Fatalf("the panel does not cite %q", wantRows)
+	}
+}
