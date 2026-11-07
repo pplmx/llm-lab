@@ -1116,11 +1116,19 @@ func (a *App) stageFFN(c *ui.Context) {
 					neg++
 				}
 			}
+			axisShare := 100 * (0 - float64(hLo)) / (float64(hHi) - float64(hLo))
+			// "只剩一根柱子" describes what happens when the negative region is squeezed into a
+			// sliver of the axis: 4.0% on the trained weights. Random weights give it 28.9%, where
+			// the bins are wide enough to read, so the claim has to follow the measurement.
+			squeeze := fmt.Sprintf("全挤在 0 左边、只占 %.1f%% 的轴宽，这一侧的直方图因此只剩一根柱子——"+
+				"它们的具体分布看上面的色带，不要从这张图判断。", axisShare)
+			if axisShare >= 10 {
+				squeeze = fmt.Sprintf("都落在 0 左边、占 %.1f%% 的轴宽，这一侧还能看出分布的形状——"+
+					"更细的结构看上面的色带。", axisShare)
+			}
 			mutedText(c, fmt.Sprintf("GELU 不是 ReLU：负值不会被截成 0，只是被平滑压向 0，所以分布右侧拖出一条长尾，这就是「稀疏但连续」。"+
-				"竖线标出 0 的位置：%d 个负值（占 %.0f%%）全挤在 0 左边、只占 %.1f%% 的轴宽，这一侧的直方图因此只剩一根柱子——"+
-				"它们的具体分布看上面的色带，不要从这张图判断。",
-				neg, 100*float64(neg)/float64(len(hidden)),
-				100*(0-float64(hLo))/(float64(hHi)-float64(hLo))))
+				"竖线标出 0 的位置：%d 个负值（占 %.0f%%）%s",
+				neg, 100*float64(neg)/float64(len(hidden)), squeeze))
 		} else {
 			mutedText(c, "GELU 不是 ReLU：负值不会被截成 0，只是被平滑压向 0，所以分布右侧拖出一条长尾，这就是「稀疏但连续」。")
 		}
@@ -1289,13 +1297,21 @@ func (a *App) stageOutput(c *ui.Context) {
 		if a.W.Steps > 0 {
 			trained = fmt.Sprintf("只训练了 %d 步", a.W.Steps)
 		}
+		// "这么高的把握" was a fixed phrase, and it stops making sense when the top-1 share is 1%:
+		// random weights spread the distribution near-uniformly, and calling 1% high confidence
+		// contradicts the number the same sentence just printed.
+		confidence := "完全可以对一个字节有这么高的把握而依然写出乱码"
+		if maxP < 0.2 {
+			confidence = "根本没有那么大的把握，输出仍然可能是乱码"
+		} else if maxP < 0.5 {
+			confidence = "完全可以对一个字节有那么大的把握而依然写出乱码"
+		}
 		misconception(c,
 			fmt.Sprintf("「概率 %.0f%% = 模型很确定下一个字就是它，所以它一定对」", maxP*100),
 			fmt.Sprintf("这两件事没有关系。softmax 只把 logits 压成一个分布，%.0f%% 说的是"+
 				"「在这个分布里它最大」，不是「它是对的」——一个 %d 万参数、%s的玩具模型"+
-				"完全可以对一个字节有这么高的把握而依然写出乱码。"+
-				"把温度往下拖，这个比例会逼近 100%%，但输出只是更重复，并不会更正确。",
-				maxP*100, a.paramCount()/10000, trained))
+				"%s。把温度往下拖，这个比例会逼近 100%%，但输出只是更重复，并不会更正确。",
+				maxP*100, a.paramCount()/10000, trained, confidence))
 	})
 
 	card(c, func() {

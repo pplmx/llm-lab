@@ -8122,3 +8122,79 @@ func mustBundled(t *testing.T) *model.Weights {
 	}
 	return w
 }
+
+// TestProseAboutConfidenceAndSqueezeFollowsTheData checks two sentences that described the trained model's
+// figures regardless of what the loaded weights actually produce.
+//
+// Step 7's callout said "完全可以对一个字节有这么高的把握". On the bundled weights maxP is 97% and the phrase
+// fits; on random weights it is 1%, near the 1/256 of a uniform distribution, and calling that high confidence
+// contradicts the percentage printed in the same sentence.
+//
+// Step 6's histogram note said the negative region "只占 4.0% 的轴宽，这一侧的直方图因此只剩一根柱子". That is
+// what makes it unreadable on the trained weights; random weights give the region 38.6%, where the bins are
+// legible, so the reason for "look at the colour band instead" no longer holds.
+func TestProseAboutConfidenceAndSqueezeFollowsTheData(t *testing.T) {
+	trained := mustBundled(t)
+	random := model.Random(model.DefaultConfig, 42)
+
+	// Step 7: high confidence, low confidence.
+	callout := func(w *model.Weights) (string, float32) {
+		a := New(w)
+		a.Step = 6
+		tr := ui.NewTester(a.View, 1500, 2800)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "这两件事没有关系") {
+				return s, a.Trace.Probabilities(a.Temp)[0]
+			}
+		}
+		return "", 0
+	}
+	body, _ := callout(trained)
+	if body == "" {
+		t.Fatal("the sampling callout is missing")
+	}
+	if !strings.Contains(body, "这么高的把握") {
+		t.Fatalf("the trained model's top-1 is high but the text does not say so: %q",
+			truncateForTest(body, 160))
+	}
+	rbody, _ := callout(random)
+	if strings.Contains(rbody, "这么高的把握") {
+		t.Fatalf("random weights still describe a confident prediction: %q",
+			truncateForTest(rbody, 160))
+	}
+	if !strings.Contains(rbody, "根本没有那么大的把握") {
+		t.Fatalf("random weights get neither branch: %q", truncateForTest(rbody, 160))
+	}
+
+	// Step 6: squeezed or not.
+	gelu := func(w *model.Weights) string {
+		a := New(w)
+		a.Step = 5
+		a.Layer = 0
+		tr := ui.NewTester(a.View, 1500, 2800)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "轴宽") {
+				return s
+			}
+		}
+		return ""
+	}
+	tg := gelu(trained)
+	if !strings.Contains(tg, "只剩一根柱子") {
+		t.Fatalf("the trained model's negative region is squeezed but the text does not say so: %q",
+			truncateForTest(tg, 160))
+	}
+	rg := gelu(random)
+	if rg == "" {
+		t.Fatal("the GELU note is missing under random weights")
+	}
+	if strings.Contains(rg, "只剩一根柱子") {
+		t.Fatalf("a region spanning a large share of the axis is still called one bar: %q",
+			truncateForTest(rg, 160))
+	}
+	if !strings.Contains(rg, "还能看出分布的形状") {
+		t.Fatalf("the wide-region branch is not taken: %q", truncateForTest(rg, 160))
+	}
+}
