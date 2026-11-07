@@ -511,3 +511,53 @@ func TestTabWalksThroughMoreThanOneControl(t *testing.T) {
 			"through the controls", distinct)
 	}
 }
+
+// TestDragCannotPinAMaskedCell covers the pointer path into the causal mask.
+//
+// A click reads the cell under the pointer and pins it. A drag presses on one cell and
+// releases on another, so it can start inside the causal triangle and end outside it —
+// above the diagonal, which the attention mask zeroes and the model never computes.
+// Measured before the guard: pressing at a low cell and dragging up and right pinned
+// (9, 28), and the inspector then showed a score for a cell that does not exist.
+//
+// The keyboard already refused this (stepCell clamps to the diagonal), which is why the
+// asymmetry survived: only the pointer could reach the masked half.
+func TestDragCannotPinAMaskedCell(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	// Press low on the diagonal side, drag up and right, release above it.
+	tr.Press(400, 800)
+	tr.Move(600, 700)
+	tr.Release(600, 700)
+	tr.Frame()
+
+	if a.KeyQ >= 0 && a.KeyK > a.KeyQ {
+		t.Fatalf("the drag pinned (%d,%d), above the diagonal, so the inspector would "+
+			"describe a masked cell", a.KeyQ, a.KeyK)
+	}
+	if a.HoverQ >= 0 && a.HoverK > a.HoverQ {
+		t.Fatalf("the pointer now hovers (%d,%d), above the diagonal", a.HoverQ, a.HoverK)
+	}
+
+	// A click inside the triangle must still pin — the guard must not have broken the
+	// ordinary case.
+	b := newTestApp(t)
+	b.Step = 2
+	bt := ui.NewTester(b.View, 1500, 940)
+	bt.Frame()
+	for y := float32(560); y < 900; y += 8 {
+		bt.ClickAt(430, y)
+		if b.KeyQ >= 0 {
+			break
+		}
+	}
+	if b.KeyQ < 0 {
+		t.Fatal("no click inside the triangle managed to pin a cell")
+	}
+	if b.KeyK > b.KeyQ {
+		t.Fatalf("a click pinned (%d,%d), above the diagonal", b.KeyQ, b.KeyK)
+	}
+}

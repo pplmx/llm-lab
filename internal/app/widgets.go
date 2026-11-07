@@ -524,14 +524,21 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 			if k >= T {
 				k = T - 1
 			}
-			if q >= 0 && k >= 0 {
+			// Only the causal triangle exists. A pointer drag from a lower
+			// cell to an upper one lands outside it, and the inspector would
+			// otherwise print a score for a cell the model never computes.
+			if q >= 0 && k >= 0 && k <= q {
 				a.HoverQ, a.HoverK = q, k
+			} else {
+				a.HoverQ, a.HoverK = -1, -1
 			}
 		} else {
 			a.HoverQ, a.HoverK = -1, -1
 		}
 	}
-	if el.Clicked() && q >= 0 && k >= 0 {
+	// A drag can end outside the causal triangle; pinning there would put a
+	// number in the inspector for a cell that does not exist.
+	if el.Clicked() && q >= 0 && k >= 0 && k <= q {
 		// The click landed on the matrix, not the strip: pull the strip to the
 		// query row so the highlighted heatmap row and the rail agree.
 		a.selectToken(q, true)
