@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"image"
 	"testing"
 
@@ -229,4 +230,97 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TestTypingBuildsThePipelineOneKeyAtATime walks the most basic action there is: a reader with an empty prompt types a
+// sentence, character by character, and the whole pipeline has to keep up.
+//
+// The per-keystroke recompute was once missing — the view only refreshed when some other key was pressed — and the test
+// for it checks the token count after typing "hi". What it does not check is that the seven stages are still coherent at
+// every intermediate state: after one character there is a single token, which is the degenerate case several cards
+// branch on (the score matrix is 1×1, the attention row has nothing to compare against, the residual chain has one term).
+// A reader types into that state on the way to every prompt they ever use.
+func TestTypingBuildsThePipelineOneKeyAtATime(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = ""
+	a.recompute()
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if !tr.HasText("还没有提示词") {
+		t.Fatal("the empty prompt does not show its empty-state card")
+	}
+
+	if err := tr.Click("输入"); err != nil {
+		t.Fatalf("cannot focus the prompt field: %v", err)
+	}
+	tr.Frame()
+
+	type keyPress struct {
+		key  ui.Key
+		text string
+	}
+	sentence := "Hi there"
+	var presses []keyPress
+	for _, r := range sentence {
+		if r == ' ' {
+			presses = append(presses, keyPress{ui.KeySpace, " "})
+			continue
+		}
+		presses = append(presses, keyPress{ui.KeyH, string(r)})
+	}
+
+	for i, p := range presses {
+		tr.TypeKey(0, p.key, p.text)
+		tr.Frame()
+
+		want := i + 1
+		if got := len(a.Trace.Tokens); got != want {
+			t.Fatalf("after typing %q (%s) the pipeline has %d tokens, want %d",
+				string(rune(sentence[i])), a.Prompt, got, want)
+		}
+		if tr.HasText("还没有提示词") {
+			t.Fatalf("the empty-state card is still up after typing %q", a.Prompt)
+		}
+		// The stage must still describe what is on screen rather than the state before the key.
+		if !tr.HasText("这一段在讲什么") {
+			t.Fatalf("stage 1 lost its lesson card after typing %q", a.Prompt)
+		}
+		if !tr.HasText(fmt.Sprintf("T = %d", want)) {
+			t.Fatalf("after typing %q the tokenize card does not say T = %d", a.Prompt, want)
+		}
+	}
+
+	// And the single-token state every prompt passes through has to render on every stage.
+	single := newTestApp(t)
+	single.Prompt = "x"
+	single.recompute()
+	if got := len(single.Trace.Tokens); got != 1 {
+		t.Fatalf("the one-character prompt made %d tokens", got)
+	}
+	for step := 0; step < len(lessons); step++ {
+		single.Step = step
+		single.SelToken = 0
+		tr := ui.NewTester(single.View, 1500, 940)
+		tr.Frame()
+		if tr.HasText("还没有提示词") {
+			t.Fatalf("stage %d shows the empty-state card with a one-character prompt", step+1)
+		}
+		if !tr.HasText("这一段在讲什么") {
+			t.Fatalf("stage %d has no lesson card with a one-character prompt", step+1)
+		}
+		if !tr.HasText(lessons[step].name) {
+			t.Fatalf("stage %d's inspector does not name it with a one-character prompt", step+1)
+		}
+	}
+
+	// Finally the full sentence has to render on every stage too.
+	for step := 0; step < len(lessons); step++ {
+		a.Step = step
+		a.SelToken = len(a.Trace.Tokens) - 1
+		tr.Frame()
+		if !tr.HasText("这一段在讲什么") {
+			t.Fatalf("stage %d has no lesson card for %q", step+1, a.Prompt)
+		}
+	}
 }
