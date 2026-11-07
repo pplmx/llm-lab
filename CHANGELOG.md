@@ -43,6 +43,14 @@
 
 ### Changed
 
+- `clearHover` 与 `clearPointer` 是**两个八行函数、只差一行**（前者多清 `KeyQ/KeyK`），又一次是「同一不变量两处实现」
+  - 改成 `clearHover` = `clearPointer()` + 清 pin，并给两个函数补上用途说明（前者用于上下文完全失效时：换阶段/换层/换头；后者保留固定格子，因为指针离开矩阵不该解除点击固定）
+  - 补测试用**比较状态**而非数行数：脏化全部 12 个游标字段后，`clearPointer` 必须只留下 pin、`clearHover` 必须全部清零
+  - 两个方向都验证过：让 `clearPointer` 也清 pin 会失败；漏清任一字段会失败并报出字段名（实测 `clearPointer left HoverDimHeadOut = 11`）
+  - 第二个方向的价值在于**将来新增游标字段时漏清会被抓到**
+
+### Changed
+
 - 「停止播放」在四处各写了一遍（预设/输入框改提示词、采样、跳阶段、Esc），其中三处写了两行、采样那处**一行都没写**
   - 抽成 `stopPlayback()`，四处共用；`Playing = false` 的写入点从 4 处降到 2 处（另一处是 `play()` 自己在末尾停下，只需标志位、不需要清计时器，因为不会再被旧 deadline 重启）
   - 补测试按行统计：`Playing = false` 紧跟 `NextAt = time.Time{}` 的两行组合**必须只出现一次**，裸标志位**必须只出现两次**；重新内联会失败并报出两个行号

@@ -334,14 +334,12 @@ func (a *App) stepToken(delta int) {
 	a.selectToken(clampIndex(i+delta, n), true)
 }
 
+// clearHover drops every pointer and keyboard cursor, pinned cell included. Used
+// wherever the context changes so completely that nothing under the old one means
+// anything: a different stage, a different layer, a different head.
 func (a *App) clearHover() {
-	a.HoverQ, a.HoverK = -1, -1
+	a.clearPointer()
 	a.KeyQ, a.KeyK = -1, -1
-	a.HoverDimIn = -1
-	a.HoverDimQ, a.HoverDimK = -1, -1
-	a.HoverDimV, a.HoverDimH = -1, -1
-	a.HoverDimOut = -1
-	a.HoverDimHeadOut, a.HoverDimProj = -1, -1
 }
 
 // clampPinnedCell keeps a pinned attention cell inside the triangle after the

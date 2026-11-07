@@ -229,3 +229,66 @@ func TestStoppingPlaybackIsOneOperation(t *testing.T) {
 			"for the end-of-lesson halt", bare)
 	}
 }
+
+// TestClearHoverIsClearPointerPlusThePin pins the relationship the two helpers now have.
+//
+// They were written as two eight-line bodies differing by one line, which is the shape
+// that has gone wrong four times in this sweep: one invariant, several implementations,
+// and eventually one of them missing a step. The pinned cell is what separates them —
+// clearPointer leaves it alone because a pointer leaving the matrix must not unpin what a
+// click fixed, while clearHover drops it because a stage or layer change makes the cell
+// meaningless.
+//
+// The assertion is on the resulting state rather than on the source: after clearHover
+// every cursor field must be -1, and after clearPointer every field *except* the pin must
+// be -1 while the pin survives. That covers fields added later — if someone adds a
+// HoverDimFoo and forgets one helper, this fails.
+func TestClearHoverIsClearPointerPlusThePin(t *testing.T) {
+	// Dirty every cursor field, then clear one way.
+	dirty := func() *App {
+		a := newTestApp(t)
+		a.HoverQ, a.HoverK = 3, 2
+		a.KeyQ, a.KeyK = 5, 1
+		a.HoverDimIn = 7
+		a.HoverDimQ, a.HoverDimK = 1, 2
+		a.HoverDimV, a.HoverDimH = 3, 4
+		a.HoverDimOut = 9
+		a.HoverDimHeadOut, a.HoverDimProj = 11, 12
+		return a
+	}
+
+	cursorFields := func(a *App) map[string]int {
+		return map[string]int{
+			"HoverQ": a.HoverQ, "HoverK": a.HoverK,
+			"KeyQ": a.KeyQ, "KeyK": a.KeyK,
+			"HoverDimIn": a.HoverDimIn,
+			"HoverDimQ":  a.HoverDimQ, "HoverDimK": a.HoverDimK,
+			"HoverDimV": a.HoverDimV, "HoverDimH": a.HoverDimH,
+			"HoverDimOut":     a.HoverDimOut,
+			"HoverDimHeadOut": a.HoverDimHeadOut,
+			"HoverDimProj":    a.HoverDimProj,
+		}
+	}
+
+	afterPointer := dirty()
+	afterPointer.clearPointer()
+	for name, v := range cursorFields(afterPointer) {
+		if name == "KeyQ" || name == "KeyK" {
+			if v < 0 {
+				t.Fatalf("clearPointer cleared %s, which is the pin it must keep", name)
+			}
+			continue
+		}
+		if v != -1 {
+			t.Fatalf("clearPointer left %s = %d", name, v)
+		}
+	}
+
+	afterHover := dirty()
+	afterHover.clearHover()
+	for name, v := range cursorFields(afterHover) {
+		if v != -1 {
+			t.Fatalf("clearHover left %s = %d", name, v)
+		}
+	}
+}
