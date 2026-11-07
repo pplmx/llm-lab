@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/egoist/mygo/ui"
+
+	"llmlab/internal/model"
 )
 
 // TestWorkingsStaysFreeOfTheInterface keeps workings.go what it claims to be:
@@ -1081,5 +1083,118 @@ func TestPrintedHeadContributionsUseTheComputedValues(t *testing.T) {
 	}
 	if !foundRows {
 		t.Fatalf("the panel does not cite %q", wantRows)
+	}
+}
+
+// TestAttentionInspectorRowsUseTheComputedValues reads the attention stage's panel.
+//
+// Four mutations passed. The layer-divergence figure could be replaced by its
+// complement or by a constant, the entropy by a sum over one element fewer, and the
+// output norm by V's norm instead of the head output's.
+//
+// The divergence one deserves a note: the line's own legend says "0 = 相同，1 =
+// 不重叠", so printing 1-TV inverts what the number means while the legend still
+// claims to describe it.
+func TestAttentionInspectorRowsUseTheComputedValues(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3 // the softmax stage carries the per-head inspector rows
+	a.SelToken = 10
+	a.Layer = 1
+	a.Head = 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	l := a.layer()
+	h := l.Heads[a.Head]
+	const i = 10
+
+	// Layer divergence: the label names the previous layer, and the number is TV.
+	d := computeLayerDivergence(a.Trace.Layers, a.Layer, a.Head, i)
+	if !d.Ok {
+		t.Fatal("computeLayerDivergence declined")
+	}
+	wantLabel := fmt.Sprintf("与第 %d 层之差", a.Layer-1)
+	wantValue := fmt.Sprintf("%.2f（0 = 相同，1 = 不重叠）", d.TV)
+	var sawLabel, sawValue bool
+	for _, s := range tr.Texts() {
+		if s == wantLabel {
+			sawLabel = true
+		}
+		if s == wantValue {
+			sawValue = true
+		}
+	}
+	if !sawLabel {
+		t.Fatalf("the panel does not label the comparison %q", wantLabel)
+	}
+	if !sawValue {
+		t.Fatalf("the panel does not show the divergence %q", wantValue)
+	}
+	// The complement must not be what is shown: computing it proves the test can
+	// tell the two apart rather than passing on a coincidental match.
+	if comp := fmt.Sprintf("%.2f（0 = 相同，1 = 不重叠）", 1-d.TV); comp == wantValue {
+		t.Skip("the divergence is 0.5, so it and its complement print the same")
+	}
+
+	// Entropy: over the causal prefix of the row.
+	wantEnt := fmt.Sprintf("%.2f nats", model.Entropy(h.Attn[i][:i+1]))
+	var sawEnt bool
+	for _, s := range tr.Texts() {
+		if s == wantEnt {
+			sawEnt = true
+		}
+	}
+	if !sawEnt {
+		t.Fatalf("the panel does not show the entropy %q", wantEnt)
+	}
+
+	// Output norm: the head's own output, not V.
+	wantOut := fmt.Sprintf("%.3f", norm(h.Out[i]))
+	if wrong := fmt.Sprintf("%.3f", norm(h.V[i])); wantOut != wrong {
+		var saw bool
+		for _, s := range tr.Texts() {
+			if s == wantOut {
+				saw = true
+			}
+		}
+		if !saw {
+			t.Fatalf("the panel does not show the output norm %q", wantOut)
+		}
+	}
+}
+
+// TestPrintedLayerNormCeilingUsesSqrtDModel reads the sentence that states what
+// LayerNorm pins a row's length to.
+//
+// The claim is "√d_model = 9.80，实测所有行落在 9.25–11.33，也就是 95%–116%". Replacing
+// math.Sqrt(d_model) with d_model left the suite green: the sentence would then read
+// "√d_model = 96.00 … 也就是 10%–12%", where the stated ceiling contradicts the
+// numbers beside it and the percentages describe nothing.
+func TestPrintedLayerNormCeilingUsesSqrtDModel(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4 // the residual stage carries this comparison
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	pin := math.Sqrt(float64(a.Trace.Config.DModel))
+	lnLo, lnHi := lnNormRange(a.Trace.Layers, len(a.Trace.Tokens), a.Trace.FinalNorm)
+	want := fmt.Sprintf("√d_model = %.2f，实测所有行落在 %.2f–%.2f，也就是 %.0f%%–%.0f%%",
+		pin, lnLo, lnHi, 100*lnLo/pin, 100*lnHi/pin)
+	found := false
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, want) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the panel does not print %q", want)
+	}
+
+	// The ceiling must be the square root, which is the whole point: a row's length
+	// stays near √d_model rather than anywhere near d_model.
+	if pin >= float64(a.Trace.Config.DModel) {
+		t.Fatalf("√d_model (%.2f) is not below d_model (%d), so the claim is odd",
+			pin, a.Trace.Config.DModel)
 	}
 }
