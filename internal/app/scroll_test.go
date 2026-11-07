@@ -2,6 +2,7 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -103,5 +104,99 @@ func TestEveryStageKeepsItsHeaderWhileScrolled(t *testing.T) {
 		if after.Y < 0 || after.Y > 720 {
 			t.Fatalf("stage %d: the title ends at y=%.0f, outside the window", step, after.Y)
 		}
+	}
+}
+
+// TestChangingStageResetsTheScroll keeps the new stage starting at its top.
+//
+// Now that scrolling works in the tester, the question is answerable: a reader who scrolls to the
+// bottom of the residual card and presses → must land at the top of the FFN card, not at the same
+// offset in a page of a different height — which would open on a slice of the middle.
+//
+// Three routes reach a new stage: selectStep, the arrow keys, and the digit shortcuts. All three
+// reset; measured from offset 870 to 0.
+func TestChangingStageResetsTheScroll(t *testing.T) {
+	routes := []struct {
+		name string
+		go_  func(*App, *ui.Tester)
+	}{
+		{"selectStep", func(a *App, _ *ui.Tester) { a.selectStep(2) }},
+		{"arrow key", func(_ *App, tr *ui.Tester) { tr.Key(0, ui.KeyRight) }},
+		{"digit key", func(_ *App, tr *ui.Tester) { tr.Key(0, ui.Key3) }},
+	}
+	for _, route := range routes {
+		a := newTestApp(t)
+		a.Step = 4
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		tr.Scroll(600, 500, 0, 5000)
+		tr.Frame()
+		if a.Scroll.Y == 0 {
+			t.Fatalf("%s: the stage did not scroll, so the reset cannot be observed", route.name)
+		}
+		route.go_(a, tr)
+		tr.Frame()
+		if a.Scroll.Y != 0 {
+			t.Fatalf("%s: switching stage left the scroll at %.0f; the new stage would open "+
+				"part-way down", route.name, a.Scroll.Y)
+		}
+	}
+}
+
+// TestChangingAControlKeepsTheScroll is the other half: layer, head, temperature and token are
+// adjustments within the same page, so the reader's position has to survive them.
+//
+// Resetting there would be worse than not resetting on a stage change: the reader is comparing two
+// heads' histograms, changes the head, and the card jumps back to the top of the page.
+func TestChangingAControlKeepsTheScroll(t *testing.T) {
+	controls := []struct {
+		name  string
+		apply func(*App)
+	}{
+		{"layer", func(a *App) { a.Layer = 1 }},
+		{"head", func(a *App) { a.Head = 3 }},
+		{"temperature", func(a *App) { a.Temp = 1.5 }},
+		{"token", func(a *App) { a.selectToken(10, false) }},
+	}
+	for _, c := range controls {
+		a := newTestApp(t)
+		a.Step = 4
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		tr.Scroll(600, 500, 0, 300)
+		tr.Frame()
+		before := a.Scroll.Y
+		if before == 0 {
+			t.Fatalf("%s: the stage did not scroll", c.name)
+		}
+		c.apply(a)
+		tr.Frame()
+		if a.Scroll.Y != before {
+			t.Fatalf("%s moved the scroll from %.0f to %.0f; it is an adjustment within the "+
+				"page, not a page change", c.name, before, a.Scroll.Y)
+		}
+	}
+}
+
+// TestAutoplayResetsTheScroll covers the third route: the stage advances on its own.
+func TestAutoplayResetsTheScroll(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	tr.Scroll(600, 500, 0, 400)
+	tr.Frame()
+	start := a.Step
+	if a.Scroll.Y == 0 {
+		t.Fatal("the stage did not scroll")
+	}
+	tr.Key(0, ui.KeySpace)
+	tr.Advance(2 * time.Second)
+	tr.Frame()
+	if a.Step == start {
+		t.Fatal("autoplay did not advance the stage; the rest of this test would be vacuous")
+	}
+	if a.Scroll.Y != 0 {
+		t.Fatalf("autoplay advanced to stage %d but left the scroll at %.0f", a.Step, a.Scroll.Y)
 	}
 }

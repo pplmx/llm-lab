@@ -76,6 +76,13 @@
 
 ### Added
 
+- 滚动可用之后，把「换页 vs 页内调整」这条交互约定立下来。之前没有任何测试区分这两件事，而它们的行为**必须相反**：
+  - **换页要复位**：切到新阶段时滚动归零，否则读者会落在另一个高度完全不同的页面的中部。三条路径都实测从 870 → 0：`selectStep`、方向键、数字键；自动播放前进时同样复位（400 → 0）
+  - **页内调整要保留**：改层 / 头 / 温度 / 选中 token 时滚动停在原处（300 → 300）。在这里复位比不复位更糟——读者正对着一张直方图比较两个头，一换头整页跳回顶部
+  - 补三条测试覆盖这两个方向。都已验证会失败：删掉 `selectStep` 里的复位，报 `switching stage left the scroll at 578`；给 `selectToken` 加上复位，报 `token moved the scroll from 300 to 0; it is an adjustment within the page, not a page change`
+
+### Added
+
 - 把「滚动后阶段标题仍在视野内」这条从**一个阶段扩到七个**。上一轮只测了第 5 步（内容最长），而 1180×720 下其它阶段也超出视口——实测滚到底的偏移：第 0 步 184、第 4 步 856、第 5 步 870、第 7 步 555 DIP，每个都能滚
   - 补 `TestEveryStageKeepsItsHeaderWhileScrolled`：七个阶段各自滚到底，标题位移必须 ≤20 DIP 且仍落在窗口内
   - 已验证：把步进条移进滚动视图，测试报 `stage 0: the title moved -88 DIP when the content scrolled 196`
