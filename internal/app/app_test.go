@@ -8198,3 +8198,109 @@ func TestProseAboutConfidenceAndSqueezeFollowsTheData(t *testing.T) {
 		t.Fatalf("the wide-region branch is not taken: %q", truncateForTest(rg, 160))
 	}
 }
+
+// TestProseDiffersBetweenWeightsOnlyWhereDesigned is the guard for the class of defect found in rounds 209-211.
+//
+// Those rounds each found prose that described the trained model while the app was rendering random weights:
+// a claim about which token a head attends to, "%.0f" flattening 0.22 into 0, "这么高的把握" for a 1% share.
+// Each was found by hand. This makes the comparison automatic.
+//
+// It renders all seven stages under both weight sets, strips the numbers out (their digits legitimately differ),
+// and requires every remaining difference to be one of the branches the app is supposed to have. A new hard-coded
+// sentence that only holds for trained weights shows up here as an unexpected difference.
+func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
+	trained := mustBundled(t)
+	random := model.Random(model.DefaultConfig, 42)
+
+	// Collapse any number, with its sign, decimals and percent sign, to a single marker.
+	num := regexp.MustCompile(`[-+]?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?%?`)
+	// allowed lists, per stage, the phrase fragments an intended difference is expected to contain. An
+	// unexpected difference must match none of them.
+	allowed := map[int][]string{
+		// Matched against the number-stripped text, so digits are already "#".
+		3: {"第 # 层的头 #"},            // the per-weights attention description
+		4: {"训练出来的", "这份权重没有训练过"},   // gamma and beta learned versus identity
+		5: {"只剩一根柱子", "还能看出分布的形状"},  // the GELU squeeze note
+		6: {"这么高的把握", "根本没有那么大的把握"}, // the confidence note
+	}
+
+	collect := func(w *model.Weights) []map[string]bool {
+		out := make([]map[string]bool, len(lessons))
+		for step := range lessons {
+			a := New(w)
+			a.Prompt = "The transformer reads the tokens and"
+			a.recompute()
+			a.Step = step
+			a.SelToken = 20
+			tr := ui.NewTester(a.View, 1500, 2800)
+			tr.Frame()
+			set := map[string]bool{}
+			for _, s := range tr.Texts() {
+				// Prose only: short labels are numbers and tokens, not claims.
+				if len([]rune(s)) <= 40 {
+					continue
+				}
+				// The untrained banner is a deliberate, documented difference.
+				if strings.Contains(s, "读不到内置权重") {
+					continue
+				}
+				// The sampling line's difference is the drawn token's own glyph, which is data
+				// rather than wording: the numbers are stripped but the quoted character is not.
+				if strings.Contains(s, "抽到 id ") {
+					continue
+				}
+				set[num.ReplaceAllString(s, "#")] = true
+			}
+			out[step] = set
+		}
+		return out
+	}
+	trainedText, randomText := collect(trained), collect(random)
+
+	for step := 0; step < len(lessons); step++ {
+		var diffs []string
+		for s := range trainedText[step] {
+			if !randomText[step][s] {
+				diffs = append(diffs, s)
+			}
+		}
+		for s := range randomText[step] {
+			if !trainedText[step][s] {
+				diffs = append(diffs, s)
+			}
+		}
+		for _, d := range diffs {
+			matched := false
+			for _, frag := range allowed[step] {
+				if strings.Contains(d, frag) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				t.Fatalf("stage %d: the prose differs between trained and random weights outside any "+
+					"designed branch: %q", step, truncateForTest(d, 200))
+			}
+		}
+	}
+
+	// And the designed branches must still be reached, or this test would pass with the feature removed.
+	for step, frags := range allowed {
+		for _, frag := range frags {
+			found := false
+			for s := range randomText[step] {
+				if strings.Contains(s, frag) {
+					found = true
+				}
+			}
+			for s := range trainedText[step] {
+				if strings.Contains(s, frag) {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("stage %d: no prose contains %q, so that branch is gone", step, frag)
+			}
+		}
+	}
+}
