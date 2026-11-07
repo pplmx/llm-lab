@@ -928,7 +928,7 @@ func (a *App) stageFFN(c *ui.Context) {
 		ui.Row(c).Gap(16).Wrap().Children(func() {
 			ui.Text(c, fmt.Sprintf("最大的 %d / %d 个维度承担 %.0f%% 的激活绝对值",
 				topN, len(hidden), share*100)).FontSize(fontSmall).TextColor(colMuted)
-			ui.Text(c, fmt.Sprintf("输出 > 0.01 的维度 %d / %d (%.0f%%)",
+			ui.Text(c, fmt.Sprintf("输出 > %.2f 的维度 %d / %d (%.0f%%)", activeThreshold,
 				active, len(hidden), 100*float64(active)/float64(len(hidden)))).FontSize(fontSmall).TextColor(colFaint)
 			_, hi := minMaxFloat(hidden)
 			ui.Text(c, fmt.Sprintf("峰值 %+.2f", hi)).FontSize(fontSmall).TextColor(colFaint)
@@ -1420,7 +1420,7 @@ func (a *App) inspectorFFN(c *ui.Context) {
 	_, hi := minMaxFloat(hidden)
 	card(c, func() {
 		sectionTitle(c, "隐藏层统计", fmt.Sprintf("d_ff = %d", len(hidden)))
-		kv(c, "激活 > 0.01", fmt.Sprintf("%d / %d (%.0f%%)", active, len(hidden), 100*float64(active)/float64(len(hidden))))
+		kv(c, fmt.Sprintf("激活 > %.2f", activeThreshold), fmt.Sprintf("%d / %d (%.0f%%)", active, len(hidden), 100*float64(active)/float64(len(hidden))))
 		kv(c, "峰值", fmt.Sprintf("%+.2f", hi))
 		kv(c, "均值/σ", fmt.Sprintf("%+.3f / %.3f", mean, std))
 		mutedText(c, "GELU 把负值平滑压向 0，所以大部分维度接近零，只有少数被激活。")

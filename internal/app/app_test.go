@@ -5968,10 +5968,11 @@ func TestFFNStageAndInspectorAgreeOnTheActiveCount(t *testing.T) {
 		t.Fatalf("the inspector does not print %q", want)
 	}
 
-	// And the card's line must use the same count, not a count of its own.
-	// The card words it "输出 > 0.01" where the inspector says "激活 > 0.01" — the same
-	// count described from the two ends of the same row.
-	wantCard := fmt.Sprintf("输出 > 0.01 的维度 %s", want)
+	// And the card's line must use the same count, not a count of its own. It words
+	// the threshold differently — "输出 > N" where the inspector says "激活 > N" — but N
+	// comes from activeThreshold on both sides, so moving the cutoff moves both.
+	th := fmt.Sprintf("%.2f", activeThreshold)
+	wantCard := fmt.Sprintf("输出 > %s 的维度 %s", th, want)
 	var sawCard bool
 	for _, s := range tr.Texts() {
 		if strings.Contains(s, wantCard) {
@@ -5982,9 +5983,16 @@ func TestFFNStageAndInspectorAgreeOnTheActiveCount(t *testing.T) {
 		t.Fatalf("the stage card does not print %q", wantCard)
 	}
 
-	// The threshold the sentence names has to be the one the code uses.
-	if activeThreshold != 0.01 {
-		t.Fatalf("the cutoff moved to %v but the card still says 0.01", activeThreshold)
+	// And the inspector's label must carry the same number.
+	wantLabel := fmt.Sprintf("激活 > %s", th)
+	var sawLabel bool
+	for _, s := range tr.Texts() {
+		if s == wantLabel {
+			sawLabel = true
+		}
+	}
+	if !sawLabel {
+		t.Fatalf("the inspector does not label the cutoff %q", wantLabel)
 	}
 }
 
