@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"fmt"
 	"image"
 	"image/png"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -191,5 +193,45 @@ func TestRenderDocs(t *testing.T) {
 		a := newTestApp(t)
 		a.Step = s.step
 		writeSnapshot(t, dir, s.name+".png", ui.Render(a.View, s.w, s.h, 1))
+	}
+}
+
+// TestDocsImagesAreCurrent fails when docs/ has fallen behind the code.
+//
+// The images are repository assets, so nothing regenerates them when the interface changes — which is how all six came to show
+// an interface that no longer existed, and how two of them went stale again within twenty rounds of being fixed. CONTRIBUTING
+// says to run `just docs` after an interface or prose change; this makes forgetting it a test failure instead of something a
+// reader notices.
+//
+// It renders the same six frames TestRenderDocs writes and compares them byte for byte. Rendering is deterministic here, so an
+// exact match is the right bar; the cost is six frames, well under a second.
+func TestDocsImagesAreCurrent(t *testing.T) {
+	frames := []struct {
+		name string
+		step int
+		w, h int
+	}{
+		{"tokens", 0, 1500, 940},
+		{"scores", 2, 1500, 940},
+		{"residual", 4, 1500, 940},
+		{"output", 6, 1500, 940},
+		{"window", 0, 1180, 720},
+		{"attention", 3, 1500, 940},
+	}
+	for _, f := range frames {
+		want, err := os.ReadFile(filepath.Join("..", "..", "docs", f.name+".png"))
+		if err != nil {
+			t.Fatalf("docs/%s.png is missing: %v", f.name, err)
+		}
+		var buf bytes.Buffer
+		a := newTestApp(t)
+		a.Step = f.step
+		if err := png.Encode(&buf, ui.Render(a.View, f.w, f.h, 1)); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(buf.Bytes(), want) {
+			t.Fatalf("docs/%s.png no longer matches what the app renders; run `just docs` and commit the result "+
+				"(step %d at %d×%d)", f.name, f.step+1, f.w, f.h)
+		}
 	}
 }

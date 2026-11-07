@@ -36,6 +36,14 @@
 
 ### Fixed
 
+- **`docs/` 里两张截图又过期了**：`just docs` 重新渲染后，`scores.png` 与 `residual.png` 与已提交版本不同（0.144% 像素，重新运行可复现，不是渲染抖动）
+  - 原因不是渲染器：`TestRenderDocs` 是重渲染那次的**下一个提交**才加的，参数与当时手工渲染的一致。变了的是代码——第 232 轮改了第 5 步残差链的括号写法（对应 `residual.png`），第 233 轮改了第 3 步检查器的卡片标题（对应 `scores.png`）
+  - 这正是 `CONTRIBUTING` 写明、但没人走的那条维护流程：「改了界面或文案后跑一次 `just docs`」
+  - 补 `TestDocsImagesAreCurrent`：把 `docs/` 的六张图逐一与**当前构建的渲染结果**逐字节比对，不一致就报 `docs/scores.png no longer matches what the app renders; run just docs and commit the result`。渲染是确定的，所以用逐字节相等作为判据；六帧不到一秒
+  - 验证时发现一个细节：改第 1 步那张卡片的标题**不会**让 `tokens.png` 失配——那张卡在 1500×940 下已滚出视口。改用第 3 步检查器的标题就立刻失败。**这个测试只能守住「截图里看得见的东西」**，与它本来要防的问题范围一致
+
+### Fixed
+
 - **采样绕过 `selectToken` 直接赋值 `SelToken`，留下标题与内容互相矛盾的检查器**。第 245 轮加了「采样后选中新 token」，用的是一句裸赋值；`selectToken` 里那条注释写得很清楚——固定格子属于读者当时在看的那一行，换行后「inspector would then head "query = token 20" while the cell underneath it still described token 10's row」——而采样成了**唯一绕过它的路径**
   - 实测：固定 `(5,3)`、在第 3 步采样后，检查器表头是 `query = token 15`，而下面的格子卡仍是 `query 5 "r"` / `key 3 "␣"`
   - 修法：采样改走 `selectToken(n-1, true)`。格子在语义上仍然有效（采样只是追加字节），但**它不再是读者在看的那一行**，所以按既有规则解除
