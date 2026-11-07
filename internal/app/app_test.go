@@ -8656,3 +8656,66 @@ func TestOutputCardSaysWhenItIgnoresTheSelection(t *testing.T) {
 		t.Fatalf("the note explains an ignored selection when there is none: %q", note)
 	}
 }
+
+// TestHoverFeedbackIsWhereItCarriesInformation records which stages highlight on hover and why the rest do not.
+//
+// Sweeping a hover grid over the stage column shows the picture changing on stages 2 to 5 (the embedding strips,
+// the QKV vectors, the score matrix, the softmax matrix and the residual strips) and not changing on 1, 6 and 7.
+// That difference is deliberate rather than a gap.
+//
+// The elements that do highlight expose one value out of many — a single dimension of a 96-long vector, a single
+// cell of a 36×36 matrix — so pointing at one has to change something or the reader cannot tell which they are
+// on. The elements on stages 1, 6 and 7 label themselves: a token chip shows its glyph and id, a Top-12 bar shows
+// its byte and percentage, and a GELU histogram bar is read against the axis printed beneath it. Highlighting
+// those would add colour without adding information, and tooltips already carry the detail.
+//
+// Recorded so a later pass does not read the three zeroes as three bugs.
+func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
+	hoverChanges := func(step int) int {
+		a := newTestApp(t)
+		a.Step = step
+		a.SelToken = 20
+		tr := ui.NewTester(a.View, 1500, 1400)
+		tr.Frame()
+		base := tr.Texts()
+		best := 0
+		// A coarse grid: one hit anywhere on the strips or the matrix is enough to answer the question,
+		// and the dense sweep took eleven seconds for the same answer.
+		for y := 400; y < 1200; y += 100 {
+			for x := 300; x < 1150; x += 200 {
+				tr.Move(float32(x), float32(y))
+				tr.Frame()
+				now := tr.Texts()
+				n := len(base)
+				if len(now) < n {
+					n = len(now)
+				}
+				d := 0
+				for i := 0; i < n; i++ {
+					if base[i] != now[i] {
+						d++
+					}
+				}
+				if d > best {
+					best = d
+				}
+			}
+		}
+		return best
+	}
+
+	// The stages that highlight must keep doing so.
+	for _, step := range []int{1, 2, 3, 4} {
+		if n := hoverChanges(step); n == 0 {
+			t.Fatalf("stage %d no longer changes on hover; the strips and matrices there carry one value per "+
+				"element and the reader needs the highlight to know which", step)
+		}
+	}
+	// The stages that do not must not start: if one of them gains a highlight, this record is stale and the
+	// comment above needs revisiting rather than silently disagreeing.
+	for _, step := range []int{0, 5, 6} {
+		if n := hoverChanges(step); n != 0 {
+			t.Fatalf("stage %d now changes on hover (%d texts); update this record's reasoning", step, n)
+		}
+	}
+}
