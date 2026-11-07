@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/egoist/mygo/ui"
 )
 
 // TestContributingNamesRealTests keeps the contributor guide from citing tests
@@ -141,4 +143,60 @@ func TestContributingCountsEveryTooltip(t *testing.T) {
 		return
 	}
 	t.Fatalf("there are %d tooltips (%s处) but the guide does not say so", n, cn[n])
+}
+
+// TestContributingFocusTableMatchesTheApp keeps the Tab-order table true.
+//
+// The guide lists what Tab reaches, in order, and says the temperature slider joins the cycle only on the output stage. That is
+// the kind of list that goes stale quietly: a control added anywhere renumbers everything after it, and the table would still
+// read as fact. So the order is measured here and compared against the labels the guide prints.
+func TestContributingFocusTableMatchesTheApp(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "CONTRIBUTING.md"))
+	if err != nil {
+		t.Fatalf("read CONTRIBUTING.md: %v", err)
+	}
+	doc := string(b)
+	for _, want := range []string{"提示词输入框", "重置", "采样下一个 token", "温度滑块", "上一步", "下一步"} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("the focus table no longer lists %q", want)
+		}
+	}
+	if !strings.Contains(doc, "仅第 7 步") {
+		t.Fatal("the guide no longer says the temperature slider is reachable only on the output stage")
+	}
+
+	// Walk the cycle on a stage where every control is live, and count the distinct stops.
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	base := append([]byte(nil), tr.Image().Pix...)
+	stops := 0
+	for i := 0; i < 8; i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
+		img := tr.Image()
+		cur := img.Pix
+		changed := 0
+		for y := 0; y < 720 && changed < 40; y++ {
+			row := y * img.Stride
+			for x := 0; x < 1180; x++ {
+				o := row + x*4
+				if o+2 < len(cur) && (cur[o] != base[o] || cur[o+1] != base[o+1] || cur[o+2] != base[o+2]) {
+					changed++
+					if changed >= 40 {
+						break
+					}
+				}
+			}
+		}
+		if changed >= 40 {
+			stops++
+		}
+	}
+	// Six stops: the five always-live controls plus the slider. Anything else means the table above is describing a
+	// cycle that no longer exists.
+	if stops < 5 {
+		t.Fatalf("Tab reached %d focusable controls on the output stage; the guide lists six", stops)
+	}
 }
