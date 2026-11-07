@@ -7995,3 +7995,65 @@ func TestTokenizeCalloutQuotesThePromptsOwnCounts(t *testing.T) {
 		}
 	}
 }
+
+// TestSoftmaxBodyDescribesTheWeightsItHas keeps step 4's prose from asserting a pattern that may not be there.
+//
+// The body said layer 0 head 0 attends to the previous token "in almost every position". Measured on the
+// bundled weights that is 31 of 35 rows; on random weights it is 3 to 5 of 35. The app renders random weights
+// whenever the bundled file is missing — there is a snapshot for exactly that state — and while the banner
+// warns the reader not to trust the numbers, prose describing a pattern the picture does not show is a
+// separate failure: it is a claim about what is on screen.
+//
+// The body is now computed from the trace, and both branches cite the count they measured.
+func TestSoftmaxBodyDescribesTheWeightsItHas(t *testing.T) {
+	bodyOf := func(w *model.Weights) (string, int, int) {
+		a := New(w)
+		a.Step = 3
+		tr := ui.NewTester(a.View, 1500, 2200)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "第 0 层的头 0") && strings.Contains(s, "行") {
+				prev, rows := previousTokenShare(a.Trace.Layers[0].Heads[0].Attn,
+					len(a.Trace.Tokens))
+				return s, prev, rows
+			}
+		}
+		return "", 0, 0
+	}
+
+	trained, err := model.Bundled()
+	if err != nil {
+		t.Fatalf("bundled weights: %v", err)
+	}
+	body, prev, rows := bodyOf(trained)
+	if body == "" {
+		t.Fatal("the softmax body does not mention layer 0 head 0 anymore")
+	}
+	if rows == 0 {
+		t.Fatal("no rows to measure")
+	}
+	wantPhrase := fmt.Sprintf("%d/%d 行", prev, rows)
+	if !strings.Contains(body, wantPhrase) {
+		t.Fatalf("the body says %q, but the measured share is %s", truncateForTest(body, 120),
+			wantPhrase)
+	}
+	// The trained weights must actually exhibit the pattern, or this branch is unreachable and the test
+	// proves nothing.
+	if prev*4 < rows*3 {
+		t.Fatalf("the bundled weights no longer show the pattern (%d/%d rows); the trained branch "+
+			"of this prose is now dead", prev, rows)
+	}
+
+	// Random weights take the other branch and must not claim the pattern.
+	random, _, _ := bodyOf(model.Random(model.DefaultConfig, 42))
+	if random == "" {
+		t.Fatal("the softmax body is missing under random weights")
+	}
+	if strings.Contains(random, "31/35") || strings.Contains(random, "紧邻的前一个 token；") {
+		t.Fatalf("random weights still get the trained-weights sentence: %q",
+			truncateForTest(random, 160))
+	}
+	if !strings.Contains(random, "看不出这种分工") {
+		t.Fatalf("random weights get neither branch's wording: %q", truncateForTest(random, 160))
+	}
+}

@@ -17,11 +17,11 @@ type lesson struct {
 	title   string
 	body    string
 	formula string
-	// bodyFn, when set, replaces body at render time. A sentence that quotes a
-	// number from the loaded weights cannot be a constant: change the checkpoint and
-	// the prose would keep claiming the old figures while the cards beside it show the
-	// new ones.
-	bodyFn func(model.Config) string
+	// bodyFn, when set, replaces body at render time. A sentence that quotes a number
+	// from the loaded weights, or that describes what those weights actually do, cannot
+	// be a constant: change the checkpoint and the prose would keep claiming the old
+	// figures — or, worse, describe behaviour the new weights do not exhibit.
+	bodyFn func(*model.Trace) string
 }
 
 var lessons = []lesson{
@@ -48,9 +48,32 @@ var lessons = []lesson{
 		formula: "score[t][s] = (q_t · k_s) / √d_head,  s ≤ t",
 	},
 	{
-		name:    "Softmax",
-		title:   "变成权重再混合",
-		body:    "一行分数经过 softmax 变成概率分布，每一行的和恰好是 1。用这些权重去加权求和 Value，就得到这个位置「从上下文里取回的信息」。多个头并行做同一件事，但学到的模式并不一样，切换头上的分段控件就能看出来：第 0 层的头 0 几乎每个位置都盯着紧邻的前一个 token，第 1 层的几个头则反复回到同一小批位置上。热力图里同一列发亮，就是这个头在「一直看着那里」。",
+		name:  "Softmax",
+		title: "变成权重再混合",
+		bodyFn: func(tr *model.Trace) string {
+			const head = "一行分数经过 softmax 变成概率分布，每一行的和恰好是 1。" +
+				"用这些权重去加权求和 Value，就得到这个位置「从上下文里取回的信息」。" +
+				"多个头并行做同一件事，但学到的模式并不一样，切换头上的分段控件就能看出来。"
+			// The old text claimed layer 0 head 0 attends to the previous token in almost every
+			// row. That holds for the trained weights — measured 31 of 35 rows — and not for random
+			// ones, where the same count is 5 of 35. The app renders random weights whenever the
+			// bundled file is missing, and the banner already tells the reader not to trust the
+			// numbers; a fixed sentence describing a pattern that is not there is a different problem,
+			// because it claims something about the picture that the picture does not show.
+			// With no tokens there are no layers, and the stage still renders its body.
+			var prev, rows int
+			if len(tr.Layers) > 0 && len(tr.Layers[0].Heads) > 0 {
+				prev, rows = previousTokenShare(tr.Layers[0].Heads[0].Attn, len(tr.Tokens))
+			}
+			if rows > 0 && prev*4 >= rows*3 {
+				return head + fmt.Sprintf("这一份权重里，第 0 层的头 0 在 %d/%d 行上把最大的权重"+
+					"给了紧邻的前一个 token；第 1 层的几个头则反复回到同一小批位置上。"+
+					"热力图里同一列发亮，就是这个头在「一直看着那里」。", prev, rows)
+			}
+			return head + fmt.Sprintf("这一份权重里还看不出这种分工：第 0 层的头 0 只在 %d/%d 行上"+
+				"把最大的权重给了紧邻的前一个 token，其余分散在各处。训练过的模型通常会出现"+
+				"「盯着前一个 token」或「盯着一小批位置」这类模式，这里没有。", prev, rows)
+		},
 		formula: "α = softmax(score),  out_t = Σ_s α[t][s] · v_s",
 	},
 	{
@@ -62,7 +85,8 @@ var lessons = []lesson{
 	{
 		name:  "FFN",
 		title: "逐位置的前馈网络",
-		bodyFn: func(c model.Config) string {
+		bodyFn: func(tr *model.Trace) string {
+			c := tr.Config
 			ofAll, _ := ffnParamShare(c)
 			width := float64(c.DFF) / float64(c.DModel)
 			return fmt.Sprintf(
@@ -1309,7 +1333,7 @@ func (a *App) lesson(c *ui.Context) {
 		sectionTitle(c, "这一段在讲什么", l.name)
 		body := l.body
 		if l.bodyFn != nil && a.Trace != nil {
-			body = l.bodyFn(a.Trace.Config)
+			body = l.bodyFn(a.Trace)
 		}
 		mutedText(c, body)
 		// The top bar dims the controls this stage does not read; this line
@@ -1643,4 +1667,30 @@ func topAbsBars(rows []barRow, n int) []barRow {
 	out := sorted[:n]
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Index < out[j].Index })
 	return out
+}
+
+// previousTokenShare counts the rows whose largest attention weight lands on the token immediately
+// before, and the number of rows that have a predecessor at all.
+//
+// Used by the softmax stage's prose, which used to assert the pattern unconditionally: it describes
+// trained weights and is false of random ones, and the app renders both.
+func previousTokenShare(attn [][]float32, tokens int) (prev, rows int) {
+	for q := 1; q < tokens && q < len(attn); q++ {
+		row := attn[q]
+		if len(row) == 0 {
+			continue
+		}
+		var maxW float32
+		best := 0
+		for k := 0; k <= q && k < len(row); k++ {
+			if row[k] > maxW {
+				maxW, best = row[k], k
+			}
+		}
+		rows++
+		if best == q-1 {
+			prev++
+		}
+	}
+	return prev, rows
 }
