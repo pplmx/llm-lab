@@ -7,6 +7,21 @@ import (
 )
 
 // Palette of the lab. Kept in one place so every view shares it.
+//
+// Each colour answers a question, and the two accents are easy to confuse by name:
+//
+//	colAccent   violet — "this is the thing being shown". The selected step, the
+//	            chosen layer/head, the selected token, the progress dot, and the
+//	            bars of whichever row the stage is presenting.
+//	colAccent2  cyan  — "this is what came out of the step". The line under a strip
+//	            saying x = embedding + position, the normalised row, the merged
+//	            attention output, the marked head in a comparison, and the
+//	            probability ramp.
+//
+// The remainder are data colours and carry the meaning the reader is meant to read
+// off a chart: colPos/colNeg for a signed vector, colWarm/colNeg for a scored
+// matrix (see valueColor and scoreColor — the two ramps differ on purpose),
+// colAccent2 for a probability ramp, colGreen for bar fills.
 var (
 	colBg     = ui.Hex("#0E1117")
 	colPanel  = ui.Hex("#151A23")
