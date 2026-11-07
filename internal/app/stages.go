@@ -1412,7 +1412,7 @@ func (a *App) inspectorResidual(c *ui.Context) {
 	l := a.layer()
 	i := clampIndex(a.SelToken, len(a.Trace.Tokens))
 	card(c, func() {
-		sectionTitle(c, "向量", "残差流")
+		sectionTitle(c, "残差流统计", "这一层的输出向量")
 		vec := l.AfterFFN[i]
 		mean, std := meanStd(vec)
 		kv(c, "维度", fmt.Sprint(len(vec)))

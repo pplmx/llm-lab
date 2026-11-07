@@ -6736,3 +6736,48 @@ func TestOutputCalloutQuotesTheLiveProbability(t *testing.T) {
 		t.Fatalf("with a different prompt the callout does not quote %q", otherWant)
 	}
 }
+
+// TestInspectorTitlesNameTheirSubject keeps the right column's headings specific.
+//
+// The residual stage's first inspector card used to be titled just "向量" with "残差流" as
+// its subtitle. The subtitle is the part that says what the numbers describe, so the heading
+// a reader sees first was the vague half — and it sat beside a stage card also titled
+// "残差流", making the two look like different things when they show the same row from two
+// angles.
+//
+// Every inspector heading now names its subject, and the subtitle, when present, says which
+// slice of the model it covers. This checks that no heading is a bare noun as generic as
+// "向量" and that the residual card in particular pairs the subject with its source.
+func TestInspectorTitlesNameTheirSubject(t *testing.T) {
+	vague := map[string]bool{"向量": true, "统计": true, "数据": true, "结果": true}
+
+	for _, c := range []struct {
+		step int
+		name string
+	}{
+		{0, "分词"}, {1, "嵌入"}, {2, "注意力分数"}, {3, "Softmax"},
+		{4, "残差 / LN"}, {5, "FFN"}, {6, "输出 / 采样"},
+	} {
+		a := newTestApp(t)
+		a.Step = c.step
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if vague[s] {
+				t.Fatalf("stage %d (%s): the inspector has a heading as generic as %q; the "+
+					"subtitle should not be carrying the whole subject", c.step, c.name, s)
+			}
+		}
+	}
+
+	// The pair that was fixed, on the stage it lives.
+	a := newTestApp(t)
+	a.Step = 4
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	for _, want := range []string{"残差流统计", "这一层的输出向量"} {
+		if !tr.HasText(want) {
+			t.Fatalf("the residual inspector no longer shows %q", want)
+		}
+	}
+}
