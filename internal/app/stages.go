@@ -838,8 +838,12 @@ func measureCancellation(tr *model.Trace) cancellationStats {
 // rather than any single term, so every line ends on it.
 func residualWorkings(c *ui.Context, dim int, steps []residualStep, isLast bool, layer int) {
 	lines := make([]string, 0, len(steps))
-	lines = append(lines, fmt.Sprintf("d%d 的残差流在第 %d 层：%s = %+.4f",
-		dim, layer+1, steps[0].Label, steps[0].Term))
+	// The named layer is 0-based everywhere the reader can see it: the segmented control above the
+	// stage reads "层 0 | 1", the inspector header reads "层 1", and every card heading quotes
+	// a.Layer. This line used to say "第 2 层" for layer 1 — a second numbering scheme on the same
+	// screen, so a reader comparing the control to the arithmetic found two different layer numbers.
+	lines = append(lines, fmt.Sprintf("d%d 的残差流（层 %d）：%s = %+.4f",
+		dim, layer, steps[0].Label, steps[0].Term))
 	running := steps[0].Sum
 	for _, s := range steps[1:] {
 		// Parenthesise the term when it is negative, so the line reads
@@ -856,7 +860,7 @@ func residualWorkings(c *ui.Context, dim int, steps []residualStep, isLast bool,
 	if isLast {
 		next = "送入最终 LayerNorm"
 	}
-	lines = append(lines, fmt.Sprintf("每一次加法都不覆盖原值，所以第 %d 层的输出完整%s", layer+1, next))
+	lines = append(lines, fmt.Sprintf("每一次加法都不覆盖原值，所以层 %d 的输出完整%s", layer, next))
 	workingsLines(c, lines)
 }
 

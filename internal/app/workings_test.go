@@ -942,8 +942,9 @@ func TestPrintedResidualChainUsesTheComputedSteps(t *testing.T) {
 	}
 
 	// First line: "<label> = <term>".
-	wantFirst := fmt.Sprintf("d%d 的残差流在第 %d 层：%s = %+.4f",
-		dim, a.Layer+1, steps[0].Label, steps[0].Term)
+	// The layer is named 0-based, matching the segmented control and every card heading.
+	wantFirst := fmt.Sprintf("d%d 的残差流（层 %d）：%s = %+.4f",
+		dim, a.Layer, steps[0].Label, steps[0].Term)
 	var sawFirst bool
 	for _, s := range tr.Texts() {
 		if s == wantFirst {
@@ -1471,7 +1472,7 @@ func TestResidualChainClosesAcrossTokensAndLayers(t *testing.T) {
 // the LayerNorm line is 243 DIP under its title, and a reader scrolling down loses the heading
 // before reaching it. So each block's first line has to say which quantity it is about.
 //
-// The residual chain already did ("d7 的残差流在第 1 层"). The LayerNorm header started at
+// The residual chain already did ("d7 的残差流（层 0）"). The LayerNorm header started at
 // "d7：μ = …", naming the dimension but not the operation, on a card that also discusses the
 // residual stream — the reader had to infer which of the card's two subjects they had arrived at.
 func TestEveryWorkingsLineNamesItsOwnSubject(t *testing.T) {
@@ -1487,7 +1488,7 @@ func TestEveryWorkingsLineNamesItsOwnSubject(t *testing.T) {
 		switch {
 		case strings.HasPrefix(s, "LayerNorm d7："):
 			lnLine = s
-		case strings.Contains(s, "的残差流在第"):
+		case strings.Contains(s, "的残差流（层 "):
 			residualLine = s
 		}
 	}
@@ -1501,5 +1502,57 @@ func TestEveryWorkingsLineNamesItsOwnSubject(t *testing.T) {
 	// And it must still carry the dimension, which is what ties it to the hovered strip.
 	if !strings.Contains(lnLine, "d7") {
 		t.Fatalf("the LayerNorm header lost its dimension: %q", lnLine)
+	}
+}
+
+// TestLayerNumberingIsTheSameOnScreenAndInTheArithmetic checks that "which layer" has one answer.
+//
+// The segmented control above the stage reads "层 0 | 1" and every card heading quotes a.Layer, so the
+// reader's layer numbers are 0-based. The residual chain's arithmetic said "第 2 层" for layer 1 —
+// a second numbering scheme on the same screen, which makes comparing the control to the arithmetic
+// impossible without translating.
+//
+// Both lines now name the layer the way the control does.
+func TestLayerNumberingIsTheSameOnScreenAndInTheArithmetic(t *testing.T) {
+	for _, layer := range []int{0, 1} {
+		a := newTestApp(t)
+		a.Layer = layer
+		a.Step = 4
+		a.SelToken = 10
+		a.HoverDimIn = 7
+		tr := ui.NewTester(a.View, 1500, 1400)
+		tr.Frame()
+
+		// The heading quotes the control's number.
+		wantHeading := fmt.Sprintf("层 %d · 两次加法", layer)
+		if !tr.HasText(wantHeading) {
+			t.Fatalf("layer %d: the card heading does not read %q", layer, wantHeading)
+		}
+
+		// And the arithmetic names the same layer, not the next integer.
+		var chainLine, closing string
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "的残差流（层 ") {
+				chainLine = s
+			}
+			if strings.Contains(s, "的输出完整") {
+				closing = s
+			}
+		}
+		if chainLine == "" || closing == "" {
+			t.Fatalf("layer %d: the residual chain lost a line (chain %q, closing %q)",
+				layer, chainLine, closing)
+		}
+		want := fmt.Sprintf("（层 %d）", layer)
+		if !strings.Contains(chainLine, want) {
+			t.Fatalf("layer %d: the chain says %q, not %q", layer, chainLine, want)
+		}
+		if !strings.Contains(closing, fmt.Sprintf("所以层 %d 的输出", layer)) {
+			t.Fatalf("layer %d: the closing line is %q", layer, closing)
+		}
+		// The old 1-based form would put layer+1 here; make sure it is gone.
+		if strings.Contains(chainLine, fmt.Sprintf("（层 %d）", layer+1)) && layer == 0 {
+			t.Fatalf("layer 0 is still called layer 1 in the arithmetic: %q", chainLine)
+		}
 	}
 }
