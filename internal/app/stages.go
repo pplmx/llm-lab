@@ -392,13 +392,30 @@ func (a *App) stageScores(c *ui.Context) {
 	i := clampIndex(a.SelToken, len(tr.Tokens))
 	h := l.Heads[a.Head]
 	card(c, func() {
+		// The Key and Value strips follow the cell under the cursor, not the selected
+		// token. Walking the matrix to (q, k) makes the workings line below print
+		// q_q · k_k while the selection stays on the row, so drawing K[q] beside it
+		// showed a different vector from the one the arithmetic used — measured, the
+		// two had opposite signs in the first three dimensions.
+		key := i
+		if q, k := a.cellCursor(); q >= 0 && k >= 0 && q == i && k < len(h.K) {
+			key = k
+		}
 		sectionTitle(c, fmt.Sprintf("token %d 的 Q / K / V", i), fmt.Sprintf("头 %d · d_head = %d", a.Head, tr.Config.DHead()))
 		ui.Text(c, "Query").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, h.Q[i], 18, &a.HoverDimQ)
-		ui.Text(c, "Key（同位置）").FontSize(fontMicro).TextColor(colFaint)
-		vectorStrip(c, h.K[i], 18, &a.HoverDimK)
-		ui.Text(c, "Value（同位置）").FontSize(fontMicro).TextColor(colFaint)
-		vectorStrip(c, h.V[i], 18, &a.HoverDimV)
+		keyLabel := "Key（同位置）"
+		valLabel := "Value（同位置）"
+		if key != i {
+			// The θ glyph would need a monospace explanation; naming the position is
+			// what the reader needs to match this strip against the matrix column.
+			keyLabel = fmt.Sprintf("Key（第 %d 个 key）", key)
+			valLabel = fmt.Sprintf("Value（第 %d 个 key）", key)
+		}
+		ui.Text(c, keyLabel).FontSize(fontMicro).TextColor(colFaint)
+		vectorStrip(c, h.K[key], 18, &a.HoverDimK)
+		ui.Text(c, valLabel).FontSize(fontMicro).TextColor(colFaint)
+		vectorStrip(c, h.V[key], 18, &a.HoverDimV)
 	})
 
 	card(c, func() {

@@ -6832,3 +6832,56 @@ func TestStepperStatesAreDistinctWithoutRelyingOnColour(t *testing.T) {
 			"the two filled-dot colours loses the state")
 	}
 }
+
+// TestKeyStripFollowsTheCellNotJustTheRow keeps the Q/K/V card honest.
+//
+// Walking the matrix cursor to (q, k) with Shift+arrows selects the row: SelToken becomes q
+// while KeyK can be any column, and the workings line below then prints q_q · k_k. The card
+// above kept drawing K[SelToken] and labelling it "同位置", so on any off-diagonal cell it
+// showed a vector the arithmetic did not use — measured at (35, 32), the drawn K was
+// (1.109, 1.362, 2.295) where the cell used (-2.188, 0.687, 1.709), opposite signs in the
+// first three dimensions.
+//
+// The Key and Value strips now follow the cursor when the cursor sits on the selected row,
+// and the label names the column instead of claiming the same position.
+func TestKeyStripFollowsTheCellNotJustTheRow(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 12
+	a.KeyQ, a.KeyK = 12, 4
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	var keyLabel, valLabel string
+	for _, s := range tr.Texts() {
+		switch {
+		case strings.HasPrefix(s, "Key（"):
+			keyLabel = s
+		case strings.HasPrefix(s, "Value（"):
+			valLabel = s
+		}
+	}
+	if keyLabel == "" || valLabel == "" {
+		t.Fatalf("the Q/K/V card lost its Key or Value label (%q, %q)", keyLabel, valLabel)
+	}
+	if !strings.Contains(keyLabel, "4") || !strings.Contains(valLabel, "4") {
+		t.Fatalf("cursor is on key column 4 but the labels read %q and %q", keyLabel, valLabel)
+	}
+
+	// On the diagonal there is nothing to distinguish, and the card says so.
+	b := newTestApp(t)
+	b.Step = 2
+	b.SelToken = 7
+	b.KeyQ, b.KeyK = 7, 7
+	bt := ui.NewTester(b.View, 1500, 940)
+	bt.Frame()
+	var samePos int
+	for _, s := range bt.Texts() {
+		if strings.Contains(s, "同位置") {
+			samePos++
+		}
+	}
+	if samePos != 2 {
+		t.Fatalf("on the diagonal both labels should say 同位置; found %d", samePos)
+	}
+}
