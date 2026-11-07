@@ -288,6 +288,14 @@ func (a *App) selectToken(i int, reveal bool) {
 	if reveal {
 		a.RevealRail = true
 	}
+	// A pinned cell belongs to the token the reader was looking at when they
+	// clicked it. Selecting a different token moves them somewhere else, and the
+	// inspector would then head "query = token 20" while the cell underneath it
+	// still described token 10's row. The stage switch already drops the pin for
+	// the same reason; this is the other way the context changes.
+	if a.KeyQ >= 0 && a.KeyK >= 0 && a.KeyQ != i {
+		a.KeyQ, a.KeyK = -1, -1
+	}
 }
 
 // stepToken moves the selection by delta, clamped to the sequence, for the

@@ -130,7 +130,10 @@ func (a *App) tokenRailChips(c *ui.Context, tokens []modelToken) {
 		if chip.Clicked() {
 			// A chip the pointer reached is already on screen: do not queue a
 			// reveal that would scroll the strip under the reader's hand.
-			a.SelToken = i
+			// Through selectToken rather than assigning SelToken directly, so
+			// the side effects that go with a selection change — dropping a pin
+			// that belonged to the previous token — happen on this path too.
+			a.selectToken(i, false)
 		}
 		chip.Tooltip(fmt.Sprintf("token %d · byte 0x%02X · %q", i, tk.ID, tk.Rune))
 		if i == a.SelToken && a.RevealRail {

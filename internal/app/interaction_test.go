@@ -250,3 +250,66 @@ func TestJumpingToAStageStopsPlayback(t *testing.T) {
 		t.Fatalf("the scroll offset carried over as %v", a.Scroll.Y)
 	}
 }
+
+// TestSelectingAnotherTokenDropsThePin keeps the pin and the selection from
+// describing different tokens.
+//
+// A pinned cell belongs to the row the reader was looking at. Clicking a different
+// token in the strip used to leave the pin alone, so the inspector headed
+// "query = token 20" while the cell card underneath still described token 10's row —
+// two different tokens named in one panel.
+//
+// The stage switch already dropped the pin for the same reason ("跨阶段的格子没有意义"),
+// but that was the only path covered. The chip click also assigned a.SelToken
+// directly, bypassing selectToken entirely, which is why fixing selectToken alone
+// changed nothing.
+func TestSelectingAnotherTokenDropsThePin(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 10, 5
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	// Click a chip well away from the pinned row.
+	target := 20
+	x, y := chipCentre(t, tr, target)
+	tr.Press(x, y)
+	tr.Release(x, y)
+	tr.Frame()
+
+	if a.SelToken != target {
+		t.Fatalf("the click selected %d, not %d", a.SelToken, target)
+	}
+	if a.KeyQ >= 0 || a.KeyK >= 0 {
+		t.Fatalf("the pin (%d,%d) survived a selection change to %d; the panel "+
+			"would name one token in its heading and another in its cell card",
+			a.KeyQ, a.KeyK, target)
+	}
+
+	// Re-selecting the pinned row itself must not drop it: the reader is going
+	// back to where the pin points.
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 10, 5
+	tr2 := ui.NewTester(a.View, 1500, 940)
+	tr2.Frame()
+	x2, y2 := chipCentre(t, tr2, 10)
+	tr2.Press(x2, y2)
+	tr2.Release(x2, y2)
+	tr2.Frame()
+	if a.SelToken == 10 && (a.KeyQ != 10 || a.KeyK != 5) {
+		t.Fatalf("clicking the pinned row's own chip dropped the pin: (%d,%d)",
+			a.KeyQ, a.KeyK)
+	}
+}
+
+// chipCentre finds the centre of a token strip chip by searching the rendered
+// frame for its label.
+func chipCentre(t *testing.T, tr *ui.Tester, i int) (float32, float32) {
+	t.Helper()
+	r, ok := tr.Find(fmt.Sprintf("token %d", i))
+	if !ok {
+		t.Fatalf("no chip labelled token %d", i)
+	}
+	return r.X + r.W/2, r.Y + r.H/2
+}

@@ -41,6 +41,15 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Fixed
+
+- **选中另一个 token 时，已固定的热力图格子不会解除**，检查器标题写 `query = token 20`、下面那张格子卡却还在描述 token 10 的那一行——同一个面板里出现两个 token
+  - README 列出了固定格子的三种生命周期（指针移开、改提示词、采样续写都保留；切换阶段解除），**漏了「选中另一个 token」**
+  - 根因不止一处：token 条的点击**直接赋值 `a.SelToken`**，绕过了 `selectToken`，所以只改 `selectToken` 完全不生效
+  - 现在 chip 点击走 `selectToken`，并在选中不同 token 时解除固定（选中同一行则保留）
+  - 热力图点击固定不受影响：它先 `selectToken` 再写 `KeyQ/KeyK`，同帧内完成
+  - 补测试覆盖两种情况（换行解除、点回本行保留）；README 补上这条生命周期
+
 ### Added
 
 - `selectStep` 的三个副作用里有两个没有测试：**跳阶段时不停止自动播放**、**不清除待触发的计时器**
