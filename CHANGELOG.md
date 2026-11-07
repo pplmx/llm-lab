@@ -36,6 +36,15 @@
 
 ### Fixed
 
+- **推翻了上一轮汇报里两条「已知限制」，它们是我自己测错的结论**
+  - **「头控件不可 Tab 到达」是错的。** 层和头两个分段控件各占一个 Tab 停点：**第 4 次 Tab 到层、第 5 次到头**，进去后方向键在组内走。原来的测试循环 24 次「Tab 一次 + 按一次 Right」——而按 Right 会改值、触发重绘、消耗掉下一次 Tab，于是它一次也没落在 head 组上，据此记下了一条不存在的库局限。改成「从新画面连续 Tab n 次再按方向键」就清楚了。三条正向测试（`TestLayerControlIsReachableByTab` / `TestHeadControlIsReachableByTab` / `TestTemperatureSliderIsReachableByTab`）取代了原来那条记录「不可达」的
+  - **「tooltip 测不到」也是错的。** tooltip 是**延迟浮现**的，而 `ui.Tester` 的时钟除非 `Advance` 否则静止，所以「指针移过去立刻读 `Texts()`」永远读不到。正确做法：先停到空白处推几拍让上一个 tooltip 过期，再移到目标、每拍检查一次，约 750ms 后出现。`TestTokenChipTooltipStatesItsByte` 断言 tooltip 里的 token 号与 byte 值和 `Trace` 一致，`TestStageTooltipNamesTheStep` 逐行断言侧栏七行的 tooltip 各自说第几步。**过程中踩了两个坑**：不推进时间读不到；不先清残留会读到上一次的 tooltip（据此误判「侧栏七行都显示第 1 步」，实际那是进度条的文本，真 tooltip 在 `Texts()` 里排第二）
+  - **轴标签步长**：从绘制回调里提成纯函数 `labelStride(cw)`，规则（相邻标签间距 ≥26 DIP）和 README 引用的三个步长现在都能单测，`TestLabelStrideKeepsLabelsApart` 钉住
+  - **横向溢出仍然测不了**，但补上了实测依据：往卡片里塞 `NoWrap()` 超宽文本，塞 40 个字和 160 个字，`Find` 返回的矩形**两次都是 562 DIP**（容器宽度）——MyGo 把溢出裁掉并把布局盒报成容器宽度，所以「有没有溢出」在 `Find` 的数据里根本不存在
+  - `CONTRIBUTING.md` 的「测不到的东西」一节据此重写，`CHANGELOG` 里两处错误的历史记录也标注了更正
+
+### Fixed
+
 - **`docs/` 里两张截图又过期了**：`just docs` 重新渲染后，`scores.png` 与 `residual.png` 与已提交版本不同（0.144% 像素，重新运行可复现，不是渲染抖动）
   - 原因不是渲染器：`TestRenderDocs` 是重渲染那次的**下一个提交**才加的，参数与当时手工渲染的一致。变了的是代码——第 232 轮改了第 5 步残差链的括号写法（对应 `residual.png`），第 233 轮改了第 3 步检查器的卡片标题（对应 `scores.png`）
   - 这正是 `CONTRIBUTING` 写明、但没人走的那条维护流程：「改了界面或文案后跑一次 `just docs`」
@@ -123,7 +132,7 @@
   - **tooltip**：界面有 6 处 `.Tooltip(...)`，无头渲染里**一次都不出现**——实测把指针扫过 token 条整片区域，`Texts()` 条数一个不变。只能说源层层面的断言（数字写法一致），内容是否有用要开窗口看
   - **横向溢出**：目标写着「1180×720 到 1920×1080 不溢出」，但**这条只能靠截图**。试过用测试抓——塞一段 `NoWrap()` 超长文本再断言 `X+W` 不超出窗口，**测试照样通过**，因为 MyGo 会把超出部分裁掉，`Find` 返回的是裁切后的矩形。**布局溢出在无头渲染里的表现是「静默截断」，不是「报错」**
   - **像素差异不等于正确**：`snapshots-diff` 是回归护栏，不是审美判断
-  - **真实焦点链与输入法**：`ui.Tester` 的合成事件走不到平台焦点链，第 219 轮发现的「头控件不可 Tab 到达」就是人点出来的，测试没报错
+  - **真实焦点链与输入法**：`ui.Tester` 的合成事件走不到平台的焦点分派和输入法组合。Tab 顺序本身是能测的（后来量出了完整顺序）
   - 反过来也写明：**截图本身足够可信**——项目走 CPU 光栅化，`ui.Render` 出的图就是窗口里画的像素，同状态两次渲染逐字节相同
 - 补 `TestContributingCountsEveryTooltip`：那节说「六处」，测试数一遍源码，若将来加到七处而文档没改会失败并指出实际数量。已验证追加一处 `.Tooltip(` 会报 `there are 7 tooltips (七处) but the guide does not say so`
 
@@ -207,7 +216,7 @@
   - 差异来源在 `paint.go`：新增 `ringMargin()`（焦点环的裁剪余量从固定 `+4` 改为按 ring 宽度计算）、阴影过渡、以及 clip 与 effect 的先后顺序。这几项都落在边缘绘制上，与观察到的位置吻合；其中焦点环余量的改动是**修正**（旧值可能裁掉环）
   - 升级后连跑两次 `just snapshots`，43 张**逐字节相同**，说明渲染仍然确定
   - 可读性门槛全部保持：`TestPaletteContrast`、`TestRailIDContrastInEveryChipState` 通过（这两条直接算颜色，与渲染无关）；7 阶段 × 5 尺寸的溢出检查通过
-  - 交互行为全部保持：快捷键契约、控件作用范围、滚动位置、热力图→token 条联动、以及**头控件仍不可 Tab 到达**（第 219 轮记录的那条库局限没有变化）
+  - 交互行为全部保持：快捷键契约、控件作用范围、滚动位置、热力图→token 条联动、以及**头控件仍不可 Tab 到达**（第 219 轮记录的那条库局限——**这条后来被证明是错的**，见后来的更正）
   - `-race` 跑关键测试通过
   - 依赖干净：`go.mod` 只改一行版本号，`go.sum` 只换 mygo 的两行哈希，**没有引入新模块**，`go mod tidy` 后无残留
 

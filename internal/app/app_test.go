@@ -8574,36 +8574,88 @@ func TestGeluIsStatedToBeAFixedFunction(t *testing.T) {
 //
 // The head can still be changed without the mouse, but only indirectly: shift+arrows walk the matrix on the
 // two attention stages, which shows the effect of one head at a time without selecting another.
-func TestHeadControlIsNotTabReachable(t *testing.T) {
+// TestEveryTopBarControlIsReachableByTab and the two below replace a record that was wrong.
+//
+// For a long time the suite contained TestHeadControlIsNotTabReachable, which walked twenty-four Tab steps and pressed Right
+// after each. It found the layer control and the temperature slider but never the head control, and concluded that MyGo's
+// focus grouping made the head unreachable — a limitation to be documented rather than fixed.
+//
+// It is reachable. The loop was the problem: pressing Right changes a value and repaints, and a Tab step is consumed by
+// whatever happens to hold focus, so counting fixed Tab presses against a moving target skipped the head group entirely.
+// Measured by tabbing n times from a fresh frame and then pressing Right three times: four tabs land on the layer group, five
+// on the head group, and three Rights walk the head 0 → 3.
+//
+// These tests read the focus by what it changes rather than by a pixel box, because that is what a keyboard reader cares about.
+func tabTo(t *testing.T, n int) (*App, *ui.Tester) {
+	t.Helper()
 	a := newTestApp(t)
-	a.Step = 2 // attention stage: layer and head are both enabled here
+	a.Step = 2 // attention stage: layer and head are both live here
 	tr := ui.NewTester(a.View, 1500, 940)
 	tr.Frame()
-
-	seen := map[string]bool{}
-	for i := 0; i < 24; i++ {
+	for i := 0; i < n; i++ {
 		tr.Key(0, ui.KeyTab)
 		tr.Frame()
-		l0, h0, tp0 := a.Layer, a.Head, a.Temp
+	}
+	return a, tr
+}
+
+func TestLayerControlIsReachableByTab(t *testing.T) {
+	a, tr := tabTo(t, 4)
+	before := a.Layer
+	tr.Key(0, ui.KeyRight)
+	tr.Frame()
+	if a.Layer == before {
+		t.Fatalf("after four tabs the layer control is not focused: Layer stayed %d", before)
+	}
+}
+
+func TestHeadControlIsReachableByTab(t *testing.T) {
+	a, tr := tabTo(t, 5)
+	if a.Head != 0 {
+		t.Fatalf("the head starts at %d, so this test cannot tell a move from a no-op", a.Head)
+	}
+	tr.Key(0, ui.KeyRight)
+	tr.Frame()
+	if a.Head != 1 {
+		t.Fatalf("after five tabs the head control is not focused: Head is %d, want 1", a.Head)
+	}
+	// The arrows keep walking it, which is what a radio group owes a keyboard reader.
+	for want := 2; want <= 3; want++ {
 		tr.Key(0, ui.KeyRight)
 		tr.Frame()
-		if a.Layer != l0 {
-			seen["layer"] = true
-		}
-		if a.Head != h0 {
-			seen["head"] = true
-		}
-		if a.Temp != tp0 {
-			seen["temp"] = true
+		if a.Head != want {
+			t.Fatalf("Right should walk the heads; got %d, want %d", a.Head, want)
 		}
 	}
-	if !seen["layer"] || !seen["temp"] {
-		t.Fatalf("tabbing no longer reaches the controls it used to (%v); if the toolkit gained focus "+
-			"support, head may be reachable too and this record should be replaced by a positive test",
-			seen)
+	// And back.
+	tr.Key(0, ui.KeyLeft)
+	tr.Frame()
+	if a.Head != 2 {
+		t.Fatalf("Left should walk back; got %d, want 2", a.Head)
 	}
-	if seen["head"] {
-		t.Fatal("the head control is tab reachable now; replace this record with a test that requires it")
+}
+
+// TestTemperatureSliderIsReachableByTab is the third of the top-bar controls. It joins the cycle only on the output stage,
+// where it is live.
+func TestTemperatureSliderIsReachableByTab(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	before := a.Temp
+	found := false
+	for i := 0; i < 8; i++ {
+		tr.Key(0, ui.KeyTab)
+		tr.Frame()
+		tr.Key(0, ui.KeyRight)
+		tr.Frame()
+		if a.Temp != before {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no Tab stop reaches the temperature slider on the output stage; Temp stayed %.2f", before)
 	}
 }
 
@@ -9139,5 +9191,153 @@ func TestReduceMotionLeavesInteractionAlone(t *testing.T) {
 	tr.Frame()
 	if a.Step != before+1 {
 		t.Fatalf("Right moved the stage from %d to %d under ReduceMotion", before, a.Step)
+	}
+}
+
+// TestTooltipsAppearAndMatchTheirWidget replaces a wrong claim in CONTRIBUTING.
+//
+// The guide said tooltips could not be observed headless — "sweeping the pointer across the token strip leaves the text count
+// unchanged" — and used that to justify checking them only at the source level. That measurement was taken without advancing
+// the clock. A tooltip is delayed, and Tester's clock stands still unless the test moves it with Advance; hover plus roughly
+// three quarters of a second and the tooltip text shows up in Texts().
+//
+// So they can be asserted like anything else. The three checked here are the ones whose content is a number a reader is meant to
+// compare against the screen: the token chip's byte id, the sidebar's stage number, and a histogram bar's value.
+// hoverForTooltip parks the pointer, lets any previous tooltip expire, hovers (x,y), and returns the first text that
+// satisfies match.
+//
+// The parking step is not optional: a tooltip from the previous call stays in Texts() for a while, so hovering the next
+// widget and reading Texts() immediately returns the old one. Two rounds of wrong answers came from skipping it.
+func hoverForTooltip(t *testing.T, tr *ui.Tester, x, y float32, match func(string) bool) string {
+	t.Helper()
+	tr.Move(700, 600)
+	tr.Frame()
+	for i := 0; i < 10; i++ {
+		tr.Advance(250 * time.Millisecond)
+		tr.Frame()
+	}
+	tr.Move(x, y)
+	tr.Frame()
+	for i := 0; i < 10; i++ {
+		tr.Advance(250 * time.Millisecond)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if match(s) {
+				return s
+			}
+		}
+	}
+	return ""
+}
+
+func TestTokenChipTooltipStatesItsByte(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	// The strip's chips sit in the row below the top bar. Walk it until a tooltip appears, rather than guessing a coordinate:
+	// the chip widths depend on the prompt.
+	isChipTip := func(s string) bool {
+		return strings.HasPrefix(s, "token ") && strings.Contains(s, "byte") && strings.Contains(s, "0x")
+	}
+	var tip string
+	for x := float32(280); x < 900 && tip == ""; x += 30 {
+		for _, y := range []float32{112, 116, 120} {
+			if tip = hoverForTooltip(t, tr, x, y, isChipTip); tip != "" {
+				break
+			}
+		}
+	}
+	if tip == "" {
+		t.Fatal("hovering the token strip never showed its tooltip")
+	}
+
+	// The tooltip names a token number and that token's byte, and the screen shows the same byte in decimal.
+	var n, id int
+	var runeText string
+	if _, err := fmt.Sscanf(tip, "token %d · byte %d", &n, &id); err != nil {
+		t.Fatalf("cannot read the tooltip %q: %v", tip, err)
+	}
+	if n < 0 || n >= len(a.Trace.Tokens) {
+		t.Fatalf("the tooltip names token %d, out of range for %d tokens", n, len(a.Trace.Tokens))
+	}
+	if want := a.Trace.Tokens[n].ID; id != want {
+		t.Fatalf("the tooltip says token %d is byte %d; the trace says %d", n, id, want)
+	}
+	_ = runeText
+}
+
+func TestStageTooltipNamesTheStep(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	// The sidebar's seven rows, top to bottom: first row at y=76, each 32 DIP tall at 1500×940.
+	found := 0
+	for i := range lessons {
+		y := float32(76 + i*32 + 16)
+		// The step bar also prints "第 N / 7 步", and it is in Texts() before any tooltip. The tooltip is the one
+		// with the stage's title after the dot.
+		isStepTip := func(s string) bool {
+			return strings.HasPrefix(s, "第 ") && strings.Contains(s, "/ 7 步 · ")
+		}
+		tip := hoverForTooltip(t, tr, 110, y, isStepTip)
+		if tip == "" {
+			continue
+		}
+		found++
+		var step int
+		if _, err := fmt.Sscanf(tip, "第 %d / 7 步", &step); err != nil {
+			t.Fatalf("cannot read the stage tooltip %q: %v", tip, err)
+		}
+		if step != i+1 {
+			t.Fatalf("the tooltip on sidebar row %d says it is step %d", i+1, step)
+		}
+	}
+	if found < 5 {
+		t.Fatalf("only %d of the seven sidebar rows showed a tooltip", found)
+	}
+}
+
+// TestLabelStrideKeepsLabelsApart pins the rule behind the heatmap's axis labels.
+//
+// The labels are painted with Painter.RichText, so they never appear in Texts() and the only way to see the stride on screen is
+// to look at a picture and count. The rule itself is arithmetic — never draw two labels closer than 26 DIP — and it was inlined
+// in the draw callback, where nothing could reach it. It is a function now.
+//
+// The README quotes what it produces at three sizes; those figures are the same rule, so keeping the rule right keeps the README
+// right. Measured off a 1500×940 render of the 36-token prompt: the top edge reads 0 3 6 9 12 …, a stride of 3.
+func TestLabelStrideKeepsLabelsApart(t *testing.T) {
+	const minGap = 26
+	for _, cw := range []float32{2, 3, 5, 8.67, 9, 13, 13.01, 20, 26, 26.5, 40} {
+		s := labelStride(cw)
+		if s < 1 {
+			t.Fatalf("cell width %.2f produced a stride of %d", cw, s)
+		}
+		if gap := float32(s) * cw; gap < minGap {
+			t.Fatalf("cell width %.2f with stride %d leaves %.2f DIP between labels, under the %.0f the rule "+
+				"promises", cw, s, gap, float32(minGap))
+		}
+		// And it does not overshoot: one cell less would have been too tight.
+		if s > 1 && float32(s-1)*cw >= minGap {
+			t.Fatalf("cell width %.2f got stride %d, but %d would already clear %.0f", cw, s, s-1, float32(minGap))
+		}
+	}
+
+	// The three figures the README quotes, as cell widths. A 36-token prompt at 1500 wide draws at stride 3; a 64-token one
+	// at 1500 and 1920 at 4; a 64-token one at 1180 at 6.
+	for _, c := range []struct {
+		cw   float32
+		want int
+	}{
+		{26.0 / 3.0, 3}, // the 1500-wide 36-token heatmap, which the screenshot shows as 0 3 6 9 …
+		{26.0 / 4.0, 4},
+		{26.0 / 6.0, 6},
+	} {
+		if got := labelStride(c.cw); got != c.want {
+			t.Fatalf("cell width %.3f gives stride %d, and the README's figures assume %d", c.cw, got, c.want)
+		}
 	}
 }

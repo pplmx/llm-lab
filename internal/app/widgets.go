@@ -491,10 +491,7 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 					w, h := p.MeasureText(0, sp)
 					p.RichText(x-w/2, y-h/2, 0, sp)
 				}
-				stride := 1
-				for float32(stride)*cw < 26 {
-					stride++
-				}
+				stride := labelStride(cw)
 				for j := 0; j < T; j += stride {
 					put(fmt.Sprint(j), grid.X+float32(j)*cw+cw/2, grid.Y-5, colFaint)
 				}
@@ -716,4 +713,21 @@ func meanStd(v []float32) (float32, float32) {
 		s += d * d
 	}
 	return float32(m), float32(math.Sqrt(s / float64(len(v))))
+}
+
+// labelStride is how many cells apart the heatmap's axis labels are.
+//
+// Extracted so the rule can be tested as arithmetic rather than read off the pixels: the labels are painted with
+// Painter.RichText, which puts nothing in Texts(), so the only other way to know the stride is to look at a screenshot and
+// count. The README quotes the strides it produces (every 3 cells for the 36-token prompt at 1500 wide, every 4 for the
+// 64-token one, every 6 at 1180), and those are now checked against this function.
+func labelStride(cw float32) int {
+	if cw <= 0 {
+		return 1
+	}
+	stride := 1
+	for float32(stride)*cw < 26 {
+		stride++
+	}
+	return stride
 }
