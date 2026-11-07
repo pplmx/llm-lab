@@ -1412,3 +1412,55 @@ func TestWorkingsLinesDoNotRunTwoSignsTogether(t *testing.T) {
 		}
 	}
 }
+
+// TestResidualChainClosesAcrossTokensAndLayers widens the chain check to the inputs a reader
+// can vary.
+//
+// TestPrintedResidualChainCloses walks all 96 dimensions but only on the selected token of
+// the selected layer — one row. The chain is the same three-step structure everywhere, but the
+// numbers are not, and a rounding problem that shows on one row need not show on another.
+//
+// Measured over four prompts, both layers and the first twelve rows: adding the printed terms
+// keeps the running total within 1.0e-4, which is one digit at four decimals — exactly what
+// rounding three numbers separately can cost.
+func TestResidualChainClosesAcrossTokensAndLayers(t *testing.T) {
+	round := func(v float64, dp int) float64 {
+		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
+		return out
+	}
+
+	worst := 0.0
+	for _, prompt := range []string{
+		"The transformer reads the tokens and", "注意力就是加权求和", "hi", "a",
+	} {
+		for _, layer := range []int{0, 1} {
+			a := newTestApp(t)
+			a.Prompt = prompt
+			a.recompute()
+			a.Layer = layer
+			l := a.layer()
+			if l == nil || len(l.In) == 0 {
+				continue
+			}
+			for row := 0; row < len(l.In) && row < 12; row++ {
+				for dim := 0; dim < a.Trace.Config.DModel; dim++ {
+					steps, ok := residualChain(*l, row, dim)
+					if !ok {
+						continue
+					}
+					running := round(steps[0].Term, 4)
+					for _, s := range steps[1:] {
+						running += round(s.Term, 4)
+						if gap := math.Abs(running - s.Sum); gap > worst {
+							worst = gap
+						}
+					}
+				}
+			}
+		}
+	}
+	if worst > 2e-4 {
+		t.Fatalf("adding the printed residual terms moves the running total by %.2e", worst)
+	}
+	t.Logf("worst gap across prompts, layers and rows: %.2e", worst)
+}
