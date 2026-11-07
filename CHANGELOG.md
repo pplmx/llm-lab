@@ -41,6 +41,18 @@
   - `renderFFN`、`renderFFNPositive`、`drawHeatmap` 是测试重构后的残留辅助函数
   - 净删 38 行
 
+### Fixed
+
+- `TestFFNCalloutZeroCountIsMeasured` 里有一条**只记录、不断言**的分支：
+  ```go
+  if zeroDims(hidden) != 0 { t.Logf("note: this row has %d exact zeros") }
+  ```
+  它验证了 `zeroDims` 的计数逻辑，却**没有锁定「这一行不应有恰好为 0 的值」这个结论**——而那正是卡片上那句话的依据：「这一行里恰好等于 0 的有 0 个」。若 GELU 真的开始输出硬零，测试只会打印一行日志然后通过
+  - 改为 `t.Fatalf`，并补一条：渲染出来的段落必须带上这个计数（此前只比对函数，不比对文字）
+  - 第一次补完渲染断言时失败，因为测试停在默认的第 1 步、而卡片在第 6 步；补 `a.Step = 5` 后通过
+  - 实测 GELU 输出：两层共 27648 个值中**恰好为 0 的有 0 个**、负数占 51.5%/53.8%、最小值恒为 −0.1700（与 `geluFloor` 一致），每行同样为 0 个——「平滑趋零而非截平」有实据
+  - 已验证：让 `zeroDims` 多返回 3，测试报 `zeroDims overcounted: 3 left`
+
 ### Added
 
 - 第 3 步讲解「除以 √d_head 是为了让方差稳定，否则维度一高分数就会爆炸，softmax 直接饱和」的**效果从未被测过**

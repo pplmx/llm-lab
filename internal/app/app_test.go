@@ -755,9 +755,29 @@ func TestFFNCalloutZeroCountIsMeasured(t *testing.T) {
 		t.Fatalf("zeroDims overcounted: %d left", zeros)
 	}
 	// GELU only returns exact 0 below its table's lower bound, so a normal
-	// activation row should have none.
-	if zeroDims(hidden) != 0 {
-		t.Logf("note: this row has %d exact zeros", zeroDims(hidden))
+	// activation row has none — and the callout says so in words: "「大部分维度接近 0」
+	// 而不是「大部分维度恰好等于 0」——这一行里恰好等于 0 的有 N 个". If N ever became
+	// non-zero the sentence would be self-contradicting, so this is an assertion rather
+	// than a note.
+	if zeros := zeroDims(hidden); zeros != 0 {
+		t.Fatalf("this row has %d exact zeros; the callout says GELU never truncates to "+
+			"zero, and the sentence quotes this count", zeros)
+	}
+
+	// The rendered sentence must carry that same count, not a stale 0. The callout
+	// lives on the FFN stage, so the frame has to be that stage.
+	a.Step = 5
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	want := fmt.Sprintf("恰好等于 0 的有 %d 个", zeroDims(hidden))
+	var saw bool
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, want) {
+			saw = true
+		}
+	}
+	if !saw {
+		t.Fatalf("the FFN callout does not report %q", want)
 	}
 }
 
