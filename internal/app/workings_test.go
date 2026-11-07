@@ -1198,3 +1198,97 @@ func TestPrintedLayerNormCeilingUsesSqrtDModel(t *testing.T) {
 			pin, a.Trace.Config.DModel)
 	}
 }
+
+// TestLogitsRowsShowTheirOwnProbability reads the Top-12 rows' percentages.
+//
+// Each row prints its own probability, and the rank can be printed in its place, or
+// zero. Both passed: the rows are drawn as bars whose width already varies, so a
+// wrong number in the text column is the only visible symptom and nothing checked it.
+func TestLogitsRowsShowTheirOwnProbability(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+
+	probs := a.Trace.Probabilities(a.Temp)
+	top := model.TopK(probs, 12)
+	for rank, id := range top {
+		// The formatter has three tiers: scientific below 0.0001, two decimals
+		// below 0.01, one decimal otherwise. Reproduce it rather than assuming one.
+		var want string
+		switch {
+		case probs[id] == 0:
+			want = "0%"
+		case probs[id] < 0.0001:
+			want = fmt.Sprintf("%.1e%%", probs[id]*100)
+		case probs[id] < 0.01:
+			want = fmt.Sprintf("%.2f%%", probs[id]*100)
+		default:
+			want = fmt.Sprintf("%.1f%%", probs[id]*100)
+		}
+		found := false
+		for _, s := range tr.Texts() {
+			if s == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("rank %d (id %d) has probability %v; %q does not appear",
+				rank, id, probs[id], want)
+		}
+	}
+}
+
+// TestScoreStageLegendStatesTheRealScale reads the two figures the score stage's
+// legend quotes about itself.
+//
+// The legend says "缩放 1/√24 = 0.204" and "可见 N 个 key". Two mutations passed: the
+// scale printed as 1/d_head, and the visible count off by one. Both are the sort of
+// number a reader checks against the formula directly above them.
+func TestScoreStageLegendStatesTheRealScale(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 10
+	a.Layer = 1
+	a.Head = 2
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	// The legend sits below the first screen: content outside the scroll viewport
+	// is not in Texts(), so the panel has to be scrolled to before reading it.
+	tr.Scroll(700, 500, 0, -120)
+	tr.Frame()
+
+	dHead := a.Trace.Config.DHead()
+	wantScale := fmt.Sprintf("1/√%d = %.3f", dHead, 1/math.Sqrt(float64(dHead)))
+	wrongScale := fmt.Sprintf("1/√%d = %.3f", dHead, 1/float64(dHead))
+	var sawScale, sawWrong bool
+	for _, s := range tr.Texts() {
+		if s == wantScale {
+			sawScale = true
+		}
+		if s == wrongScale {
+			sawWrong = true
+		}
+	}
+	if !sawScale {
+		t.Fatalf("the legend does not state %q", wantScale)
+	}
+	// The score workings print the same string from the same quantity, so its
+	// presence alone does not prove the legend is right — the linear version must be
+	// absent too.
+	if sawWrong {
+		t.Fatalf("the linear 1/d_head value %q also appears", wrongScale)
+	}
+
+	// The causal row has SelToken+1 visible keys.
+	wantVisible := fmt.Sprintf("%d 个 key", a.SelToken+1)
+	var sawVisible bool
+	for _, s := range tr.Texts() {
+		if s == wantVisible {
+			sawVisible = true
+		}
+	}
+	if !sawVisible {
+		t.Fatalf("the legend does not state %q", wantVisible)
+	}
+}
