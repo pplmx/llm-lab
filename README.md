@@ -105,7 +105,7 @@ just check    # gofmt 检查 + go vet + go test（CI 的主要门槛；要完全
 
 - **头是分开算的**：`HeadProj[h]` 是 `Out_h · Wo[h*d_head:(h+1)*d_head]`，`AttnProj` 就是各头之和，所以第 4 步卡片里「本头贡献」和「全部头相加」是两个不同的量。
 - **`-Inf` 是掩码，不是数值**：`Scores` 右上角是 `negInf`，`softmaxCausal` 直接在 `i+1` 处截断，从不真的对它做指数。
-- **`Logits` 只有一行**：`FinalNorm` 是 `T × d_model`，但 `Trace.Logits` 只保存**最后一个位置**的那一行，宽度是词表大小（本模型 96 → 256），所以第 7 步看的是「最后一个 token 之后的那个字」。
+- **`Logits` 只有一行**：`FinalNorm` 是 `T × d_model`，但 `Trace.Logits` 只保存**最后一个位置**的那一行，宽度是词表大小——本模型把 96 维的向量点乘到 `TokEmbed` 的 256 行上，得到 256 个 logit（形状 `[T, 96] → [1, 256]`），所以第 7 步看的是「最后一个 token 之后的那个字」。
 
 每次 `Forward` 会把每个中间张量录进 `model.Trace`（`gpt.go`），界面只读这份缓存——所以拖动滑块、切换层/头都不需要重算整个网络。
 
@@ -132,7 +132,7 @@ just check    # gofmt 检查 + go vet + go test（CI 的主要门槛；要完全
 
 第 2 步的嵌入相加、第 3 步的分数点积、第 4 步的注意力权重与加权求和、第 5 步的残差累加与 LayerNorm、第 6 步的 FFN 求和与第 7 步的采样都会把算式写出来（带当前数据的具体数字），读者可以照着手算并得到卡片上那个值。
 
-第 3–7 步各带「常见误解」卡片，共六条（第 4 步有两条）：先写出画面上最容易得出的错误读法，再用**当前提示词下这个模型真实算出来的数字**纠正它（分数的平移不变性、列和不受约束、各头贡献不能直接相加、GELU 的负输出下界、概率高不等于正确）。这些数字每次都从 `Trace` 现算，换提示词、换权重都会跟着变。
+第 3–7 步各带「常见误解」卡片，共六条（第 4 步有两条）；第 1 步在含多字节字符的提示词下还会多一条（「一个汉字就是一个 token」的纠正，纯 ASCII 提示词下不出现）：先写出画面上最容易得出的错误读法，再用**当前提示词下这个模型真实算出来的数字**纠正它（分数的平移不变性、列和不受约束、各头贡献不能直接相加、GELU 的负输出下界、概率高不等于正确）。这些数字每次都从 `Trace` 现算，换提示词、换权重都会跟着变。
 
 ## 模型
 
@@ -159,7 +159,7 @@ go run . -weights /path/to/other.json  # 换一份权重（需为 vocab 256 的 
 - softmax 每行和为 1、因果掩码让上三角严格为 0、LayerNorm 输出零均值单位方差
 - 同一输入两次前向结果逐位一致
 - tokenizer 中英文往返一致；截断不会切在多字节字符中间
-- **逐张量与 PyTorch 对齐**：`tools/parity.py` 把同一份 `weights.json` 在 PyTorch 里跑一遍，导出 46 token 提示词的全部中间结果（embedding、每层 Norm1、每个头的 Q/K/V、score、attn、头输出、AttnProj、Norm2、GELU 前后、FFN 输出、最终 Norm、logits），Go 侧 `TestParityEveryTensor` 逐项比对，所有张量最大误差 1.7e-5，logits 1.7e-5（GELU 与 softmax 的 exp 都用查表近似，误差分别 ≤ 4e-7、2.4e-6，由 `TestGeluMatchesErf`、`TestExpNegMatchesExp` 锁定；标量与 SIMD 构建结果一致）。这比只比最终 logits 严格得多：头切片顺序、拼接布局、GELU 变体、LayerNorm 的 eps 出错都会被抓到
+- **逐张量与 PyTorch 对齐**：`tools/parity.py` 把同一份 `weights.json` 在 PyTorch 里跑一遍，导出 46 token 提示词的全部中间结果（embedding、每层 Norm1、每个头的 Q/K/V、score、attn、头输出、AttnProj、Norm2、GELU 前后、FFN 输出、最终 Norm、logits），Go 侧 `TestParityEveryTensor` 逐项比对，中间张量最大误差 3e-6，logits 1.6e-5——logit 是 256 项点积的和，误差在最后一步被放大。GELU 与 softmax 的 exp 都用查表近似，误差分别 ≤ 4e-7、2.4e-6，由 `TestGeluMatchesErf`、`TestExpNegMatchesExp` 锁定；标量与 SIMD 构建结果一致。这比只比最终 logits 严格得多：头切片顺序、拼接布局、GELU 变体、LayerNorm 的 eps 出错都会被抓到
 - 单头贡献之和严格等于该层的注意力输出（`TestHeadProjSumsToAttnProj`），界面上「本头贡献 Δ_h」不是拿总和冒充的
 - 用 `ui.Tester` 模拟真实点击，验证阶段切换
 
