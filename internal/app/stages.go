@@ -1612,7 +1612,11 @@ func (a *App) inspectorLogits(c *ui.Context, tr *model.Trace) {
 			kv(c, "领先", fmt.Sprintf("%.1f 个百分点", (probs[top[0]]-probs[top[1]])*100))
 		}
 		kv(c, "熵", fmt.Sprintf("%.2f nats", model.Entropy(probs)))
-		mutedText(c, "温度趋近 0 时分布变尖，等于贪心；大于 1 时变平，输出更随机。")
+		// Temperature sits in the top bar next to the layer and head controls, which read the
+		// model's own structure. It is not part of the model at all — nothing in internal/model
+		// mentions it — so say which side of the line it is on, where the reader is looking at it.
+		mutedText(c, "温度不是训练出来的权重，是推理时的旋钮：趋近 0 时分布变尖，等于贪心；"+
+			"大于 1 时变平，输出更随机。")
 	})
 }
 

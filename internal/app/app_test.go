@@ -7912,3 +7912,37 @@ func TestEmbeddingBodySaysTheTableIsLearned(t *testing.T) {
 			truncateForTest(body, 120))
 	}
 }
+
+// TestTemperatureIsStatedToBeInferenceOnly draws a line the UI was leaving blurred.
+//
+// The top bar puts three knobs side by side: layer, head and temperature. The first two select a part of
+// the model's own structure. Temperature is not in the model at all — nothing under internal/model
+// mentions it, and it is applied when the logits are turned into a distribution. A reader moving that
+// slider has no way to tell which side of that line it is on.
+//
+// The output stage's inspector now says so where the number is displayed, and names what it does.
+func TestTemperatureIsStatedToBeInferenceOnly(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 1100)
+	tr.Frame()
+
+	var card string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "推理时的旋钮") {
+			card = s
+		}
+	}
+	if card == "" {
+		t.Fatal("the output inspector does not say temperature is an inference-time setting")
+	}
+	if !strings.Contains(card, "不是训练出来的权重") {
+		t.Fatalf("the sentence does not rule out the wrong reading: %q", card)
+	}
+	// It still has to explain what the knob does, or the clarification has replaced the teaching.
+	for _, want := range []string{"贪心", "随机"} {
+		if !strings.Contains(card, want) {
+			t.Fatalf("the temperature note lost the explanation of %q: %q", want, card)
+		}
+	}
+}
