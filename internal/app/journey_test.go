@@ -557,3 +557,80 @@ func TestAutoplayWalksThePipelineOnTheClock(t *testing.T) {
 		t.Fatalf("the stage moved from %d to %d after stopping", reached+1, b.Step+1)
 	}
 }
+
+// TestPauseResumeAndRestartAtTheEnd covers what space does when playback is already under way or already over.
+//
+// The autoplay test checks that it starts and stops. The three cases here are the ones a reader will actually hit while
+// using it, and each has a defensible-but-different answer:
+//
+//   - pausing keeps the stage, so resuming continues from there rather than starting the tour over;
+//   - resuming continues on the clock, without replaying the interval that was already spent;
+//   - pressing space on the last stage restarts from the first, because otherwise the play indicator lights up, nothing
+//     moves, and it goes out again — measured: with the restart removed, Playing is true at stage 7, an interval passes,
+//     and Playing turns false with the stage unchanged.
+func TestPauseResumeAndRestartAtTheEnd(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 0
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	tr.Advance(playStepInterval)
+	tr.Frame()
+	tr.Advance(playStepInterval)
+	tr.Frame()
+	if a.Step != 2 {
+		t.Fatalf("two intervals put the reader on stage %d, want 3", a.Step+1)
+	}
+
+	// Pause: the stage holds.
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	if a.Playing {
+		t.Fatal("space did not pause playback")
+	}
+	if a.Step != 2 {
+		t.Fatalf("pausing moved the reader to stage %d", a.Step+1)
+	}
+	// And time no longer moves it.
+	tr.Advance(3 * playStepInterval)
+	tr.Frame()
+	if a.Step != 2 {
+		t.Fatalf("the stage advanced while paused: %d", a.Step+1)
+	}
+
+	// Resume: from here, not from the first stage.
+	tr.Key(0, ui.KeySpace)
+	tr.Frame()
+	if !a.Playing {
+		t.Fatal("space did not resume playback")
+	}
+	if a.Step != 2 {
+		t.Fatalf("resuming restarted at stage %d instead of continuing from 3", a.Step+1)
+	}
+	tr.Advance(playStepInterval)
+	tr.Frame()
+	if a.Step != 3 {
+		t.Fatalf("after resuming, one interval moved the reader to stage %d, want 4", a.Step+1)
+	}
+
+	// At the last stage, space starts the tour again rather than lighting a dead indicator.
+	b := newTestApp(t)
+	b.Step = len(lessons) - 1
+	tr2 := ui.NewTester(b.View, 1180, 720)
+	tr2.Frame()
+	tr2.Key(0, ui.KeySpace)
+	tr2.Frame()
+	if !b.Playing {
+		t.Fatal("space on the last stage did not start playback")
+	}
+	if b.Step != 0 {
+		t.Fatalf("space on the last stage left the reader on stage %d; it should start the tour over", b.Step+1)
+	}
+	// And it is genuinely playing from there.
+	tr2.Advance(playStepInterval)
+	tr2.Frame()
+	if b.Step != 1 {
+		t.Fatalf("after restarting from the end, an interval moved the reader to stage %d, want 2", b.Step+1)
+	}
+}

@@ -36,6 +36,14 @@
 
 ### Added
 
+- 补 `TestPauseResumeAndRestartAtTheEnd`：**暂停、继续、在末尾重播**三种情形，此前都没测过
+  - **暂停保持阶段**，继续时**从当前步接着播**而不是从头再来
+  - **继续后计时重新起算**（`NextAt` 清零），不会立刻补跳一格
+  - **在最后一步按空格会从第 1 步重新开始**。这不是锦上添花：去掉那段重播逻辑后，实测读者在第 7 步按空格——`Playing` 变 `true`、下一个间隔后变回 `false`、**阶段纹丝不动**。读者看到的是「播放指示亮起、什么都没发生、又熄灭」
+  - 两种破坏都验证过能抓到：删掉重播分支报 `space on the last stage left the reader on stage 7; it should start the tour over`；不清 `NextAt` 也会失败
+
+### Added
+
 - 补 `TestAutoplayWalksThePipelineOnTheClock`：**自动播放此前只测了状态位，没测它会真的推进**
   - 现有断言全是「空格把 `Playing` 置真、Esc 置假、选阶段会停止」。**把 `play()` 里的 `a.Step++` 删掉，整套测试仍然是绿的**——标志位照常翻转、按钮照常显示「播放中」，只是什么都不动
   - `ui.Tester` 的时钟可以显式推进，所以间隔是精确的，不用 sleep
