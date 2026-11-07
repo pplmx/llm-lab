@@ -23,7 +23,7 @@ var inspectorCards = []struct {
 	// runes coincide. TestByteCardFollowsThePrompt covers the other branch.
 	{0, "分词", "ASCII 下字节就是字符"},
 	{1, "嵌入", "位置向量"},
-	{2, "注意力分数", "分数 top-5"},
+	{2, "注意力分数", "绝对值最大的 5 个分数"},
 	{3, "Softmax", "这一行的统计"},
 	{4, "残差 / LN", "进入 FFN 之前"},
 	{5, "FFN", "隐藏层统计"},

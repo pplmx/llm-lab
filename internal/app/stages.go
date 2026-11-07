@@ -1532,7 +1532,11 @@ func (a *App) inspectorScores(c *ui.Context, tr *model.Trace) {
 	i := clampIndex(a.SelToken, len(tr.Tokens))
 	h := l.Heads[a.Head]
 	card(c, func() {
-		sectionTitle(c, "分数 top-5", fmt.Sprintf("query = token %d", i))
+		// "top-5" read as "the five keys this query attends to most", which is the opposite of what the
+		// card shows: topAbsBars picks the largest MAGNITUDE, so a very negative score — the kind softmax
+		// all but erases — makes the cut while a modest positive one does not. Name the rule the card
+		// actually uses.
+		sectionTitle(c, "绝对值最大的 5 个分数", fmt.Sprintf("query = token %d", i))
 		rows := make([]barRow, 0, 8)
 		var maxAbs float32
 		for j := 0; j <= i; j++ {

@@ -9002,3 +9002,70 @@ func TestResidualChainBracketsBothSigns(t *testing.T) {
 		}
 	}
 }
+
+// TestScoreInspectorNamesItsRankingRule keeps the card's title from promising a ranking it does not use.
+//
+// The card shows the five scores with the largest magnitude — topAbsBars sorts by |value| and then restores row
+// order — but was headed "分数 top-5", which reads as "the five keys this query attends to most". That is close to
+// the opposite: a score of -4.32 is the largest magnitude in its row and the least attention the query can give,
+// since softmax nearly erases it. Round 234 renamed the card.
+func TestScoreInspectorNamesItsRankingRule(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 20
+	tr := ui.NewTester(a.View, 1500, 2200)
+	tr.Frame()
+
+	var title string
+	for _, s := range tr.Texts() {
+		if r, ok := tr.Find(s); ok && r.X >= 1190 && strings.Contains(s, "分数") {
+			title = s
+			break
+		}
+	}
+	if title == "" {
+		t.Fatal("the score inspector lost its title")
+	}
+	if strings.Contains(title, "top-5") || strings.Contains(title, "top 5") {
+		t.Fatalf("the title promises the highest scores, but the card shows the largest magnitudes: %q",
+			title)
+	}
+	if !strings.Contains(title, "绝对值") {
+		t.Fatalf("the title does not say what it ranks by: %q", title)
+	}
+}
+
+// TestTopAbsBarsKeepsTheLargestMagnitudes pins the rule the title now names: five rows, chosen by |value|, shown
+// back in their original order.
+func TestTopAbsBarsKeepsTheLargestMagnitudes(t *testing.T) {
+	rows := []barRow{
+		{Index: 0, Value: -4.0},
+		{Index: 1, Value: 0.5},
+		{Index: 2, Value: -3.0},
+		{Index: 3, Value: 0.9},
+		{Index: 4, Value: 2.0},
+		{Index: 5, Value: -0.1},
+		{Index: 6, Value: 1.5},
+	}
+	got := topAbsBars(rows, 5)
+	if len(got) != 5 {
+		t.Fatalf("kept %d rows, want 5", len(got))
+	}
+	// Largest magnitudes are -4.0, -3.0, 2.0, 1.5 and 0.9 — indices 0, 2, 4, 6, 3.
+	want := []int{0, 2, 3, 4, 6} // largest magnitudes, restored to row order
+	gotIdx := make([]int, 0, 5)
+	for _, r := range got {
+		gotIdx = append(gotIdx, r.Index)
+	}
+	for i := range want {
+		if gotIdx[i] != want[i] {
+			t.Fatalf("kept indices %v, want %v (largest magnitudes, in row order)", gotIdx, want)
+		}
+	}
+	// 0.9 is the fifth largest, so it stays; anything below it should not have made the cut.
+	for _, r := range got {
+		if math.Abs(float64(r.Value)) < 0.89 {
+			t.Fatalf("kept a value of %.2f, which is outside the five largest magnitudes", r.Value)
+		}
+	}
+}
