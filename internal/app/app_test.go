@@ -7164,3 +7164,65 @@ func TestMaskedCellsAreNeverPainted(t *testing.T) {
 		t.Fatal("a second cell loop walks the whole row, which would paint the masked half")
 	}
 }
+
+// TestNegativeRegionAxisWidthIsRecomputed checks the FFN caption's "只占 4.0% 的轴宽".
+//
+// The caption tells the reader the negative region is a sliver of the axis and that the
+// histogram therefore cannot show its shape. That is only true if the chart's axis is the data's
+// own range, which is what histogram() passes (0, 0) to mean. The percentage and the chart's
+// scale come from the same minMaxFloat call, so they agree today — but nothing connected the
+// sentence to the plot, and a change to either would leave the caption describing a shape the
+// reader is not looking at.
+func TestNegativeRegionAxisWidthIsRecomputed(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	tr := ui.NewTester(a.View, 1500, 1800)
+	tr.Frame()
+
+	l := a.layer()
+	hidden := l.Hidden[a.SelToken]
+	if len(hidden) == 0 {
+		t.Fatal("no hidden activations")
+	}
+	lo, hi := minMaxFloat(hidden)
+	if !(lo < 0 && hi > lo) {
+		t.Fatalf("this prompt has no negative region to describe (range %.3f..%.3f)", lo, hi)
+	}
+	neg := 0
+	for _, v := range hidden {
+		if v < 0 {
+			neg++
+		}
+	}
+	wantNegPct := 100 * float64(neg) / float64(len(hidden))
+	wantAxisPct := 100 * (0 - float64(lo)) / (float64(hi) - float64(lo))
+
+	var caption string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "轴宽") {
+			caption = s
+		}
+	}
+	if caption == "" {
+		t.Fatal("the negative-region caption is gone")
+	}
+	for _, want := range []string{
+		fmt.Sprintf("%d 个负值", neg),
+		fmt.Sprintf("占 %.0f%%", wantNegPct),
+		fmt.Sprintf("%.1f%% 的轴宽", wantAxisPct),
+	} {
+		if !strings.Contains(caption, want) {
+			t.Fatalf("the caption does not state %q for this row: %s", want, caption)
+		}
+	}
+
+	// And the chart the caption describes must use that same range.
+	src, err := os.ReadFile("widgets.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "lo, hi = minMaxFloat(values)") {
+		t.Fatal("histogramRange no longer derives the axis from the data, so the caption's " +
+			"percentage would describe a different scale from the one drawn")
+	}
+}
