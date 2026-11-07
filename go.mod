@@ -2,7 +2,7 @@ module llmlab
 
 go 1.27.3
 
-require github.com/egoist/mygo v0.7.4
+require github.com/egoist/mygo v0.8.3
 
 require (
 	github.com/ebitengine/purego v0.11.1 // indirect
