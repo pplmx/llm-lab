@@ -83,3 +83,27 @@ func TestContributingCoversTheTeachingChecks(t *testing.T) {
 		}
 	}
 }
+
+// TestContributingDoesNotRestateTheColourRange keeps one copy of a number that has to move.
+//
+// The score-colour ceiling depends on the prompt, the layer and the head. README states the measured per-layer spans and
+// a test pins them to the model; CONTRIBUTING carried a second, independent copy reading "本模型 5.4–8.3". Neither figure
+// matched anything the app produces, and because the two live in different files, changing one never flagged the other.
+// The guide now points at the README instead of repeating it.
+func TestContributingDoesNotRestateTheColourRange(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "CONTRIBUTING.md"))
+	if err != nil {
+		t.Fatalf("read CONTRIBUTING.md: %v", err)
+	}
+	doc := string(b)
+	if strings.Contains(doc, "5.4–8.3") {
+		t.Fatal("CONTRIBUTING restates the colour-ceiling range that README owns; the two will drift apart")
+	}
+	// It should still describe the rule, just not with its own numbers.
+	if !strings.Contains(doc, "色深") {
+		t.Fatal("the colour-depth point disappeared from CONTRIBUTING")
+	}
+	if !strings.Contains(doc, "README") {
+		t.Fatal("CONTRIBUTING no longer points at README for the measured range")
+	}
+}

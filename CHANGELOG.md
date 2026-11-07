@@ -36,6 +36,14 @@
 
 ### Fixed
 
+- **CONTRIBUTING.md 与 README.md 对同一件事各写了一份数字，两份都对不上模型**。热力图色深上限取决于提示词、层、头，README 说「第 0 层 4.6–12.5、第 1 层 8.1–15.2」，CONTRIBUTING 另一处说「本模型 5.4–8.3」
+  - 实测（全部预设提示词 × 2 层 × 4 头）：第 0 层 **4.57–12.51**、第 1 层 **8.12–15.19**——**README 是对的**，CONTRIBUTING 那份是早期某次测量的残留（`5.47` 和 `8.27` 舍入后拼在一起）
+  - 处理：CONTRIBUTING 改为**不再重复数字**，只讲原则并指向 README 那一处：「两个文件各存一份，改了一边另一边不会报警」
+  - 补 `TestContributingDoesNotRestateTheColourRange`：CONTRIBUTING 不得出现 `5.4–8.3`，且仍须提到「色深」与「README」。已验证加回那串数字会失败
+  - **过程中我先改错了 README**：用三种手选提示词测出 `2.4–19.9`，据此改写了 README 的区间，结果 `TestScoreColourRangeMatchesTheDocumentedFigures` 失败——它用的是 `promptPresets` 全量预设，测出来正是 `4.57–12.51` / `8.12–15.19`。我的样本和测试的样本不是一回事。README 已回滚，我那条基于错样本的测试也删掉了
+
+### Fixed
+
 - 第 3 步检查器的卡片标题「**分数 top-5**」承诺了一个它不用的排序。`topAbsBars` 取的是**绝对值**最大的 5 个再按行序显示，所以一个很大的负分（`-4.32`）会入选——而它恰恰是这一行**最不该被注意**的 key，softmax 几乎会把它抹掉。读者看到「top-5」会以为列的是「这个 query 最关注的 5 个 key」，正好相反
   - 标题改为「**绝对值最大的 5 个分数**」，说清排序依据
   - 补两条测试：`TestScoreInspectorNamesItsRankingRule`（标题不得出现 top-5、必须写明按绝对值）与 `TestTopAbsBarsKeepsTheLargestMagnitudes`（用一组手写数据钉死「按 |值| 选 5 个、再按行序还原」这条规则）
