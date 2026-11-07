@@ -7694,6 +7694,20 @@ func TestNoMalformedTextAcrossTheSweep(t *testing.T) {
 										truncateForTest(s, 90), b)
 								}
 							}
+							// A label that renders as nothing is a layout mistake that no
+							// colour or contrast test can see.
+							if s == "" {
+								t.Fatalf("stage %d, prompt %q: an empty text was laid out",
+									step, prompt)
+							}
+							// Nothing on screen is a paragraph. The longest strings are the
+							// stage bodies and the misconception corrections; a much longer
+							// one would mean two got concatenated.
+							if n := len([]rune(s)); n > 400 {
+								t.Fatalf("stage %d, prompt %q: a text of %d runes is longer than "+
+									"any paragraph this UI writes: %q", step, prompt, n,
+									truncateForTest(s, 80))
+							}
 						}
 					}
 				}
