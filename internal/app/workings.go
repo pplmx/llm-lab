@@ -1344,3 +1344,106 @@ func computePosEncodingShape(w *model.Weights) posEncodingShape {
 	s.OK = true
 	return s
 }
+
+// ffnConcentration measures how the FFN's hidden units divide the work, which is the
+// layer-level counterpart to the head comparison and the missing piece on the FFN stage.
+//
+// The stage draws one row's 384 hidden units and the top contributors to that row. It
+// never says whether the same units matter everywhere or a different few matter per
+// position — and the two layers answer that differently. Measured on the bundled
+// weights, layer 0 needs 118–130 of its 384 units to account for half the total
+// activation across the prompt and has no unit that is positive at every position,
+// while layer 1 needs only 28–35 and has 5–18 units on at every position.
+//
+// So layer 1's FFN is doing focused, repeated work — a few units firing everywhere —
+// while layer 0's is spread thin across many. That is the same asymmetry
+// computeLayerRewrite reports from the geometry side: the first block transforms, the
+// second applies a narrow correction.
+type ffnConcentration struct {
+	// Layer is the block index.
+	Layer int
+	// Units is d_ff.
+	Units int
+	// HalfMass is how many units, largest first, together carry half the total
+	// activation summed over every position. Small means a few units dominate.
+	HalfMass int
+	// AlwaysOn is how many units are positive at every position of the prompt.
+	AlwaysOn int
+	// NeverOn is how many are never positive.
+	NeverOn int
+	// PositiveShare is the fraction of the n×d_ff hidden values that are above zero,
+	// which is what GELU's one-sidedness makes meaningful.
+	PositiveShare float64
+	// Peak is the largest single hidden value anywhere.
+	Peak float64
+	OK   bool
+}
+
+// computeFFNConcentration measures one layer's hidden-unit usage over the prompt.
+func computeFFNConcentration(l model.LayerTrace, tokens, dff int) ffnConcentration {
+	c := ffnConcentration{Layer: -1, Units: dff}
+	if tokens < 1 || dff < 1 || len(l.Hidden) < tokens {
+		return c
+	}
+	sums := make([]float64, dff)
+	positiveAt := make([]int, dff)
+	var total float64
+	positives := 0
+	for i := 0; i < tokens; i++ {
+		row := l.Hidden[i]
+		for j := 0; j < dff && j < len(row); j++ {
+			v := float64(row[j])
+			sums[j] += v
+			total += v
+			if row[j] > 0 {
+				positiveAt[j]++
+				positives++
+			}
+			if v > c.Peak {
+				c.Peak = v
+			}
+		}
+	}
+	for _, n := range positiveAt {
+		if n == tokens {
+			c.AlwaysOn++
+		}
+		if n == 0 {
+			c.NeverOn++
+		}
+	}
+	// Count units, largest first, until half the mass is covered. Sorted by a
+	// selection over indices so the sums stay aligned with their unit numbers.
+	order := make([]int, dff)
+	for j := range order {
+		order[j] = j
+	}
+	sort.SliceStable(order, func(a, b int) bool { return sums[order[a]] > sums[order[b]] })
+	var acc float64
+	for _, j := range order {
+		acc += sums[j]
+		c.HalfMass++
+		if acc >= total/2 {
+			break
+		}
+	}
+	c.PositiveShare = float64(positives) / float64(tokens*dff)
+	c.OK = true
+	return c
+}
+
+// computeAllFFNConcentration measures every layer.
+func computeAllFFNConcentration(tr *model.Trace) (out []ffnConcentration) {
+	if tr == nil || len(tr.Tokens) == 0 {
+		return nil
+	}
+	for li := range tr.Layers {
+		c := computeFFNConcentration(tr.Layers[li], len(tr.Tokens), tr.Config.DFF)
+		if !c.OK {
+			continue
+		}
+		c.Layer = li
+		out = append(out, c)
+	}
+	return out
+}

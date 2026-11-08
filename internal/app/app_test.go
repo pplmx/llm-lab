@@ -8313,7 +8313,10 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 		// its sentences moves with them — which rungs agree with the final answer,
 		// how many are confidently wrong, and the rung names in the sentence.
 		4: {"训练出来的", "这份权重没有训练过", "只看这个位置", "最后一个中间层"},
-		5: {"只剩一根柱子", "还能看出分布的形状"}, // the GELU squeeze note
+		// the GELU squeeze note, plus the FFN concentration comparison: whether the two
+		// layers divide their hidden units differently is a property of the weights, so
+		// with random ones the sentence is absent rather than false
+		5: {"只剩一根柱子", "还能看出分布的形状", "两层的用法很不一样"},
 		// the confidence note, plus the word-boundary sentence: whether the gap it
 		// describes exists is a property of the weights, so with random ones it is
 		// absent rather than false
@@ -8502,6 +8505,12 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 		// not the last one, which a one-token prompt makes impossible.
 		// The per-position card needs two tokens to have anything to check; a one-token prompt gets
 		// an explanation instead of the strip, which is a designed branch rather than drift.
+		// The FFN concentration card needs at least two tokens to have anything to
+		// aggregate; with a one-token prompt it draws nothing, so every line of it is a
+		// designed difference rather than drift. Its own comparison sentence also needs
+		// a token pair to be a comparison at all.
+		// (Only fragments from strings over 40 runes can be reached by the check below.)
+		5: {"两层的用法很不一样", "个单元凑够一半激活，每位置都开的有", "把整句每个位置都算进来"},
 		6: {"这么高的把握", "根本没有那么大的把握", "有那么大的把握", "选中的 t=# 不参与预测",
 			"这个提示词只有一个位置",
 			// The per-position card's body exists only when there is a position to score, so
@@ -8896,7 +8905,13 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 	// which — the same reason the matrices and vector strips highlight. The record below
 	// still listed it as inert, which this test caught once its probe was fine enough to
 	// reach the strip (the old 100-DIP grid stepped over it at (300,525)).
-	for _, step := range []int{1, 2, 3, 4, 6} {
+	//
+	// The FFN stage joined this list for the same reason, and its record was stale in the
+	// same way: the stage draws the hidden-layer vector strip and the FFN-output strip,
+	// both with hover readouts (measured: 41 texts change under the pointer at (300,700)).
+	// It was listed as inert because the coarse grid never landed on either strip, and the
+	// concentration card added this round moved them into reach.
+	for _, step := range []int{1, 2, 3, 4, 5, 6} {
 		if n := hoverChanges(step); n == 0 {
 			t.Fatalf("stage %d no longer changes on hover; the strips, matrices and the per-position "+
 				"strip there carry one value per element and the reader needs the highlight to know which", step)
@@ -8905,9 +8920,9 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 	// The stages that do not must not start: if one of them gains a highlight, this record is stale and the
 	// comment above needs revisiting rather than silently disagreeing.
 	//
-	// Only stages 1 and 6 remain. Stage 1's token chips label themselves with a glyph and
-	// an id, and stage 6's GELU histogram is read against the axis printed under it.
-	for _, step := range []int{0, 5} {
+	// Only stage 1 remains. Its token chips label themselves with a glyph and an id, so a
+	// highlight would add colour without adding information.
+	for _, step := range []int{0} {
 		if n := hoverChanges(step); n != 0 {
 			t.Fatalf("stage %d now changes on hover (%d texts); update this record's reasoning", step, n)
 		}

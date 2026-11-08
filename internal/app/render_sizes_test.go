@@ -330,7 +330,11 @@ func TestEveryStageOpensOnItsOwnFigure(t *testing.T) {
 		3: "注意力矩阵",
 		4: "残差流",
 		5: "升维 → GELU → 降维",
-		6: "每个位置都在预测",
+		// The stage is 输出 / 采样, and it opens on the final position's vector being
+		// projected — that is the figure the stage is named for. "每个位置都在预测"
+		// is the card that makes the point about every position, and it comes second;
+		// naming it here was a mistake in this test rather than a layout fault.
+		6: "最后位置的向量",
 	}
 	if len(primary) != len(lessons) {
 		t.Fatalf("this test names %d stages, the app has %d", len(primary), len(lessons))
@@ -350,10 +354,16 @@ func TestEveryStageOpensOnItsOwnFigure(t *testing.T) {
 				t.Fatalf("%dx%d stage %d: the stage's figure %q is not rendered",
 					size.w, size.h, step+1, want)
 			}
-			if r.Y < 0 || r.Y+r.H > float32(size.h) {
+			// The header must not merely be inside the window — it must have room under it.
+			// Checking only r.Y+r.H <= h passed a card whose heading sat at y=667 in a
+			// 720-DIP window with every row it introduces below the fold, which is the
+			// same failure this test exists to catch, one card width milder. A header
+			// with less than a third of the viewport beneath it is not opening the stage.
+			room := float32(size.h) - (r.Y + r.H)
+			if r.Y < 0 || room < float32(size.h)/3 {
 				t.Fatalf("%dx%d stage %d: the figure the stage is named for (%q) is at y=%.0f, "+
-					"outside a window %d DIP tall — the stage opens on something else",
-					size.w, size.h, step+1, want, r.Y, size.h)
+					"leaving %.0f of %d DIP below it — the stage opens on something else",
+					size.w, size.h, step+1, want, r.Y, room, size.h)
 			}
 		}
 	}

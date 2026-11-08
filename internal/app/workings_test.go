@@ -2723,3 +2723,156 @@ func TestPosEncodingShapeCardQuotesItsOwnNumbers(t *testing.T) {
 		}
 	}
 }
+
+// TestFFNConcentrationMatchesTheHiddenRows recomputes every quantity the card quotes.
+//
+// It calls computeFFNConcentration per layer rather than trusting
+// computeAllFFNConcentration's loop, so the per-layer function is exercised directly and
+// the layer index it stamps on each result is checked rather than assumed.
+func TestFFNConcentrationMatchesTheHiddenRows(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	rows := make([]ffnConcentration, 0, len(tr.Layers))
+	for li := range tr.Layers {
+		c := computeFFNConcentration(tr.Layers[li], len(tr.Tokens), tr.Config.DFF)
+		if c.Layer != -1 {
+			t.Fatalf("computeFFNConcentration stamped layer %d; it does not know its index", c.Layer)
+		}
+		c.Layer = li
+		rows = append(rows, c)
+	}
+	all := computeAllFFNConcentration(tr)
+	if len(all) != len(rows) {
+		t.Fatalf("computeAllFFNConcentration returned %d rows, direct calls gave %d", len(all), len(rows))
+	}
+	for i := range rows {
+		if all[i].Layer != rows[i].Layer || all[i].HalfMass != rows[i].HalfMass ||
+			all[i].AlwaysOn != rows[i].AlwaysOn || all[i].NeverOn != rows[i].NeverOn {
+			t.Fatalf("layer %d: computeAllFFNConcentration disagrees with the direct call: %+v vs %+v",
+				i, all[i], rows[i])
+		}
+	}
+	if len(rows) != len(tr.Layers) {
+		t.Fatalf("%d measurements for %d layers", len(rows), len(tr.Layers))
+	}
+	n, dff := len(tr.Tokens), tr.Config.DFF
+	for _, c := range rows {
+		h := tr.Layers[c.Layer].Hidden
+		sums := make([]float64, dff)
+		positiveAt := make([]int, dff)
+		var total float64
+		positives := 0
+		var peak float64
+		for i := 0; i < n; i++ {
+			for j, v := range h[i] {
+				sums[j] += float64(v)
+				total += float64(v)
+				if v > 0 {
+					positiveAt[j]++
+					positives++
+				}
+				if float64(v) > peak {
+					peak = float64(v)
+				}
+			}
+		}
+		always, never := 0, 0
+		for _, p := range positiveAt {
+			if p == n {
+				always++
+			}
+			if p == 0 {
+				never++
+			}
+		}
+		if c.AlwaysOn != always || c.NeverOn != never {
+			t.Fatalf("layer %d: on-everywhere card=%d recomputed=%d; never card=%d recomputed=%d",
+				c.Layer, c.AlwaysOn, always, c.NeverOn, never)
+		}
+		if math.Abs(c.PositiveShare-float64(positives)/float64(n*dff)) > 1e-12 {
+			t.Fatalf("layer %d positive share: card %v, recomputed %v",
+				c.Layer, c.PositiveShare, float64(positives)/float64(n*dff))
+		}
+		if math.Abs(c.Peak-peak) > 1e-9 {
+			t.Fatalf("layer %d peak: card %v, recomputed %v", c.Layer, c.Peak, peak)
+		}
+		// HalfMass: sorting the same sums must give the same count.
+		idx := make([]int, dff)
+		for j := range idx {
+			idx[j] = j
+		}
+		sort.SliceStable(idx, func(x, y int) bool { return sums[idx[x]] > sums[idx[y]] })
+		var acc float64
+		count := 0
+		for _, j := range idx {
+			acc += sums[j]
+			count++
+			if acc >= total/2 {
+				break
+			}
+		}
+		if c.HalfMass != count {
+			t.Fatalf("layer %d half-mass: card %d, recomputed %d", c.Layer, c.HalfMass, count)
+		}
+		if c.Units != dff {
+			t.Fatalf("layer %d units %d, want %d", c.Layer, c.Units, dff)
+		}
+	}
+}
+
+// TestFFNConcentrationIsUnevenBetweenLayers is the premise of the card's claim: the
+// second layer's FFN is far more concentrated than the first's.
+//
+// The card prints a comparison sentence only while the ratio holds, so if that stopped
+// being true the sentence would vanish rather than become false — but the ratio is what
+// makes the finding worth a card, so it is pinned across several prompts.
+func TestFFNConcentrationIsUnevenBetweenLayers(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+		"Attention lets every token look at the tokens before it.",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		rows := computeAllFFNConcentration(a.Trace)
+		if len(rows) < 2 {
+			continue
+		}
+		first, last := rows[0], rows[len(rows)-1]
+		if first.HalfMass <= last.HalfMass*2 {
+			t.Fatalf("prompt %q: layer 0 needs %d units for half its mass, layer 1 needs %d; "+
+				"the card says the first layer is spread far wider",
+				prompt, first.HalfMass, last.HalfMass)
+		}
+		if first.AlwaysOn != 0 {
+			t.Fatalf("prompt %q: layer 0 has %d units on at every position; the card says none are",
+				prompt, first.AlwaysOn)
+		}
+		t.Logf("%q: L0 %d units / %d always-on, L1 %d units / %d always-on",
+			prompt, first.HalfMass, first.AlwaysOn, last.HalfMass, last.AlwaysOn)
+	}
+}
+
+// TestFFNConcentrationCardQuotesItsOwnNumbers reads the card's figures out of the text.
+func TestFFNConcentrationCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
+	if !tr.HasText("单元是怎么分工的") {
+		t.Fatal("the FFN concentration card is missing")
+	}
+	rows := computeAllFFNConcentration(a.Trace)
+	joined := ""
+	for _, s := range tr.Texts() {
+		joined += s + "\n"
+	}
+	for _, c := range rows {
+		want := fmt.Sprintf("层 %d：%d 个单元凑够一半激活，每位置都开的有 %d 个，从不打开 %d 个",
+			c.Layer, c.HalfMass, c.AlwaysOn, c.NeverOn)
+		if !strings.Contains(joined, want) {
+			t.Fatalf("the card does not print %q", want)
+		}
+	}
+}

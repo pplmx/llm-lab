@@ -1465,6 +1465,11 @@ func (a *App) stageFFN(c *ui.Context) {
 			ffnWorkings(c, dim, len(hidden), p)
 		}
 	})
+
+	// After the stage's own figure. Written above it, this card's header started at
+	// y=667 in a 720-DIP window: the FFN heading fit but every row it introduces was
+	// below the fold, so the stage opened on a chart about the FFN rather than the FFN.
+	a.stageFFNConcentration(c)
 }
 
 // ffnWorkings prints how one FFN output dimension is summed. The remainder is
@@ -2457,6 +2462,90 @@ var stageCards = [][]string{
 	{"Q / K / V", "掩码反事实", "分数矩阵"},
 	{"注意力矩阵", "四个头", "加权求和"},
 	{"残差流", "残差为何不爆", "每层说什么", "每层改多少", "LayerNorm"},
-	{"FFN 内部"},
+	{"哪个单元在干活", "FFN 内部"},
 	{"最后位置", "每位置预测", "Top-12", "采样"},
+}
+
+// stageFFNConcentration answers whether the same hidden units matter everywhere, which
+// the FFN stage raised and never addressed: it draws one row's 384 units, so a reader
+// sees which units fire at the selected position and nothing about the other 35.
+//
+// The two layers answer differently, and the difference is large. Measured on the
+// bundled weights with the default prompt:
+//
+//	layer 0   130 of 384 units carry half the total activation; 0 units are on at every
+//	          position — the work is spread across many, and which ones depends on where
+//	layer 1    28 of 384 units carry half of it; 17 units are positive at every position
+//	          — a small set firing everywhere
+//
+// Stable across prompts (layer 0 needs 118–130, layer 1 needs 28–35). Read beside the
+// residual stage's "每一层改写了多少", the two say the same thing from two directions:
+// the first block transforms broadly, the second applies a narrow, repeated correction.
+func (a *App) stageFFNConcentration(c *ui.Context) {
+	// Two tokens minimum, not one. With a single position "on at every position" is
+	// vacuous — it just means "on at that one" — and with no other position to compare
+	// against, "which units matter where" has no answer. Measured on the one-token prompt
+	// "a": the card reported 228 of 384 units always on and a 2.9x concentration gap
+	// between the layers, figures that describe the prompt's length rather than the
+	// model. Drawing nothing is the honest response.
+	if len(a.Trace.Tokens) < 2 {
+		return
+	}
+	rows := computeAllFFNConcentration(a.Trace)
+	if len(rows) < 2 {
+		return
+	}
+	a.cardNamed(c, "哪个单元在干活", func() {
+		sectionTitle(c, "单元是怎么分工的", "整句所有位置合起来看")
+		mutedText(c, "上面那条色带只画了选中位置的 384 个单元。把整句每个位置都算进来，"+
+			"要看的是两个数：多少个单元才凑够一半的激活量，以及有没有单元在每个位置都开着。")
+		barsOut := make([]barRow, 0, len(rows))
+		var maxHalf float64
+		for _, r := range rows {
+			if float64(r.HalfMass) > maxHalf {
+				maxHalf = float64(r.HalfMass)
+			}
+		}
+		for _, r := range rows {
+			label := fmt.Sprintf("层 %d", r.Layer)
+			colour := colGreen
+			if r.Layer == a.Layer {
+				label = fmt.Sprintf("层 %d ◂", r.Layer)
+				colour = colAccent2
+			}
+			barsOut = append(barsOut, barRow{
+				Label:      label,
+				Value:      float32(r.HalfMass),
+				ValueText:  fmt.Sprintf("%d / %d 个", r.HalfMass, r.Units),
+				Color:      colour,
+				LabelWidth: 46,
+				ValueWidth: 96,
+				Tip: fmt.Sprintf("层 %d：%d 个单元凑够一半激活 · 每位置都开 %d 个 · 从不打开 %d 个 · 正激活占 %.0f%%",
+					r.Layer, r.HalfMass, r.AlwaysOn, r.NeverOn, 100*r.PositiveShare),
+			})
+		}
+		ui.Text(c, "凑够一半激活量需要多少个单元（越少越集中）").
+			FontSize(fontMicro).TextColor(colFaint)
+		bars(c, barsOut, float32(maxHalf), colGreen)
+		first, last := rows[0], rows[len(rows)-1]
+		workingsLinesCopyable(c, []string{
+			fmt.Sprintf("层 %d：%d 个单元凑够一半激活，每位置都开的有 %d 个，从不打开 %d 个",
+				first.Layer, first.HalfMass, first.AlwaysOn, first.NeverOn),
+			fmt.Sprintf("层 %d：%d 个单元凑够一半激活，每位置都开的有 %d 个，从不打开 %d 个",
+				last.Layer, last.HalfMass, last.AlwaysOn, last.NeverOn),
+			fmt.Sprintf("两层都是 384 个单元，但集中程度差了 %.1f 倍",
+				float64(first.HalfMass)/math.Max(1, float64(last.HalfMass))),
+		})
+		if first.HalfMass > last.HalfMass*2 {
+			misconception(c,
+				"「每一层的 FFN 都是同一台特征提取机器，换个层只是换套权重」",
+				fmt.Sprintf("两层的用法很不一样。层 %d 要把 %d 个单元摊开才凑够一半的激活量，"+
+					"而且没有任何单元在整句每个位置都开着——它按位置调动不同的单元。"+
+					"层 %d 只用 %d 个单元就够了，其中 %d 个从头开到尾；还有 %d 个从头到尾没开过。"+
+					"这是「前一层广泛改写、后一层做窄而重复的修正」在 FFN 里的样子，"+
+					"与第 5 步那张「每一层改写了多少」说的是同一件事。",
+					first.Layer, first.HalfMass, last.Layer, last.HalfMass,
+					last.AlwaysOn, last.NeverOn))
+		}
+	})
 }
