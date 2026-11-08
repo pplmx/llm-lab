@@ -218,7 +218,7 @@ func (a *App) stageTokens(c *ui.Context) {
 	// The chip grid that used to open this stage now lives in the strip above
 	// every stage, so this card states the counts and leaves the reading of
 	// the sequence itself to that strip.
-	card(c, func() {
+	a.cardNamed(c, "token 序列", func() {
 		sectionTitle(c, "提示词变成 token 序列", fmt.Sprintf("T = %d", len(tr.Tokens)))
 		// The counts describe the sequence the model actually ran on, which is
 		// not the whole prompt once truncation kicks in. Saying "字节数 63" for a
@@ -249,7 +249,7 @@ func (a *App) stageTokens(c *ui.Context) {
 		})
 	})
 
-	card(c, func() {
+	a.cardNamed(c, "字符 → 字节", func() {
 		sectionTitle(c, "字符 → 字节", "为什么一个汉字要占三个 token")
 		type group struct {
 			r     rune
@@ -325,7 +325,7 @@ func (a *App) stageTokens(c *ui.Context) {
 				runes, len(tr.Tokens)))
 	}
 
-	card(c, func() {
+	a.cardNamed(c, "数据流与形状", func() {
 		sectionTitle(c, "数据流与形状", "点击任意阶段跳转")
 		T, d := len(tr.Tokens), tr.Config.DModel
 		rows := []struct {
@@ -371,7 +371,7 @@ func (a *App) stageEmbed(c *ui.Context) {
 	if i < 0 {
 		i = 0
 	}
-	card(c, func() {
+	a.cardNamed(c, "嵌入向量", func() {
 		sectionTitle(c, fmt.Sprintf("token %d「%s」的输入向量", i, tr.Tokens[i].Text), fmt.Sprintf("d_model = %d", tr.Config.DModel))
 		ui.Text(c, "token embedding").FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, tr.Embed[i], 20, &a.HoverDimIn)
@@ -410,7 +410,7 @@ func (a *App) stageEmbed(c *ui.Context) {
 		}
 	})
 
-	card(c, func() {
+	a.cardNamed(c, "位置向量", func() {
 		// The heading and the note both described four rows whatever the prompt was. With a
 		// single-token prompt the card showed one row under "随位置变化" and a note promising
 		// four positions — a comparison with nothing to compare and a count that was not
@@ -463,7 +463,7 @@ func (a *App) stagePosEncodingShape(c *ui.Context) {
 	if !shape.OK {
 		return
 	}
-	card(c, func() {
+	a.cardNamed(c, "位置编码的形状", func() {
 		sectionTitle(c, "学出来的位置长什么样", "与固定正弦编码的对比")
 		mutedText(c, "上面四条色带只能看个热闹。两个余弦值能说清一件事：这张表把位置放成了"+
 			"近乎互相垂直的方向，而不是沿一条平滑曲线依次移动——那正是经典正弦编码的样子。")
@@ -534,7 +534,7 @@ func (a *App) stageScores(c *ui.Context) {
 	l := a.layer()
 	i := clampIndex(a.SelToken, len(tr.Tokens))
 	h := l.Heads[a.Head]
-	card(c, func() {
+	a.cardNamed(c, "Q / K / V", func() {
 		// The Key and Value strips follow the cell under the cursor, not the selected
 		// token. Walking the matrix to (q, k) makes the workings line below print
 		// q_q · k_k while the selection stays on the row, so drawing K[q] beside it
@@ -567,7 +567,7 @@ func (a *App) stageScores(c *ui.Context) {
 		vectorStrip(c, h.V[key], 18, &a.HoverDimV)
 	})
 
-	card(c, func() {
+	a.cardNamed(c, "分数矩阵", func() {
 		// Name the layer in the heading, not only on the control at the top of
 		// the window: once the page is scrolled the control is out of sight, and
 		// every number below belongs to one specific layer.
@@ -699,7 +699,7 @@ func (a *App) stageMaskCounterfactual(c *ui.Context) {
 	if !cf.OK {
 		return
 	}
-	card(c, func() {
+	a.cardNamed(c, "掩码反事实", func() {
 		sectionTitle(c, "掩码挡掉了什么", fmt.Sprintf("把同一行去掉掩码算一遍 · 层 %d · 头 %d", a.Layer, a.Head))
 		mutedText(c, "因果掩码不是提醒，是这道题唯一的难度来源。上面那张矩阵的右上角是空的，"+
 			"看起来像块留白——这里用模型自己存下来的 Q 和 K，把选中那一行不看掩码地重算一遍，"+
@@ -791,7 +791,7 @@ func (a *App) stageSoftmax(c *ui.Context) {
 	i := clampIndex(a.SelToken, len(tr.Tokens))
 	h := l.Heads[a.Head]
 
-	card(c, func() {
+	a.cardNamed(c, "注意力矩阵", func() {
 		sectionTitle(c, "注意力矩阵", fmt.Sprintf("层 %d · 头 %d", a.Layer, a.Head))
 		ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
@@ -840,7 +840,7 @@ func (a *App) stageSoftmax(c *ui.Context) {
 
 	a.stageHeadProfiles(c)
 
-	card(c, func() {
+	a.cardNamed(c, "加权求和", func() {
 		sectionTitle(c, "加权求和", "本头的输出，以及它在残差里的份额")
 		// Three strips, two different widths: the first is d_head, the other two are d_model,
 		// and they are all drawn across the same space. Without a word about that a reader
@@ -909,7 +909,7 @@ func (a *App) stageResidual(c *ui.Context) {
 	l := a.layer()
 	i := clampIndex(a.SelToken, len(tr.Tokens))
 
-	card(c, func() {
+	a.cardNamed(c, "残差流", func() {
 		sectionTitle(c, "残差流", fmt.Sprintf("层 %d · 两次加法，信息都绕过了子层", a.Layer))
 		// The three strips below are the residual chain, and it is easy to label
 		// them as if the sublayers consumed x directly. They do not: each sublayer
@@ -954,7 +954,7 @@ func (a *App) stageResidual(c *ui.Context) {
 
 	a.stageLayerRewrite(c)
 
-	card(c, func() {
+	a.cardNamed(c, "LayerNorm", func() {
 		before := l.AfterAttn[i]
 		after := l.Norm2[i]
 		mb, sb := meanStd(before)
@@ -998,7 +998,11 @@ func (a *App) stageResidual(c *ui.Context) {
 		}
 	})
 
-	card(c, func() {
+	a.cardNamed(c, "残差为何不爆", func() {
+		// This card is one callout with no heading, so its chip is the whole label a
+		// reader gets; it names the question the callout answers rather than the
+		// misconception it rebuts, since the row is a table of contents.
+		//
 		// The two numbers that make the point: γ/β leave the variance a little
 		// off 1, but the LENGTH of a normalized row is pinned near √d_model no
 		// matter how large the stream feeding it has grown.
@@ -1046,7 +1050,7 @@ func (a *App) stageLogitLens(c *ui.Context) {
 		return
 	}
 	finalRung := lens.Rungs[len(lens.Rungs)-1]
-	card(c, func() {
+	a.cardNamed(c, "每层说什么", func() {
 		sectionTitle(c, "每一层会说什么", fmt.Sprintf("在位置 %d 上逐层读出预测", pos))
 		// No markdown in this app: ui.Text draws the characters it is given.
 		mutedText(c, "把网络最后一层的 LayerNorm 与反嵌入提前套用到中间某一层，就是「logit lens」——"+
@@ -1387,7 +1391,7 @@ func (a *App) stageFFN(c *ui.Context) {
 	i := clampIndex(a.SelToken, len(a.Trace.Tokens))
 	hidden := l.Hidden[i]
 	active := countActive(hidden)
-	card(c, func() {
+	a.cardNamed(c, "FFN 内部", func() {
 		ofAll, ofBlocks := ffnParamShare(a.Trace.Config)
 		sectionTitle(c, "升维 → GELU → 降维",
 			fmt.Sprintf("层 %d · d_ff = %d · 占全部参数 %.0f%%（块内 %.0f%%）",
@@ -1516,7 +1520,7 @@ func (a *App) stageOutput(c *ui.Context) {
 		}
 	}
 
-	card(c, func() {
+	a.cardNamed(c, "最后位置", func() {
 		// Every other stage redraws when the selected token changes; this one does not,
 		// because only the last position is projected. Selecting token 5 here leaves the
 		// card unchanged, which reads as an interaction that did nothing. Say which
@@ -1542,7 +1546,7 @@ func (a *App) stageOutput(c *ui.Context) {
 
 	a.stageNextByteSkill(c)
 
-	card(c, func() {
+	a.cardNamed(c, "Top-12", func() {
 		// The list is a slice, and on this model the slice is essentially the
 		// whole distribution: the top 12 carry 99.99999% of the mass and the
 		// other 244 candidates share the remaining 0.00002%. Saying only
@@ -1631,7 +1635,7 @@ func (a *App) stageOutput(c *ui.Context) {
 				maxP*100, a.paramCount()/10000, trained, confidence))
 	})
 
-	card(c, func() {
+	a.cardNamed(c, "采样", func() {
 		sectionTitle(c, "采样", "从分布里抽一个 token")
 		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
 			if ui.PrimaryButton(c, "采样并续写").Clicked() {
@@ -2103,7 +2107,7 @@ func (a *App) stageNextByteSkill(c *ui.Context) {
 		// than leaving the stage silent: this is the reader's first prompt if they
 		// typed a single character, and a missing card in a lesson that is all
 		// about "every position predicts" reads like a bug in the app.
-		card(c, func() {
+		a.cardNamed(c, "每位置预测", func() {
 			sectionTitle(c, "每个位置都在预测", "这个提示词只有一个位置")
 			mutedText(c, nextByteSkillIntro)
 			mutedText(c, "只是这个提示词只有一个位置，而一次预测要拿提示词里真实的下一个字节来核对——"+
@@ -2112,7 +2116,7 @@ func (a *App) stageNextByteSkill(c *ui.Context) {
 		})
 		return
 	}
-	card(c, func() {
+	a.cardNamed(c, "每位置预测", func() {
 		sectionTitle(c, "每个位置都在预测", fmt.Sprintf("T − 1 = %d 个可核对的位置", skill.Scored))
 		mutedText(c, nextByteSkillIntro)
 		a.predictionStrip(c, skill)
@@ -2261,7 +2265,7 @@ func (a *App) stageHeadProfiles(c *ui.Context) {
 	if len(profiles) == 0 {
 		return
 	}
-	card(c, func() {
+	a.cardNamed(c, "四个头", func() {
 		sectionTitle(c, "四个头各自在做什么", fmt.Sprintf("层 %d · 整句 %d 行的平均", a.Layer, profiles[0].Rows))
 		// No markdown in this app: ui.Text draws the characters it is given.
 		mutedText(c, "检查器里那张「这一行的统计」只描述一行：两个头可以在同一行上有相同的熵，"+
@@ -2382,7 +2386,7 @@ func (a *App) stageLayerRewrite(c *ui.Context) {
 	if len(layers) < 2 {
 		return
 	}
-	card(c, func() {
+	a.cardNamed(c, "每层改多少", func() {
 		sectionTitle(c, "每一层改写了多少", "进入 / 离开这一层的残差流有多像")
 		mutedText(c, "上面那张阶梯图看的是每一层「说什么」，这里看每一层「改多少」。"+
 			"余弦接近 1 表示这一层基本只是把原向量传下去；接近 0 表示离开时的方向与进来时几乎无关。"+
@@ -2432,4 +2436,27 @@ func (a *App) stageLayerRewrite(c *ui.Context) {
 				first.Layer, first.CosineInOut, first.FFNRatio,
 				last.Layer, last.CosineInOut, last.FFNRatio))
 	})
+}
+
+// stageCards names, per stage, the cards a reader can jump to from the step bar.
+//
+// The row exists because the stages outgrew the viewport: measured at 1180×720, step 5
+// is 4.4 screens tall and step 4 is 3.3, and the only way to find out what came next was
+// to scroll for it. The chips make a stage's structure visible at a glance — four cards
+// on the residual stage, one on the FFN stage — and each is one click from its card.
+//
+// The entries must match the chip labels passed to cardNamed, in the order the cards are
+// drawn. TestCardRowsMatchTheRenderedCards checks both, so a card cannot be added
+// without appearing in the row or renamed without this list going stale.
+//
+// The lesson card is not listed: it is the stage's own text, at the end of every stage,
+// and a chip for it would be a chip for "the rest of the page".
+var stageCards = [][]string{
+	{"token 序列", "字符 → 字节", "数据流与形状"},
+	{"嵌入向量", "位置向量", "位置编码的形状"},
+	{"Q / K / V", "掩码反事实", "分数矩阵"},
+	{"注意力矩阵", "四个头", "加权求和"},
+	{"残差流", "残差为何不爆", "每层说什么", "每层改多少", "LayerNorm"},
+	{"FFN 内部"},
+	{"最后位置", "每位置预测", "Top-12", "采样"},
 }

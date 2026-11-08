@@ -6,6 +6,18 @@
 
 ### Added
 
+- **每个阶段多了一行卡片索引**（标题下方「本步 …」），点一下跳到那张卡片。这是十几轮持续加卡片之后的直接后果，也是交互上最该补的一块
+  - 实测（1180×720）：第 5 步 **4.4 屏**、第 4 步 3.3 屏、第 3 步 2.9 屏。打开「残差 / LN」时读者看到的是残差流那六条色带，**无从得知后面还有 logit lens 阶梯、层间改写对比、LayerNorm 说明、以及一张残差为何不膨胀的误解卡片**——唯一的导航方式是滚下去找
+  - 索引让一个阶段的结构一眼可见（残差阶段 5 张卡片、FFN 阶段 1 张），每张一次点击可达
+  - 放在滚动列内并 `Sticky` 吸顶，而不是放进步骤栏：步骤栏在 1180 宽下只剩 **180 DIP** 空闲，放不下四个中文 chip；另起一行又会吃掉每个阶段都需要的纵向空间
+  - 只有一张卡片的阶段不画这一行——一个 chip 的「目录」是标签不是导航
+  - 实现：`card()` 的包装 `cardNamed(c, chip, fn)`，chip 与卡片标题**故意分开**（有的卡片标题会随提示词长度变化，例如「位置向量是每个位置一行」/「位置向量随位置变化」，导航标签不能跟着数据变）。跳转用 `ScrollIntoView(Block: ScrollStart)` 一次性触发，不是一个会阻止读者滚开的常驻状态
+  - 测试：`TestEveryCardChipJumpsToItsCard` 逐个 chip 点击并要求页面真的滚到、且滚动量不越界；`TestEveryNamedCardAppearsInItsStageRow` 从源码双向核对——有卡片没进索引会失败（已做破坏性验证：删掉一行索引会报 `a card is built with cardNamed("FFN 内部") but no stage row lists it`）；`TestCardRowStaysVisibleWhileScrolling` 验证吸顶；`TestCardRowIsHiddenOnSingleCardStages` 验证单卡片阶段不画
+  - 修：`TestCardsAndTitlesGoThroughOneBuilder` 原本只数 `card(c, func()`，把卡片改成 `cardNamed` 后误报「只有 13 张卡片」。它守的是「没有手搓面板」，不是「必须用某一个函数名」，改为两者都数并说明理由
+  - 修：索引的 chip 各带一个 tooltip，CONTRIBUTING 的 tooltip 计数七改八
+
+### Fixed
+
 - 第 2 步新增「学出来的位置长什么样」：这个应用一直说「位置向量是学出来的」，但从没说**学成了什么形状**
   - 实测（默认权重）：**学出来的位置表相邻余弦只有 +0.040、隔半个窗口是 −0.052**——比 96 维里两个随机向量的期望 |cos| ≈ 0.102 还小，也就是说 64 个位置被放成了 64 个几乎互不相干的地址
   - 对照**固定正弦编码**（用同一个余弦函数现算，不是凭记忆写下的）：相邻 **+0.969**、隔半个窗口 **+0.562**——沿一条平滑曲线每次走一小步

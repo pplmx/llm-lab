@@ -8942,8 +8942,14 @@ func TestCardsAndTitlesGoThroughOneBuilder(t *testing.T) {
 	}
 
 	// And both builders have to still be the ones in use.
-	if n := strings.Count(text, "card(c, func()"); n < 20 {
-		t.Fatalf("only %d cards go through card(); the screenshot set shows far more", n)
+	//
+	// cardNamed is counted alongside card because it wraps card() to add the step bar's
+	// jump target — it is the same builder with one extra call, not a second way to draw a
+	// panel. Counting only card( made this test fail when most cards moved to the named
+	// form; the invariant it guards is "no hand-rolled panels", not "every card uses one
+	// particular function name".
+	if n := strings.Count(text, "card(c, func()") + strings.Count(text, `cardNamed(c, "`); n < 20 {
+		t.Fatalf("only %d cards go through card()/cardNamed(); the screenshot set shows far more", n)
 	}
 	if n := strings.Count(text, "sectionTitle(c,"); n < 25 {
 		t.Fatalf("only %d headings go through sectionTitle()", n)

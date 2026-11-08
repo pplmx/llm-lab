@@ -253,3 +253,25 @@ func workingsLinesCopyable(c *ui.Context, lines []string, gap ...float32) {
 		}
 	})
 }
+
+// cardNamed builds a card that the step bar's card row can jump to.
+//
+// chip is the short label the row shows, and it is deliberately separate from whatever
+// sectionTitle the card draws: several cards change their heading with the prompt
+// ("位置向量是每个位置一行" when the prompt is short, "位置向量随位置变化" otherwise),
+// and a navigation label that moved with the data would be hard to click and impossible
+// to test. The chip says what the card is about; the heading says what it currently
+// shows.
+//
+// The scroll is one-shot: it fires in the frame after the click and not again, or the
+// reader could not scroll the card back out of view. ScrollStart lines the card's top up
+// with the viewport's rather than scrolling as little as possible — "as little as
+// possible" would do nothing whenever a sliver of the target was already visible, which
+// is exactly the case when a reader is working down a long stage.
+func (a *App) cardNamed(c *ui.Context, chip string, fn func()) {
+	el := card(c, fn)
+	if a.RevealCard == chip {
+		el.ScrollIntoView(ui.ScrollIntoViewOptions{Block: ui.ScrollStart})
+		a.RevealCard = ""
+	}
+}

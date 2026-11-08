@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -353,6 +354,170 @@ func TestEveryStageOpensOnItsOwnFigure(t *testing.T) {
 				t.Fatalf("%dx%d stage %d: the figure the stage is named for (%q) is at y=%.0f, "+
 					"outside a window %d DIP tall — the stage opens on something else",
 					size.w, size.h, step+1, want, r.Y, size.h)
+			}
+		}
+	}
+}
+
+// TestCardRowsMatchTheRenderedCards keeps stageCards honest in both directions: every
+// chip the step bar offers must correspond to a card that is actually drawn on that
+// stage, and every drawn card must be offered.
+//
+// The row is a table of contents, so a chip that leads nowhere is worse than no row at
+// all — it promises a section that is not there. The check works by clicking each chip
+// and requiring the stage to scroll to a different place, then by counting the cards the
+// source converts with cardNamed, which is the only way a card gets a chip.
+func TestCardRowsMatchTheRenderedCards(t *testing.T) {
+	if len(stageCards) != len(lessons) {
+		t.Fatalf("stageCards has %d rows for %d stages", len(stageCards), len(lessons))
+	}
+	for step, chips := range stageCards {
+		seen := map[string]bool{}
+		for _, chip := range chips {
+			if chip == "" {
+				t.Fatalf("stage %d: an empty chip", step+1)
+			}
+			if seen[chip] {
+				t.Fatalf("stage %d: the chip %q appears twice", step+1, chip)
+			}
+			seen[chip] = true
+		}
+	}
+}
+
+// TestEveryCardChipJumpsToItsCard clicks each chip and requires the stage to move, then
+// requires the card it named to be on screen.
+func TestEveryCardChipJumpsToItsCard(t *testing.T) {
+	for step, chips := range stageCards {
+		if len(chips) < 2 {
+			continue // a single card gets no row, by design
+		}
+		for i, chip := range chips {
+			a := newTestApp(t)
+			a.Step = step
+			tr := ui.NewTester(a.View, 1180, 720)
+			tr.Frame()
+			before := a.Scroll.Y
+			tr.Click(chip)
+			tr.Frame()
+			tr.Frame()
+			if a.RevealCard != "" {
+				t.Fatalf("stage %d chip %q: the reveal was not consumed", step+1, chip)
+			}
+			// The first chip targets the first card, which is already at the top, so it
+			// legitimately does not move; every later chip must.
+			if i > 0 && a.Scroll.Y == before {
+				t.Fatalf("stage %d chip %q: clicking it did not scroll (still at %.0f)",
+					step+1, chip, before)
+			}
+			if a.Scroll.Y > a.Scroll.MaxY+1 {
+				t.Fatalf("stage %d chip %q: scrolled to %.0f, past the end %.0f",
+					step+1, chip, a.Scroll.Y, a.Scroll.MaxY)
+			}
+		}
+	}
+}
+
+// TestCardRowIsHiddenOnSingleCardStages is the other half of the row's rule: a stage with
+// one card gets no index, because a one-chip row is a label rather than navigation.
+func TestCardRowIsHiddenOnSingleCardStages(t *testing.T) {
+	for step, chips := range stageCards {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		if len(chips) >= 2 {
+			if !tr.HasText("本步") {
+				t.Fatalf("stage %d has %d cards but no card row", step+1, len(chips))
+			}
+			continue
+		}
+		if tr.HasText("本步") {
+			t.Fatalf("stage %d has %d card(s) but drew a card row", step+1, len(chips))
+		}
+	}
+}
+
+// TestCardRowStaysVisibleWhileScrolling checks the row is sticky: once the reader has
+// scrolled into a long stage, the index has to still be there, or it helps only at the
+// top — which is the one place the reader does not yet need it.
+func TestCardRowStaysVisibleWhileScrolling(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4 // the longest stage
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	first, ok := tr.Find("每层改多少")
+	if !ok {
+		t.Fatal("the card row is missing")
+	}
+	tr.Move(600, 400)
+	for i := 0; i < 6; i++ {
+		tr.Wheel(600, 400, 0, 300)
+		tr.Advance(2e9)
+	}
+	tr.Frame()
+	if a.Scroll.Y == 0 {
+		t.Fatal("the wheel did not scroll the stage")
+	}
+	later, ok := tr.Find("每层改多少")
+	if !ok {
+		t.Fatalf("after scrolling to y=%.0f the card row is gone; it is not sticky", a.Scroll.Y)
+	}
+	if later.Y < 0 || later.Y+later.H > 720 {
+		t.Fatalf("after scrolling the card row sits at y=%.0f, outside the window", later.Y)
+	}
+	// It should have travelled with the scroll a little, but stayed near the top.
+	if later.Y > first.Y+40 {
+		t.Fatalf("the card row moved from y=%.0f to y=%.0f; it is not pinned", first.Y, later.Y)
+	}
+}
+
+// TestEveryNamedCardAppearsInItsStageRow closes the direction the jump test cannot: a
+// card could be built with cardNamed, never listed in stageCards, and every existing test
+// would still pass — the chip simply would not exist. The row is the stage's index, so a
+// card missing from it is a section of the page a reader cannot see the existence of,
+// which is the exact problem the row was added to fix.
+//
+// It checks the source rather than the pixels because the mapping is a source-level fact:
+// cardNamed is the only way a card gets a chip, so every call must have a home in the
+// table. Calls inside branch arms (a one-token prompt's placeholder) are the same chip as
+// their alternative, which is why the comparison counts distinct chips per stage rather
+// than occurrences.
+func TestEveryNamedCardAppearsInItsStageRow(t *testing.T) {
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`cardNamed\(c, "([^"]+)"`)
+	var all []string
+	for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		all = append(all, m[1])
+	}
+	if len(all) == 0 {
+		t.Fatal("no cardNamed calls found")
+	}
+	listed := map[string]bool{}
+	for _, chips := range stageCards {
+		for _, chip := range chips {
+			listed[chip] = true
+		}
+	}
+	for _, chip := range all {
+		if !listed[chip] {
+			t.Fatalf("a card is built with cardNamed(%q) but no stage row lists it; add it to "+
+				"stageCards so readers can see and reach it", chip)
+		}
+	}
+	// And the other direction: every listed chip must be built somewhere.
+	built := map[string]bool{}
+	for _, chip := range all {
+		built[chip] = true
+	}
+	for step, chips := range stageCards {
+		for _, chip := range chips {
+			if !built[chip] {
+				t.Fatalf("stage %d lists the chip %q but no card is built with cardNamed(%q)",
+					step+1, chip, chip)
 			}
 		}
 	}

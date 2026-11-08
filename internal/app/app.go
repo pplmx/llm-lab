@@ -102,6 +102,17 @@ type App struct {
 	// the strip never steals the scroll back from a reader browsing it.
 	RevealRail bool
 
+	// RevealCard, when non-empty, is the title of a card to bring into view on the next
+	// frame. It is one-shot, the way RevealRail is: set by the step bar's card buttons,
+	// consumed by the card that matches, and cleared when it fires.
+	//
+	// The stages carry up to four cards over four and a half screens, and until this
+	// existed the only way to learn what came next was to scroll — the wheel was the
+	// whole navigation. A row of card names in the step bar makes the stage's structure
+	// visible and lets a reader go straight to a card, without turning the cards into an
+	// accordion that would hide the teaching content behind a click.
+	RevealCard string
+
 	// lastHeatmapRect is the rectangle the heatmap painter was handed on the last
 	// frame, recorded so a test can compare the drawn grid against the cell the
 	// pointer resolves to. It is not read by the view.
@@ -620,6 +631,7 @@ func (a *App) View(c *ui.Context) {
 					ui.Column(c).Key(a.Step).Gap(12).FillWidth().
 						Transition(a.stageTransition(c)).Children(func() {
 						a.stageHeader(c)
+						a.cardRow(c)
 						a.stage(c)
 						a.lesson(c)
 					})
@@ -1463,4 +1475,40 @@ func (a *App) inspectorScope() string {
 		return fmt.Sprintf("层 %d", a.Layer)
 	}
 	return ""
+}
+
+// cardRow is the stage's table of contents: one chip per card, in the order the cards
+// appear, pinned to the top of the column while the reader scrolls.
+//
+// It answers a problem the last dozen rounds created. Measured at 1180×720, stage 5 runs
+// 4.4 screens and carries four cards, stage 4 runs 3.3 screens with three — and nothing
+// told a reader that. Opening "残差 / LN" showed the residual strips and gave no hint
+// that a logit-lens ladder, a layer-comparison chart and a LayerNorm explainer followed,
+// so the only navigation was to scroll and look. The row makes the stage's shape visible
+// on arrival and turns four screens of hunting into one click.
+//
+// It is drawn inside the scrolling column and made sticky rather than placed in the step
+// bar: the step bar has 180 DIP of free width at the narrowest window, and a row of
+// four Chinese chips does not fit in it, while adding a second bar row would cost every
+// stage vertical space it needs. Sticky costs nothing until the reader scrolls and
+// leaves the screen when they reach the end of the stage's cards.
+//
+// Stages with a single card return nothing: a one-chip index is a label, not navigation.
+func (a *App) cardRow(c *ui.Context) {
+	chips := stageCards[a.Step]
+	if len(chips) < 2 {
+		return
+	}
+	ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Shrink(0).
+		Background(colBg).Padding(0, 4, 0, 0).Sticky().Top(0).Children(func() {
+		ui.Text(c, "本步").FontSize(fontMicro).TextColor(colFaint).NoWrap()
+		for _, chip := range chips {
+			chip := chip
+			b := ui.Button(c, chip).Shrink(0)
+			if b.Clicked() {
+				a.RevealCard = chip
+			}
+			b.Tooltip("跳到「" + chip + "」")
+		}
+	})
 }
