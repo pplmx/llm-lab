@@ -1565,6 +1565,8 @@ func (a *App) stageOutput(c *ui.Context) {
 
 	a.stageNextByteSkill(c)
 
+	a.stageWeightTying(c)
+
 	a.cardNamed(c, "Top-12", func() {
 		// The list is a slice, and on this model the slice is essentially the
 		// whole distribution: the top 12 carry 99.99999% of the mass and the
@@ -2485,7 +2487,7 @@ var stageCards = [][]string{
 	// The stage's own FFN figure comes first (measured at 93 against 664 for the
 	// concentration card, which was placed after it last round for exactly this reason).
 	{"FFN 内部", "哪个单元在干活"},
-	{"最后位置", "每位置预测", "Top-12", "采样"},
+	{"最后位置", "每位置预测", "绑定权重", "Top-12", "采样"},
 }
 
 // stageFFNConcentration answers whether the same hidden units matter everywhere, which
@@ -2569,5 +2571,57 @@ func (a *App) stageFFNConcentration(c *ui.Context) {
 					first.Layer, first.HalfMass, last.Layer, last.HalfMass,
 					last.AlwaysOn, last.NeverOn))
 		}
+	})
+}
+
+// stageWeightTying shows what the tied output matrix means for a prediction, which the
+// output stage asserts ("权重绑定") without ever demonstrating.
+//
+// With the tying, byte b's logit is exactly <E[b], x>, so it factors into three named
+// quantities: the byte's embedding length, the final vector's length, and the cosine
+// between them. The card shows that product for the model's top byte — measured, 9.973 ×
+// 9.351 × 0.2763 = 25.770, which is the logit itself — and then shows which of the three
+// actually decides the ranking.
+//
+// The answer is the cosine. Across the 256 bytes the embedding lengths span only 8.29 to
+// 11.71, and their correlation with the logit is −0.000, while the cosine runs −0.324 to
+// +0.276 and correlates +0.997. So "the model prefers the bytes whose input embedding
+// points the same way as the final vector" is not a metaphor here; it is the arithmetic,
+// and only 563 of the 32640 byte pairs order differently by logit than by cosine.
+func (a *App) stageWeightTying(c *ui.Context) {
+	p := computeWeightTying(a.W, a.Trace, 1.0)
+	if !p.OK {
+		return
+	}
+	a.cardNamed(c, "绑定权重", func() {
+		sectionTitle(c, "权重绑定让 logit 变成一个余弦", "同一个矩阵读入也读出")
+		mutedText(c, "输出矩阵就是嵌入矩阵本身，所以字节 b 的 logit 恰好等于它和最终向量的内积，而内积又能拆成三个量相乘。"+
+			"这张卡片拆开模型选出那个字节的分数，再看三个量里究竟是哪一个在决定名次。")
+		kvW(c, "模型选的字节", fmt.Sprintf("%q（第 1 / %d 名，p = %.1f%%）",
+			rune(p.Byte), p.Total, 100*p.Probability), 108)
+		kvW(c, "logit", fmt.Sprintf("%.3f", p.Logit), 108)
+		kvW(c, "= ‖E[b]‖ × ‖x‖ × cos", fmt.Sprintf("%.3f × %.3f × %.4f", p.EmbedNorm, p.FinalNorm, p.Cosine), 108)
+		kvW(c, "三者相乘", fmt.Sprintf("%.3f（与上面的 logit 一致）", p.EmbedNorm*p.FinalNorm*p.Cosine), 108)
+		// Which factor decides the ordering. Two bars on one axis would mislead here —
+		// they are not the same kind of quantity — so state each and let the numbers speak.
+		workingsLinesCopyable(c, []string{
+			fmt.Sprintf("内积 = ‖E[b]‖ × ‖x‖ × cos = %.3f × %.3f × %.4f = %.3f",
+				p.EmbedNorm, p.FinalNorm, p.Cosine, p.Logit),
+			fmt.Sprintf("‖E[b]‖ 在 %d 个字节上只从 %.2f 变到 %.2f，与 logit 的相关是 %+.3f",
+				p.Total, p.EmbedNormMin, p.EmbedNormMax, p.LogitNormCorrelation),
+			fmt.Sprintf("cos 从 %+.3f 变到 %+.3f，与 logit 的相关是 %+.3f——名次基本由它决定",
+				p.CosineMin, p.CosineMax, p.LogitCosineCorrelation),
+			fmt.Sprintf("按 logit 排和按 cos 排不一样的字节对：%d / %d（%.1f%%）",
+				p.PairsOrderedDifferently, p.Pairs, 100*float64(p.PairsOrderedDifferently)/float64(p.Pairs)),
+		})
+		misconception(c,
+			"「权重绑定只是为了省参数，对模型的预测没有影响」",
+			fmt.Sprintf("省参数是它的动机，但它同时决定了预测的形状：logit 就是内积，内积就是长度乘余弦。"+
+				"这个模型里各字节的嵌入长度差不多（%.2f–%.2f），所以名次几乎完全由余弦决定——"+
+				"与 logit 的相关是 %+.3f，只有 %.1f%% 的字节对两种排法不同。"+
+				"也就是说「模型喜欢哪个字节」在这里等于「哪个字节的输入嵌入与输出方向更同向」。"+
+				"绑定不是免费的：它把输入空间和输出空间焊在一起，这是一个结构选择，不只是省了 2.4 万个参数。",
+				p.EmbedNormMin, p.EmbedNormMax, p.LogitCosineCorrelation,
+				100*float64(p.PairsOrderedDifferently)/float64(p.Pairs)))
 	})
 }

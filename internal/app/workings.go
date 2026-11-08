@@ -1510,3 +1510,164 @@ func computePromptLensSummary(w *model.Weights, tr *model.Trace, temp float64) p
 	s.OK = s.Positions > 0
 	return s
 }
+
+// weightTyingParts decomposes one byte's logit, which is what weight tying makes possible
+// to state exactly.
+//
+// The output stage says the unembedding is the token embedding transposed ("权重绑定") and
+// draws the top-12 probabilities. It never says what that structure *means* for a
+// prediction, and the answer is exact rather than approximate: with the tying, byte b's
+// logit is <E[b], x>, so it factors into |E[b]| · |x| · cos(E[b], x). The model literally
+// prefers the bytes whose input embedding points the same way as the final vector.
+//
+// Measured on the bundled weights at the default prompt's last position: the cosine runs
+// from −0.324 to +0.276 across the 256 bytes and correlates +0.997 with the logit, while
+// the embedding lengths vary only 8.29–11.71 (35% spread) and correlate −0.000. So the
+// ranking is essentially a cosine ranking: 563 of the 32640 byte pairs order differently
+// by logit than by cosine, 1.7%.
+type weightTyingParts struct {
+	// Byte is the vocabulary id the decomposition is for.
+	Byte int
+	// Logit is the score the model produced for it, Dot is <E[b], x>, and the three
+	// factors multiply to it: EmbedNorm · FinalNorm · Cosine.
+	Logit       float64
+	Dot         float64
+	EmbedNorm   float64
+	FinalNorm   float64
+	Cosine      float64
+	Probability float64
+	// Rank is the byte's place by logit, 1 for the top. Total is the vocabulary size.
+	Rank, Total int
+	// EmbedNormMin and EmbedNormMax bound every byte's embedding length, and
+	// CosineMin and CosineMax bound the cosine the final vector makes with each of them.
+	EmbedNormMin, EmbedNormMax float64
+	CosineMin, CosineMax       float64
+	// LogitCosineCorrelation is how much of the ranking the cosine explains, and
+	// LogitNormCorrelation how much the embedding's length does — the two together are
+	// what lets the card say which factor decides the order instead of asserting it.
+	LogitCosineCorrelation float64
+	LogitNormCorrelation   float64
+	// PairsOrderedDifferently is how many byte pairs rank differently by logit than by
+	// cosine, out of Pairs.
+	PairsOrderedDifferently, Pairs int
+	OK                             bool
+}
+
+// computeWeightTying decomposes the top byte's logit and measures how much of the
+// vocabulary's ranking the cosine cosine accounts for.
+func computeWeightTying(w *model.Weights, tr *model.Trace, temp float64) weightTyingParts {
+	var p weightTyingParts
+	if w == nil || tr == nil || len(tr.FinalNorm) == 0 {
+		return p
+	}
+	d := w.Config.DModel
+	vocab := w.Config.Vocab
+	if d <= 0 || vocab <= 0 || len(w.TokEmbed) < vocab*d {
+		return p
+	}
+	row := tr.FinalNorm[len(tr.FinalNorm)-1]
+	var rn float64
+	for _, v := range row {
+		rn += float64(v) * float64(v)
+	}
+	rn = math.Sqrt(rn)
+	if rn == 0 {
+		return p
+	}
+	logits := make([]float64, vocab)
+	cosines := make([]float64, vocab)
+	norms := make([]float64, vocab)
+	p.EmbedNormMin = math.Inf(1)
+	p.CosineMin = math.Inf(1)
+	p.CosineMax = math.Inf(-1)
+	for id := 0; id < vocab; id++ {
+		var dot, ne float64
+		for k := 0; k < d; k++ {
+			e := float64(w.TokEmbed[id*d+k])
+			dot += e * float64(row[k])
+			ne += e * e
+		}
+		n := math.Sqrt(ne)
+		logits[id] = dot
+		norms[id] = n
+		if n > 0 {
+			cosines[id] = dot / (n * rn)
+		}
+		if n < p.EmbedNormMin {
+			p.EmbedNormMin = n
+		}
+		if n > p.EmbedNormMax {
+			p.EmbedNormMax = n
+		}
+		if c := cosines[id]; c < p.CosineMin {
+			p.CosineMin = c
+		} else if c > p.CosineMax {
+			p.CosineMax = c
+		}
+	}
+	// The reported byte is the model's own top choice.
+	top := 0
+	for id := 1; id < vocab; id++ {
+		if logits[id] > logits[top] {
+			top = id
+		}
+	}
+	p.Byte = top
+	p.Logit = logits[top]
+	p.Dot = logits[top]
+	p.EmbedNorm = norms[top]
+	p.FinalNorm = rn
+	p.Cosine = cosines[top]
+	p.Rank = 1
+	p.Total = vocab
+	probs := model.Softmax(toF32(logits), temp)
+	p.Probability = float64(probs[top])
+	// How much of the logit's ordering the cosine accounts for.
+	p.LogitCosineCorrelation = pearson(logits, cosines)
+	p.LogitNormCorrelation = pearson(logits, norms)
+	for i := 0; i < vocab; i++ {
+		for j := i + 1; j < vocab; j++ {
+			p.Pairs++
+			if (logits[i] > logits[j]) != (cosines[i] > cosines[j]) {
+				p.PairsOrderedDifferently++
+			}
+		}
+	}
+	p.OK = true
+	return p
+}
+
+// toF32 converts the logits once, so the probability shown agrees with the one the app
+// computes from Trace.Logits rather than being a float64 re-derivation of it.
+func toF32(v []float64) []float32 {
+	out := make([]float32, len(v))
+	for i, x := range v {
+		out[i] = float32(x)
+	}
+	return out
+}
+
+// pearson is the correlation of two equal-length series, 0 when either is constant.
+func pearson(a, b []float64) float64 {
+	if len(a) != len(b) || len(a) == 0 {
+		return 0
+	}
+	var ma, mb float64
+	for i := range a {
+		ma += a[i]
+		mb += b[i]
+	}
+	n := float64(len(a))
+	ma /= n
+	mb /= n
+	var num, da, db float64
+	for i := range a {
+		da += (a[i] - ma) * (a[i] - ma)
+		db += (b[i] - mb) * (b[i] - mb)
+		num += (a[i] - ma) * (b[i] - mb)
+	}
+	if da == 0 || db == 0 {
+		return 0
+	}
+	return num / (math.Sqrt(da) * math.Sqrt(db))
+}

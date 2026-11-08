@@ -2984,3 +2984,117 @@ func TestPromptLensSummaryCountsEveryRung(t *testing.T) {
 			s, rungs, disagree, confident, posCW)
 	}
 }
+
+// TestWeightTyingDecompositionIsExact checks the identity the card prints: the logit for
+// the top byte must equal ‖E[b]‖ × ‖x‖ × cos, and the probability must match the app's
+// own softmax over Trace.Logits rather than a float64 re-derivation of it.
+func TestWeightTyingDecompositionIsExact(t *testing.T) {
+	a := newTestApp(t)
+	p := computeWeightTying(a.W, a.Trace, 1.0)
+	if !p.OK {
+		t.Fatal("no tying decomposition")
+	}
+	product := p.EmbedNorm * p.FinalNorm * p.Cosine
+	if math.Abs(product-p.Logit) > 1e-6 {
+		t.Fatalf("‖E‖·‖x‖·cos = %.9f, the logit is %.9f", product, p.Logit)
+	}
+	// The same byte the model itself picks.
+	probs := a.Trace.Probabilities(1.0)
+	best, bp := 0, float32(-1)
+	for id, v := range probs {
+		if v > bp {
+			best, bp = id, v
+		}
+	}
+	if p.Byte != best {
+		t.Fatalf("the card names byte %d, the model's top byte is %d", p.Byte, best)
+	}
+	if math.Abs(p.Probability-float64(bp)) > 1e-6 {
+		t.Fatalf("probability %.9f, Trace gives %.9f", p.Probability, float64(bp))
+	}
+	// The reported norms and cosines must bound every byte.
+	d, vocab := a.W.Config.DModel, a.W.Config.Vocab
+	row := a.Trace.FinalNorm[len(a.Trace.FinalNorm)-1]
+	var rn float64
+	for _, v := range row {
+		rn += float64(v) * float64(v)
+	}
+	rn = math.Sqrt(rn)
+	for id := 0; id < vocab; id++ {
+		var dot, ne float64
+		for k := 0; k < d; k++ {
+			e := float64(a.W.TokEmbed[id*d+k])
+			dot += e * float64(row[k])
+			ne += e * e
+		}
+		n := math.Sqrt(ne)
+		c := dot / (n * rn)
+		if n < p.EmbedNormMin-1e-9 || n > p.EmbedNormMax+1e-9 {
+			t.Fatalf("byte %d norm %.4f outside the stated range %.4f..%.4f",
+				id, n, p.EmbedNormMin, p.EmbedNormMax)
+		}
+		if c < p.CosineMin-1e-9 || c > p.CosineMax+1e-9 {
+			t.Fatalf("byte %d cosine %.4f outside the stated range %.4f..%.4f",
+				id, c, p.CosineMin, p.CosineMax)
+		}
+	}
+}
+
+// TestWeightTyingCosineDrivesTheRanking is the premise of the card's whole point: with the
+// tying, the model's preference is a cosine preference.
+//
+// The card says the ranking is essentially decided by the cosine and not by the embedding
+// lengths. If the weights ever made the lengths decisive, that sentence would be wrong —
+// so both correlations are measured, and the claim is that cosine wins by a wide margin.
+func TestWeightTyingCosineDrivesTheRanking(t *testing.T) {
+	a := newTestApp(t)
+	p := computeWeightTying(a.W, a.Trace, 1.0)
+	if !p.OK {
+		t.Fatal("no tying decomposition")
+	}
+	if p.LogitCosineCorrelation < 0.9 {
+		t.Fatalf("cosine correlates %.3f with the logit; the card says the ranking is "+
+			"essentially a cosine ranking", p.LogitCosineCorrelation)
+	}
+	if math.Abs(p.LogitNormCorrelation) > 0.3 {
+		t.Fatalf("the embedding length correlates %+.3f with the logit; the card says the "+
+			"length plays almost no part", p.LogitNormCorrelation)
+	}
+	// And the pairing: nearly all byte pairs order the same both ways.
+	if p.Pairs == 0 {
+		t.Fatal("no pairs measured")
+	}
+	share := float64(p.PairsOrderedDifferently) / float64(p.Pairs)
+	if share > 0.05 {
+		t.Fatalf("%.1f%% of byte pairs order differently by logit than by cosine; the card "+
+			"says the two orderings nearly coincide", 100*share)
+	}
+	t.Logf("corr(logit,cos)=%.3f corr(logit,|E|)=%+.3f, %.1f%% of pairs differ",
+		p.LogitCosineCorrelation, p.LogitNormCorrelation, 100*share)
+}
+
+// TestWeightTyingCardQuotesItsOwnNumbers reads the decomposition out of the rendered text.
+func TestWeightTyingCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
+	p := computeWeightTying(a.W, a.Trace, 1.0)
+	joined := ""
+	for _, s := range tr.Texts() {
+		joined += s + "\n"
+	}
+	if !strings.Contains(joined, "权重绑定让 logit 变成一个余弦") {
+		t.Fatal("the weight-tying card is missing")
+	}
+	for _, want := range []string{
+		fmt.Sprintf("%.3f × %.3f × %.4f", p.EmbedNorm, p.FinalNorm, p.Cosine),
+		fmt.Sprintf("%+.3f", p.LogitCosineCorrelation),
+		fmt.Sprintf("%.2f 变到 %.2f", p.EmbedNormMin, p.EmbedNormMax),
+		fmt.Sprintf("%+.3f 变到 %+.3f", p.CosineMin, p.CosineMax),
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("the card does not print %q", want)
+		}
+	}
+}
