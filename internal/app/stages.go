@@ -969,11 +969,13 @@ func (a *App) stageLogitLens(c *ui.Context) {
 			agreement,
 		})
 		// The whole-prompt figure, which is what makes this more than one position's
-		// anecdote. Measured on the bundled weights and the default prompt.
+		// anecdote. Measured on the bundled weights and the default prompt: 92 of 180
+		// intermediate rungs disagree, 76 of those confidently, and every one of the 36
+		// positions has at least one such rung.
 		misconception(c,
 			"「logit lens 能说明模型是一层一层把答案想清楚的」",
-			"它不能。把整句提示词的每一层都读一遍：180 个中间层里有 153 个的答案与最终答案不同，"+
-				"其中 105 个对自己的错误答案有 90% 以上的把握，36 个位置里有 31 个至少有一层如此。"+
+			"它不能。把整句提示词的每一层都读一遍：180 个中间层里有 92 个的答案与最终答案不同，"+
+				"其中 76 个对自己的错误答案有 90% 以上的把握，36 个位置里每一个都至少有一层如此。"+
 				"所以中间层「很确定」不说明它和最终答案一致——这和输出阶段那条「97% 不等于正确」"+
 				"是同一件事的两个方向。lens 可以用来看某一层「偏向什么」，不能用来看它「知道什么」。")
 	})

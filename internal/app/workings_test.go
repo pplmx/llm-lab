@@ -1959,45 +1959,78 @@ func TestFFNLessonSparsityIsMeasured(t *testing.T) {
 	}
 }
 
-// TestLogitLensFinalRungIsTheModelsOwnOutput pins the one rung that must not be a
-// lens call.
+// TestLogitLensFinalRungIsTheOutputAtThatPosition pins the rung that made the ladder
+// contradict itself.
 //
-// Trace.FinalNorm has already been through the final LayerNorm, so running the lens
-// on it normalises twice. Measured: every one of the 256 logits then differs from
-// Trace.Logits. The ladder therefore takes its last rung from the trace, and this
-// test is what stops a later refactor from "simplifying" it back.
-func TestLogitLensFinalRungIsTheModelsOwnOutput(t *testing.T) {
+// The final rung must be the model's real answer *at the position the ladder was built
+// for*. Trace.Logits holds one row — the last position's — because that is the only
+// row Forward projects. Using it for every position was a bug this round found by
+// cross-checking the ladder against the per-position prediction card: at pos 0 the
+// ladder's last rung said "␣" (the last position's answer) while the real output there
+// is "h", and 30 of 36 positions were wrong. Every earlier rung was computed at pos
+// correctly, so the ladder's own last step disagreed with the four above it.
+//
+// The previous version of this test checked only the last position, which is exactly
+// the one position where the bug is invisible.
+func TestLogitLensFinalRungIsTheOutputAtThatPosition(t *testing.T) {
 	a := newTestApp(t)
-	pos := len(a.Trace.Tokens) - 1
-	lens := computeLogitLens(a.W, a.Trace, pos, 1.0) // T=1 so probs are plain softmax
-	if !lens.OK {
-		t.Fatal("the ladder did not build")
+	n := len(a.Trace.Tokens)
+	if n < 4 {
+		t.Fatalf("the test prompt has only %d positions", n)
 	}
-	last := lens.Rungs[len(lens.Rungs)-1]
-	if !last.IsFinal {
-		t.Fatal("the last rung is not marked as the model's own output")
-	}
-	for id := range last.Probs {
-		if math.Abs(float64(last.Probs[id]-a.Trace.Probabilities(1.0)[id])) > 1e-9 {
-			t.Fatalf("the final rung's probability for byte %d is %v, the trace says %v; the "+
-				"last rung must come from Trace.Logits, not from a lens call",
-				id, last.Probs[id], a.Trace.Probabilities(1.0)[id])
+	for pos := 0; pos < n; pos++ {
+		lens := computeLogitLens(a.W, a.Trace, pos, 1.0)
+		if !lens.OK {
+			t.Fatalf("pos %d: the ladder did not build", pos)
+		}
+		last := lens.Rungs[len(lens.Rungs)-1]
+		if !last.IsFinal {
+			t.Fatalf("pos %d: the last rung is not marked as the model's own output", pos)
+		}
+		// The real projection at this position: FinalNorm[pos] is already
+		// normalised, so this is Unembed, not LogitLens.
+		want := model.Softmax(a.W.Unembed(a.Trace.FinalNorm[pos]), 1.0)
+		for id := range last.Probs {
+			if math.Abs(float64(last.Probs[id]-want[id])) > 1e-9 {
+				t.Fatalf("pos %d: the final rung's probability for byte %d is %v, the model's "+
+					"real output there is %v", pos, id, last.Probs[id], want[id])
+			}
 		}
 	}
-	// And the double normalisation really is different, so the distinction is not
-	// academic: run the lens on the already-normalised row and count the mismatches.
-	doubled := a.W.LogitLens(a.Trace.FinalNorm[pos])
-	differ := 0
-	for id := range doubled {
-		if doubled[id] != a.Trace.Logits[id] {
-			differ++
+	// At the last position it must also agree with Trace.Logits exactly, since that
+	// is the row Forward actually projected.
+	tr := a.Trace.Probabilities(1.0)
+	lastRung := computeLogitLens(a.W, a.Trace, n-1, 1.0).Rungs
+	final := lastRung[len(lastRung)-1]
+	for id := range final.Probs {
+		if math.Abs(float64(final.Probs[id]-tr[id])) > 1e-9 {
+			t.Fatalf("the last position's final rung differs from Trace.Logits at byte %d: %v vs %v",
+				id, final.Probs[id], tr[id])
 		}
 	}
-	if differ == 0 {
-		t.Fatal("lensing an already-normalised row gave the trace's logits; the comment in " +
-			"model.LogitLens says it normalises twice and that this changes every logit")
+}
+
+// TestLogitLensAgreesWithThePerPositionCard is the cross-check that found the bug
+// above, kept as a standing test.
+//
+// The output stage's per-position card and the residual stage's ladder are built from
+// the same unembedding and must name the same next byte for the same position. They
+// disagreed at 30 of 36 positions, which is what a bug in one of them looks like when
+// two figures on two stages describe one quantity.
+func TestLogitLensAgreesWithThePerPositionCard(t *testing.T) {
+	a := newTestApp(t)
+	skill := computeNextByteSkill(a.W, a.Trace, 1.0)
+	for _, row := range skill.Rows {
+		lens := computeLogitLens(a.W, a.Trace, row.Pos, 1.0)
+		if !lens.OK {
+			t.Fatalf("pos %d: no ladder", row.Pos)
+		}
+		if lens.Final != row.Guess {
+			t.Fatalf("position %d: the lens ladder says the model's answer is %q, the "+
+				"per-position card says %q; both are the same unembedding and must agree",
+				row.Pos, byteText(lens.Final), byteText(row.Guess))
+		}
 	}
-	t.Logf("lensing FinalNorm differs from the real logits in %d of %d entries", differ, len(doubled))
 }
 
 // TestLogitLensCalloutNumbersAreMeasured is the guard on the card's whole-prompt
@@ -2033,21 +2066,30 @@ func TestLogitLensCalloutNumbersAreMeasured(t *testing.T) {
 	if rungs != 5*n {
 		t.Fatalf("the ladder has %d intermediate rungs for %d positions, want 5 per position", rungs, n)
 	}
-	// The sentence says: of 180 rungs, 153 disagree and 105 of those are confident,
-	// and 31 of 36 positions have at least one. Checked as bands rather than exact
-	// values, because the figures move with the prompt; the prompt is fixed here, so
-	// the failure message quotes what was measured.
-	if disagree < rungs*2/3 {
+	// Measured on the bundled weights and the default prompt: 92 of 180 intermediate
+	// rungs disagree with the final answer, 76 of those are over 90% sure of
+	// themselves, and all 36 positions have at least one.
+	//
+	// These replaced 153/105/31 after the final-rung bug was fixed. The old figures
+	// were not merely stale — they were measured through a defect that made every
+	// non-final position's ladder end on the last position's answer, inflating every
+	// disagreement. A callout whose numbers came from a broken computation is worse
+	// than no callout, and this is why the test recomputes rather than trusting the
+	// prose.
+	//
+	// Checked as bands rather than exact values, because the figures move with the
+	// prompt; the prompt is fixed here, so the failure message quotes what was seen.
+	if disagree < rungs/3 {
 		t.Fatalf("only %d of %d intermediate rungs disagree with the final answer; the callout "+
-			"says most do", disagree, rungs)
+			"says a large share do", disagree, rungs)
 	}
 	if confidentWrong < disagree/2 {
 		t.Fatalf("%d of %d disagreeing rungs are over %.0f%% sure of themselves; the callout says "+
 			"most of them are", confidentWrong, disagree, 100*lensConfident)
 	}
-	if positionsWithConfidentWrong < n*2/3 {
+	if positionsWithConfidentWrong < n-1 {
 		t.Fatalf("%d of %d positions have a confidently wrong intermediate rung; the callout says "+
-			"most do", positionsWithConfidentWrong, n)
+			"nearly all do", positionsWithConfidentWrong, n)
 	}
 	t.Logf("measured: %d rungs, %d disagree, %d confident-wrong, %d/%d positions affected",
 		rungs, disagree, confidentWrong, positionsWithConfidentWrong, n)

@@ -874,7 +874,22 @@ func computeLogitLens(w *model.Weights, tr *model.Trace, pos int, temperature fl
 		add(fmt.Sprintf("层 %d 注意力后", li), 4, w.LogitLens(l.AfterAttn[pos]), false)
 		add(fmt.Sprintf("层 %d FFN 后", li), 4, w.LogitLens(l.AfterFFN[pos]), false)
 	}
-	add("最终输出", 6, tr.Logits, true)
+	// The final rung is the model's real output at THIS position, which is only
+	// Trace.Logits when pos is the last one: that field holds a single row, the
+	// last position's, because that is the only row Forward projects. Using it
+	// unconditionally was a bug — measured, at pos 0 the ladder's last rung said
+	// "␣" (the last position's answer) while the real output there is "h", and 30 of
+	// the 36 positions were wrong. Every earlier rung was computed at pos correctly,
+	// so the ladder contradicted itself: a "final output" that matched no rung above
+	// it and no other figure in the app.
+	//
+	// FinalNorm[pos] has already been through the final LayerNorm, so this calls
+	// Unembed directly rather than LogitLens (which would normalise a second time).
+	final := tr.Logits
+	if pos != len(tr.FinalNorm)-1 {
+		final = w.Unembed(tr.FinalNorm[pos])
+	}
+	add("最终输出", 6, final, true)
 
 	lens.Final = lens.Rungs[len(lens.Rungs)-1].Top
 	for i := range lens.Rungs {
