@@ -678,7 +678,7 @@ func TestFFNParamShareMatchesParamCount(t *testing.T) {
 // move one next to a picture it does not describe. Steps 3, 4, 5, 6 and 7 have
 // one; steps 1 and 2 are not misconceptions in the same sense.
 func TestMisconceptionCalloutsOnlyWhereMeasured(t *testing.T) {
-	want := map[int]bool{2: true, 3: true, 4: true, 5: true, 6: true}
+	want := map[int]bool{1: true, 2: true, 3: true, 4: true, 5: true, 6: true}
 	for step := range lessons {
 		a := newTestApp(t)
 		a.Step = step

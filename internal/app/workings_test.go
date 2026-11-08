@@ -2628,3 +2628,98 @@ func TestLayerRewriteCardQuotesItsOwnNumbers(t *testing.T) {
 		}
 	}
 }
+
+// TestPosEncodingShapeMatchesTheTable recomputes every cosine the card quotes.
+func TestPosEncodingShapeMatchesTheTable(t *testing.T) {
+	a := newTestApp(t)
+	s := computePosEncodingShape(a.W)
+	if !s.OK {
+		t.Fatal("no positional shape computed")
+	}
+	d, ctx := a.W.Config.DModel, a.W.Config.Ctx
+	row := func(i int) []float32 { return a.W.PosEmbed[i*d : (i+1)*d] }
+	var adj, far float64
+	n := 0
+	for i := 0; i+1 < ctx; i++ {
+		adj += cosineF32(row(i), row(i+1))
+		n++
+	}
+	if n > 0 {
+		if got, want := s.AdjacentCos, adj/float64(n); math.Abs(got-want) > 1e-9 {
+			t.Fatalf("adjacent cosine: card %.9f, recomputed %.9f", got, want)
+		}
+	}
+	farN := 0
+	for i := 0; i+s.Gap < ctx; i++ {
+		far += cosineF32(row(i), row(i+s.Gap))
+		farN++
+	}
+	if farN > 0 {
+		if got, want := s.DistantCos, far/float64(farN); math.Abs(got-want) > 1e-9 {
+			t.Fatalf("distant cosine: card %.9f, recomputed %.9f", got, want)
+		}
+	}
+	if s.Gap != ctx/2 {
+		t.Fatalf("gap %d, want ctx/2 = %d", s.Gap, ctx/2)
+	}
+	if s.Dims != d {
+		t.Fatalf("dims %d, want %d", s.Dims, d)
+	}
+	if math.Abs(s.RandomCos-1/math.Sqrt(float64(d))) > 1e-12 {
+		t.Fatalf("random reference %.9f, want 1/√%d", s.RandomCos, d)
+	}
+}
+
+// TestPosEncodingShapeDiffersFromSinusoidal is the premise of the whole card: the learned
+// table is not the fixed sinusoidal one, and the difference is not marginal.
+//
+// If these ever converged the card's contrast would be a distinction without a
+// difference, and its rebuttal of "all transformers use sin/cos" would be misleading.
+func TestPosEncodingShapeDiffersFromSinusoidal(t *testing.T) {
+	a := newTestApp(t)
+	s := computePosEncodingShape(a.W)
+	if !s.OK {
+		t.Fatal("no positional shape computed")
+	}
+	if s.SinusoidalAdjacentCos < 0.8 {
+		t.Fatalf("the sinusoidal reference's adjacent cosine is %.3f; the card describes it "+
+			"as a slow walk along a curve, which needs a high value", s.SinusoidalAdjacentCos)
+	}
+	if s.AdjacentCos > 0.5 {
+		t.Fatalf("the learned table's adjacent cosine is %.3f; the card says positions are "+
+			"nearly orthogonal, which needs a small value", s.AdjacentCos)
+	}
+	// And the learned table really is about as unrelated as chance — that is the claim
+	// that makes "nearly orthogonal" mean something rather than "somewhat different".
+	if math.Abs(s.AdjacentCos) > 3*s.RandomCos {
+		t.Fatalf("learned adjacent cosine %.3f is far above the %.3f chance level; the card "+
+			"says the table is no more related than random vectors", s.AdjacentCos, s.RandomCos)
+	}
+	t.Logf("learned %.4f vs sinusoidal %.4f vs chance %.4f",
+		s.AdjacentCos, s.SinusoidalAdjacentCos, s.RandomCos)
+}
+
+// TestPosEncodingShapeCardQuotesItsOwnNumbers reads the card's figures out of the text.
+func TestPosEncodingShapeCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 1
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
+	s := computePosEncodingShape(a.W)
+	joined := ""
+	for _, t := range tr.Texts() {
+		joined += t + "\n"
+	}
+	if !strings.Contains(joined, "学出来的位置长什么样") {
+		t.Fatal("the positional-shape card is missing")
+	}
+	for _, want := range []string{
+		fmt.Sprintf("%+.3f", s.AdjacentCos),
+		fmt.Sprintf("%+.3f", s.SinusoidalAdjacentCos),
+		fmt.Sprintf("%.3f", s.RandomCos),
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("the card does not print %q", want)
+		}
+	}
+}

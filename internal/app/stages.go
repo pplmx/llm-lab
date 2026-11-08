@@ -438,6 +438,75 @@ func (a *App) stageEmbed(c *ui.Context) {
 			})
 		}
 	})
+
+	a.stagePosEncodingShape(c)
+}
+
+// stagePosEncodingShape answers what stage 2 leaves open: the position vector is
+// learned, so what did the training produce?
+//
+// The four strips above show P[t] for four positions, which a reader can look at without
+// being able to say anything about them. Two numbers do say something, and both are
+// surprising next to the encoding most tutorials describe:
+//
+//	learned (this model)   cos(P[t], P[t+1]) = 0.040   cos at gap 32 = -0.052
+//	sinusoidal (Vaswani)   cos(P[t], P[t+1]) = 0.969   cos at gap 32 =  0.562
+//	two random vectors     1/√96             = 0.102
+//
+// So the learned table puts positions in nearly orthogonal directions — all of them about
+// as unrelated as chance, with no smooth progression — while the fixed sinusoidal
+// encoding is a slow walk along a curve. Neither is wrong, but they are opposite designs,
+// and the point of the card is that nothing in this model's architecture chose the one it
+// has: gradient descent did.
+func (a *App) stagePosEncodingShape(c *ui.Context) {
+	shape := computePosEncodingShape(a.W)
+	if !shape.OK {
+		return
+	}
+	card(c, func() {
+		sectionTitle(c, "学出来的位置长什么样", "与固定正弦编码的对比")
+		mutedText(c, "上面四条色带只能看个热闹。两个余弦值能说清一件事：这张表把位置放成了"+
+			"近乎互相垂直的方向，而不是沿一条平滑曲线依次移动——那正是经典正弦编码的样子。")
+		// bars draws |value|/max, so a bar's length is a magnitude and cannot show a
+		// sign; the signed figure stays in the value column, and the axis runs 0 to 1
+		// where a cosine of 1 would fill the row. That is why DistantCos's bar is drawn
+		// for 0.052 while its cell reads -0.052: the near-zero length is the point.
+		rows := []barRow{
+			{Label: "学过 t, t+1", Value: float32(math.Abs(shape.AdjacentCos)),
+				ValueText: fmt.Sprintf("%+.3f", shape.AdjacentCos),
+				Color:     colGreen, LabelWidth: 104, ValueWidth: 56,
+				Tip: "这个模型训练出来的相邻位置余弦"},
+			{Label: "正弦 t, t+1", Value: float32(math.Abs(shape.SinusoidalAdjacentCos)),
+				ValueText: fmt.Sprintf("%+.3f", shape.SinusoidalAdjacentCos),
+				Color:     colAccent2, LabelWidth: 104, ValueWidth: 56,
+				Tip: "固定正弦编码的相邻位置余弦"},
+			{Label: fmt.Sprintf("学过 t, t+%d", shape.Gap), Value: float32(math.Abs(shape.DistantCos)),
+				ValueText: fmt.Sprintf("%+.3f", shape.DistantCos),
+				Color:     colGreen, LabelWidth: 104, ValueWidth: 56,
+				Tip: fmt.Sprintf("相隔 %d 个位置", shape.Gap)},
+			{Label: fmt.Sprintf("正弦 t, t+%d", shape.Gap), Value: float32(math.Abs(shape.SinusoidalDistantCos)),
+				ValueText: fmt.Sprintf("%+.3f", shape.SinusoidalDistantCos),
+				Color:     colAccent2, LabelWidth: 104, ValueWidth: 56,
+				Tip: "同样的间隔，固定正弦编码"},
+		}
+		bars(c, rows, 1, colGreen)
+		workingsLinesCopyable(c, []string{
+			fmt.Sprintf("学出来的：cos(P[t],P[t+1]) = %+.3f，隔 %d 个位置是 %+.3f",
+				shape.AdjacentCos, shape.Gap, shape.DistantCos),
+			fmt.Sprintf("固定正弦：同样两个间隔 = %+.3f 与 %+.3f",
+				shape.SinusoidalAdjacentCos, shape.SinusoidalDistantCos),
+			fmt.Sprintf("%d 维里两个随机向量的 |cos| 大约是 %.3f——所以学出来的这张表几乎就是正交的",
+				shape.Dims, shape.RandomCos),
+		})
+		misconception(c,
+			"「位置编码就是那套 sin/cos 公式，所有 transformer 都这样」",
+			fmt.Sprintf("经典 transformer 用的是固定正弦编码，相邻位置余弦 %.2f——每行只是沿曲线走一小步。"+
+				"这个模型的位置表是训练出来的，相邻余弦只有 %+.3f，比 %d 维随机向量的 %.3f 还小，"+
+				"也就是说它把 64 个位置放成了 64 个几乎互不相干的地址。"+
+				"两种都能用：正弦编码让「近」在几何上有意义，学出来的表让模型自己决定哪个方向代表哪个位置。"+
+				"这个仓库的架构没规定其中任何一种，是梯度下降选了这个。",
+				shape.SinusoidalAdjacentCos, shape.AdjacentCos, shape.Dims, shape.RandomCos))
+	})
 }
 
 // signed formats v with its sign, wrapping a negative in parentheses so a sum

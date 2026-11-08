@@ -1227,3 +1227,120 @@ func cosineF32(a, b []float32) float64 {
 	}
 	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
+
+// posEncodingShape measures what a positional table actually looks like, which is the
+// question stage 2 raises and never answered.
+//
+// The stage says the position vector is learned rather than fixed, and draws P[t] for a
+// few positions — but it never says what "learned" produced. The answer is surprising
+// and worth a card: measured on the bundled weights, adjacent positions have a cosine of
+// 0.040, so the table encodes position as a set of nearly orthogonal directions. The
+// classic sinusoidal encoding does the opposite — adjacent positions there have cosine
+// 0.985, because each row is a small step along a smooth curve.
+//
+// Neither is wrong; they are different designs, and the model found the one nothing in
+// its architecture forced it to choose.
+type posEncodingShape struct {
+	// AdjacentCos is the mean cosine between P[t] and P[t+1].
+	AdjacentCos float64
+	// DistantCos is the same at a gap of half the context window.
+	DistantCos float64
+	// SinusoidalAdjacentCos is what the fixed sinusoidal encoding would give for the
+	// same model shape, computed here so the comparison cannot be misremembered.
+	SinusoidalAdjacentCos float64
+	SinusoidalDistantCos  float64
+	// RandomCos is the |cos| two unrelated vectors in this many dimensions would
+	// have on average, 1/√d. It tells a reader whether 0.04 means "deliberately
+	// orthogonal" or "no more structured than chance".
+	RandomCos float64
+	// Gap used for the distant measurement.
+	Gap int
+	// Dims is d_model, so the card can name the space the 1/√d reference refers to.
+	Dims int
+	OK   bool
+}
+
+// computePosEncodingShape measures the positional table of a model against the
+// sinusoidal alternative and against chance.
+func computePosEncodingShape(w *model.Weights) posEncodingShape {
+	s := posEncodingShape{}
+	if w == nil || w.Config.DModel <= 0 || w.Config.Ctx < 3 {
+		return s
+	}
+	d, ctx := w.Config.DModel, w.Config.Ctx
+	if len(w.PosEmbed) < ctx*d {
+		return s
+	}
+	s.Gap = ctx / 2
+	if s.Gap < 1 {
+		s.Gap = 1
+	}
+	s.Dims = d
+	s.RandomCos = 1 / math.Sqrt(float64(d))
+	row := func(i int) []float32 { return w.PosEmbed[i*d : (i+1)*d] }
+	// sinusoidal is the fixed encoding from the original transformer, indexed the way
+	// this model's embedding width allows: even dimensions sine, odd cosine, with
+	// frequencies spread over half the width.
+	sinusoidal := func(pos, k int) float64 {
+		half := d / 2
+		if half == 0 {
+			return 0
+		}
+		x := float64(pos) / math.Pow(10000, float64(k/2)/float64(half))
+		if k%2 == 0 {
+			return math.Sin(x)
+		}
+		return math.Cos(x)
+	}
+	cosOf := func(a, b []float32) float64 { return cosineF32(a, b) }
+	var adj, far, sAdj, sFar float64
+	adjN, farN := 0, 0
+	for i := 0; i+1 < ctx; i++ {
+		adj += cosOf(row(i), row(i+1))
+		adjN++
+	}
+	for i := 0; i+s.Gap < ctx; i++ {
+		far += cosOf(row(i), row(i+s.Gap))
+		farN++
+	}
+	// The sinusoidal reference as vectors, so the same cosine function is used.
+	sinVec := func(pos int) []float64 {
+		v := make([]float64, d)
+		for k := range v {
+			v[k] = sinusoidal(pos, k)
+		}
+		return v
+	}
+	cosF := func(a, b []float64) float64 {
+		var dot, na, nb float64
+		for i := range a {
+			dot += a[i] * b[i]
+			na += a[i] * a[i]
+			nb += b[i] * b[i]
+		}
+		if na == 0 || nb == 0 {
+			return 0
+		}
+		return dot / (math.Sqrt(na) * math.Sqrt(nb))
+	}
+	if adjN > 0 {
+		s.AdjacentCos = adj / float64(adjN)
+	}
+	if farN > 0 {
+		s.DistantCos = far / float64(farN)
+	}
+	for i := 0; i+1 < ctx; i++ {
+		sAdj += cosF(sinVec(i), sinVec(i+1))
+	}
+	for i := 0; i+s.Gap < ctx; i++ {
+		sFar += cosF(sinVec(i), sinVec(i+s.Gap))
+	}
+	if adjN > 0 {
+		s.SinusoidalAdjacentCos = sAdj / float64(adjN)
+	}
+	if farN > 0 {
+		s.SinusoidalDistantCos = sFar / float64(farN)
+	}
+	s.OK = true
+	return s
+}
