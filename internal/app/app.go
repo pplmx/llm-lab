@@ -1516,16 +1516,22 @@ func (a *App) cardRow(c *ui.Context) {
 	if len(chips) < 2 {
 		return
 	}
-	ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Shrink(0).
-		Background(colBg).Padding(0, 4, 0, 0).Sticky().Top(0).Children(func() {
-		ui.Text(c, "本步").FontSize(fontMicro).TextColor(colFaint).NoWrap()
-		for _, chip := range chips {
-			chip := chip
-			b := ui.Button(c, chip).Shrink(0)
-			if b.Clicked() {
-				a.RevealCard = chip
+	// The row is opaque and pinned, so cards scroll underneath it. It gets a background up
+	// to its top edge and a bottom border, so the cut reads as the edge of a bar rather
+	// than as a card ending in mid-air: before this, a scrolled callout showed its rounded
+	// top corner sliced off flush under the chips (seen in a 1180x720 render).
+	ui.Column(c).FillWidth().Shrink(0).Background(colBg).Sticky().Top(0).
+		Padding(0, 0, 10, 0).Children(func() {
+		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+			ui.Text(c, "本步").FontSize(fontMicro).TextColor(colFaint).NoWrap()
+			for _, chip := range chips {
+				chip := chip
+				b := ui.Button(c, chip).Shrink(0)
+				if b.Clicked() {
+					a.RevealCard = chip
+				}
+				b.Tooltip("跳到「" + chip + "」")
 			}
-			b.Tooltip("跳到「" + chip + "」")
-		}
+		})
 	})
 }

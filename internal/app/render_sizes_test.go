@@ -609,3 +609,75 @@ func TestCardChipsLeadSomewhereNew(t *testing.T) {
 		}
 	}
 }
+
+// TestCardRowKeepsClearanceUnderScrolling pins the thing a screenshot caught and no
+// assertion did: the pinned row has to hide what passes beneath it and leave a gap below
+// its buttons.
+//
+// The row is sticky, so cards scroll underneath. With no bottom padding the scrolled
+// callout's rounded top edge sat flush against the chip buttons, reading as a rendering
+// fault rather than as a list scrolling under a bar. Measured after the fix: the chips end
+// at y=235, the row's background covers to y=241, page background runs to y=251, and the
+// first card pixel is at y=252.
+//
+// The check walks down from the buttons to find the first fully-background row, then
+// requires a run of clearance before content reappears. It samples a band clear of the
+// chips rather than a single row, because a single row can land on a button's own edge and
+// read as content.
+func TestCardRowKeepsClearanceUnderScrolling(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4 // the longest stage, so there is something to scroll under the row
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	tr.Move(600, 400)
+	for i := 0; i < 5; i++ {
+		tr.Wheel(600, 400, 0, 200)
+		tr.Advance(2e9)
+	}
+	tr.Frame()
+	if a.Scroll.Y == 0 {
+		t.Fatal("the stage did not scroll, so nothing passes under the row")
+	}
+	chip, ok := tr.Find("每层改多少")
+	if !ok {
+		t.Fatal("the card row is gone")
+	}
+	img := ui.Render(a.View, 1180, 720, 1)
+	pixel := func(x, y int) uint32 {
+		c := img.RGBAAt(x, y)
+		return uint32(c.R)<<16 | uint32(c.G)<<8 | uint32(c.B)
+	}
+	const bg = 0x0e1117 // colBg, the page background behind the column
+	flat := func(y int) bool {
+		for x := 300; x < 820; x += 2 {
+			if pixel(x, y) != bg {
+				return false
+			}
+		}
+		return true
+	}
+	top := int(chip.Y + chip.H)
+	first := -1
+	for y := top; y < top+80 && y < 720; y++ {
+		if flat(y) {
+			first = y
+			break
+		}
+	}
+	if first < 0 {
+		t.Fatalf("no background row within 80 DIP below the chips at y=%.0f; the row's "+
+			"background does not cover what scrolls under it", chip.Y)
+	}
+	run := 0
+	for y := first; y < first+80 && y < 720; y++ {
+		if flat(y) {
+			run++
+			continue
+		}
+		break
+	}
+	if run < 6 {
+		t.Fatalf("only %d DIP of clearance between the chip buttons and the card scrolling "+
+			"under them; a card's top edge lands flush against the bar", run)
+	}
+}
