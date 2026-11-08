@@ -1343,6 +1343,15 @@ func (a *App) stageOutput(c *ui.Context) {
 			if ui.PrimaryButton(c, "采样并续写").Clicked() {
 				a.sampleNext()
 			}
+			// The undo only exists while there is something to take back: a button
+			// that is always there and usually does nothing would read as broken,
+			// and this app dims or hides controls that cannot act.
+			if a.undo != nil {
+				if ui.Button(c, "撤销上次采样").Clicked() {
+					a.undoLastSample()
+				}
+				ui.Text(c, "Ctrl+Z").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
+			}
 			ui.Text(c, "续写结果会追加到提示词，并重新跑一遍前向。").FontSize(fontMicro).TextColor(colFaint)
 		})
 		if a.LastSample != "" {
@@ -1406,7 +1415,14 @@ func (a *App) lesson(c *ui.Context) {
 		if a.hasMatrix() {
 			shift = "Shift+← → ↑ ↓ 移动矩阵格子"
 		}
-		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · Enter 采样 · 1–7 跳转", shift)).
+		// Ctrl+Z is listed only when there is a sample to take back, for the same
+		// reason the card's undo button only appears then: advertising a key that
+		// currently does nothing teaches the reader the app ignores them.
+		undo := ""
+		if a.undo != nil {
+			undo = " · Ctrl+Z 撤销采样"
+		}
+		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · Enter 采样%s · 1–7 跳转", shift, undo)).
 			FontSize(fontMicro).TextColor(colFaint)
 	})
 }

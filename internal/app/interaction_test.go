@@ -1040,3 +1040,246 @@ func TestTypingRecomputesWithoutAKey(t *testing.T) {
 			a.Step)
 	}
 }
+
+// TestUndoLastSampleRestoresEverythingTheSampleChanged covers the whole state a
+// sample replaces: prompt, token selection and the record of the draw.
+//
+// Sampling is the only action that writes into the prompt the reader did not type,
+// so it is the only one that needs a way back. Before this it had none: a reader
+// who pressed 采样并续写 on the default prompt to see what it did was left with a
+// byte they could only remove by clearing the field and retyping the sentence.
+func TestUndoLastSampleRestoresEverythingTheSampleChanged(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	prompt := a.Prompt
+	sel := a.SelToken
+	if a.undo != nil {
+		t.Fatal("a fresh app already offers an undo")
+	}
+	if a.undoLastSample() {
+		t.Fatal("undo returned true with nothing to undo")
+	}
+	if a.Prompt != prompt {
+		t.Fatalf("an undo with nothing to undo changed the prompt to %q", a.Prompt)
+	}
+
+	a.sampleNext()
+	if a.Prompt == prompt {
+		t.Fatal("sampling did not change the prompt; the rest of this test would be vacuous")
+	}
+	if a.undo == nil {
+		t.Fatal("sampling did not record an undo point")
+	}
+	// The sample selects what it produced; that is a different token from the one
+	// the reader was on.
+	if a.SelToken == sel {
+		t.Fatalf("the sample left the selection on token %d, the same one it started from", sel)
+	}
+
+	if !a.undoLastSample() {
+		t.Fatal("undo returned false with a sample to take back")
+	}
+	if a.Prompt != prompt {
+		t.Fatalf("undo left the prompt as %q, want %q", a.Prompt, prompt)
+	}
+	if a.SelToken != sel {
+		t.Fatalf("undo left the selection on token %d, want %d — the token the sample "+
+			"selected no longer exists, so leaving it would point past the end",
+			a.SelToken, sel)
+	}
+	if a.LastSample != "" {
+		t.Fatalf("undo left the sample record %q; it describes a byte that is gone", a.LastSample)
+	}
+	// One step, not a stack: a second undo has nothing to take back.
+	if a.undoLastSample() {
+		t.Fatal("undo kept going after the only sample it had")
+	}
+}
+
+// TestUndoIsDroppedWhenThePromptChangesElsewhere pins the other half of the
+// lifecycle: what invalidates the undo point.
+//
+// "Undo the sample" is unambiguous only while the sample is the last thing that
+// happened to the prompt. Once the reader types on top of it, the action could mean
+// "remove the byte" or "remove the byte and my keystrokes" — the app drops the
+// point rather than guessing, which is also why the button disappears.
+func TestUndoIsDroppedWhenThePromptChangesElsewhere(t *testing.T) {
+	cases := []struct {
+		name string
+		act  func(a *App)
+	}{
+		{"typing", func(a *App) { a.applyPrompt(a.Prompt + "x") }},
+		{"a preset", func(a *App) { a.applyPrompt(defaultPrompt) }},
+		{"clearing the field", func(a *App) { a.applyPrompt("") }},
+	}
+	for _, c := range cases {
+		a := newTestApp(t)
+		a.sampleNext()
+		if a.undo == nil {
+			t.Fatalf("%s: no undo point after sampling", c.name)
+		}
+		before := a.Prompt
+		c.act(a)
+		if a.undo != nil {
+			t.Fatalf("%s: the undo point survived, so pressing undo would restore a "+
+				"prompt that predates the reader's own edit (%q after %q)", c.name, a.Prompt, before)
+		}
+	}
+}
+
+// TestUndoButtonAppearsOnlyWhenThereIsSomethingToUndo keeps the control honest: the
+// card shows it after a sample and not before, so a reader never presses a button
+// that cannot act.
+func TestUndoButtonAppearsOnlyWhenThereIsSomethingToUndo(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	if tr.HasText("撤销上次采样") {
+		t.Fatal("the undo button is on the card before anything has been sampled")
+	}
+	a.sampleNext()
+	tr.Frame()
+	if !tr.HasText("撤销上次采样") {
+		t.Fatal("the undo button did not appear after sampling")
+	}
+	a.undoLastSample()
+	tr.Frame()
+	if tr.HasText("撤销上次采样") {
+		t.Fatal("the undo button is still there after the state it undoes is gone")
+	}
+}
+
+// TestCtrlZUndoesTheSampleFromAnyStage: the shortcut is global, so a reader who
+// sampled from the top bar while standing on the tokenising stage can take it back
+// without first navigating to the output stage to find the button.
+func TestCtrlZUndoesTheSampleFromAnyStage(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	for _, step := range []int{0, 3, 6} {
+		a.selectStep(step)
+		tr.Frame()
+		prompt := a.Prompt
+		a.sampleNext()
+		tr.Frame()
+		if a.Prompt == prompt {
+			t.Fatalf("step %d: sampling did not change the prompt", step+1)
+		}
+		tr.Key(ui.Ctrl, ui.KeyZ)
+		tr.Frame()
+		if a.Prompt != prompt {
+			t.Fatalf("step %d: Ctrl+Z left the prompt as %q, want %q", step+1, a.Prompt, prompt)
+		}
+	}
+}
+
+// TestShortcutLineAdvertisesUndoOnlyWithSomethingToUndo keeps the in-app line in
+// step with the key, the same way the card's button is kept in step with it.
+//
+// The line under every lesson is a promise; listing Ctrl+Z while it does nothing
+// teaches the reader that this app ignores keys pressed.
+func TestShortcutLineAdvertisesUndoOnlyWithSomethingToUndo(t *testing.T) {
+	line := func(a *App) string {
+		tr := ui.NewTester(a.View, 1500, 2000)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "快捷键：") {
+				return s
+			}
+		}
+		return ""
+	}
+	a := newTestApp(t)
+	if got := line(a); strings.Contains(got, "Ctrl+Z") {
+		t.Fatalf("the shortcut line advertises Ctrl+Z with nothing to undo: %q", got)
+	}
+	a.sampleNext()
+	if got := line(a); !strings.Contains(got, "Ctrl+Z") {
+		t.Fatalf("the shortcut line does not advertise Ctrl+Z after a sample: %q", got)
+	}
+	a.undoLastSample()
+	if got := line(a); strings.Contains(got, "Ctrl+Z") {
+		t.Fatalf("the shortcut line still advertises Ctrl+Z after the sample was undone: %q", got)
+	}
+}
+
+// TestHeatmapPointerLandsOnTheDrawnCell is the regression test for a defect that
+// made every hover and every click-to-pin name a neighbouring cell.
+//
+// The painter draws the cells offset by the axis-label gutter (20 DIP right, 9 DIP
+// down) and sizes them from the box *minus* that gutter; the hit test mapped the
+// pointer through the whole box with no offset. Measured at 1500×940 on the score
+// matrix with T=36: pointing at the drawn centre of cell (6,0) reported (8,2), and
+// one drawn cell reported no cell at all. 119 of 119 queried cells were wrong.
+//
+// The existing tests could not catch it: they assert that *a* cell is reported, or
+// that the reported cell is inside the causal triangle, both of which remain true
+// when every answer is shifted by two columns. This one asks each drawn centre for
+// its own coordinates.
+func TestHeatmapPointerLandsOnTheDrawnCell(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}, {1920, 1080}} {
+		for _, step := range []int{2, 3} { // score matrix, attention matrix
+			a := newTestApp(t)
+			a.Step = step
+			a.SelToken = 30
+			tr := ui.NewTester(a.View, size.w, size.h)
+			tr.Frame()
+			// At the smallest window the matrix starts below the fold (measured: the
+			// grid begins at y=622 in a 720-tall window and its last cells are past
+			// the bottom edge), so scroll it into view before asking where its cells
+			// are. Find and the painter both report scrolled coordinates.
+			for i := 0; i < 8; i++ {
+				r := a.lastHeatmapRect
+				if r.Y >= 0 && r.Y+r.H <= float32(size.h) {
+					break
+				}
+				tr.Move(float32(size.w)/2, float32(size.h)/2)
+				tr.Wheel(float32(size.w)/2, float32(size.h)/2, 0, 200)
+				tr.Advance(2e9)
+				tr.Frame()
+			}
+
+			r := a.lastHeatmapRect
+			if r.W <= 0 || r.H <= 0 {
+				t.Fatalf("%dx%d step %d: the heatmap painter did not run", size.w, size.h, step+1)
+			}
+			tokens := len(a.Trace.Tokens)
+			grid := heatmapGrid(r, heatmapGutter, tokens)
+			cw, ch := grid.W/float32(tokens), grid.H/float32(tokens)
+
+			// A spread of cells rather than all of them: enough to catch a shift on
+			// either axis and on both ends of the matrix, without a 90-second sweep.
+			checked := 0
+			for q := 1; q < tokens && q < 14; q += 3 {
+				for _, k := range []int{0, q / 2, q} {
+					x := grid.X + (float32(k)+0.5)*cw
+					y := grid.Y + (float32(q)+0.5)*ch
+					tr.Move(x, y)
+					tr.Frame()
+					if a.HoverQ != q || a.HoverK != k {
+						t.Fatalf("%dx%d step %d: the pointer at the centre of drawn cell "+
+							"(%d,%d) reports (%d,%d); the hit test and the painter disagree "+
+							"about where the grid is",
+							size.w, size.h, step+1, q, k, a.HoverQ, a.HoverK)
+					}
+					checked++
+				}
+			}
+			// And the gutter itself is not a cell: pointing into the label margin must
+			// report nothing rather than cell 0.
+			if grid.X > r.X {
+				tr.Move(r.X+2, grid.Y+ch/2)
+				tr.Frame()
+				if a.HoverQ >= 0 && a.HoverK >= 0 {
+					t.Fatalf("%dx%d step %d: a pointer in the axis-label gutter reports cell (%d,%d)",
+						size.w, size.h, step+1, a.HoverQ, a.HoverK)
+				}
+				checked++
+			}
+			if checked < 4 {
+				t.Fatalf("%dx%d step %d: only %d positions checked", size.w, size.h, step+1, checked)
+			}
+		}
+	}
+}
