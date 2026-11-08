@@ -92,6 +92,7 @@ just check    # gofmt 检查 + go vet + go test（CI 的主要门槛；要完全
 | 温度滑块 | 实时重算 softmax 分布（只在第 7 步生效，其余阶段置灰） |
 | 点击 token 胶囊 | 右侧检查器显示该 token 在当前阶段的数值 |
 | 悬停热力图单元格 | 显示 (query, key, 分数, 权重)，并把这一格的 softmax 算式写出来 |
+| 悬停 / 点击第 7 步的逐位置色带 | 一格一个位置。悬停让右侧检查器描述那一格；点一下固定，再点一次或按 `Esc` 解除。不选时默认描述**损失最大**的那个位置——这张卡要说明的正是「这个模型经常错」，默认落在猜错处比落在 t=0 更有用 |
 | 点击热力图单元格 | 固定这一格：指针移开、改提示词后都留在检查器里；再点一次或按 `Esc` 解除。切换阶段、在 token 条里选中另一个 token、或**采样续写**都会解除（格子属于它那一行，换行后留在检查器里会让标题和内容指的是不同 token；采样会选中新生成的那个 token，所以也算换行） |
 | 采样并续写 | 按当前温度抽一个 token 追加到提示词，**并自动选中它**——所以采样后 token 条上那个新格子是高亮的，检查器也立刻描述刚生成的那个字节，在哪个阶段都看得到。卡片会显示这次抽样用到的种子与区间。种子只来自提示词文字，所以温度不变时同一句提示词永远得到同一个结果；拖动温度会改变分布形状，同一个种子可能落进另一个区间 |
 | `←` / `→` | 上一个 / 下一个阶段 |
@@ -113,12 +114,13 @@ just check    # gofmt 检查 + go vet + go test（CI 的主要门槛；要完全
 | 5 残差 / LN | `x ← x + Attn(LN₁(x))`；`x ← x + FFN(LN₂(x))` | `LayerTrace.In`、`AttnProj`、`FFNOut` | `tensor.go: layerNorm` + `addInto` | `Norm1`、`AfterAttn`、`Norm2`、`AfterFFN` |
 | 6 FFN | `W₂ · GELU(W₁ · LN(x))` | `LayerTrace.Norm2` | `matMulRows` → `tensor.go: gelu` → `matMulRows` | `Hidden`（d_ff 宽）、`FFNOut` |
 | 7 输出与采样 | `p = softmax(logits / T)` | `LayerTrace.AfterFFN` 的最后一行 | `layerNorm` → 与 `TokEmbed` 点积（权重绑定） | `FinalNorm`、`Logits`；`weights.go: Probabilities` 再按温度做 softmax |
+| 7 每个位置的预测 | 第 t 行预测第 t+1 个字节 | `FinalNorm` 的**每一行** | `weights.go: Unembed` + `Softmax` | 卡片现算：`nextByteSkill`（模型不收） |
 
 三处容易看漏的细节：
 
 - **头是分开算的**：`HeadProj[h]` 是 `Out_h · Wo[h*d_head:(h+1)*d_head]`，`AttnProj` 就是各头之和，所以第 4 步卡片里「本头贡献」和「全部头相加」是两个不同的量。
 - **`-Inf` 是掩码，不是数值**：`Scores` 右上角是 `negInf`，`softmaxCausal` 直接在 `i+1` 处截断，从不真的对它做指数。
-- **`Logits` 只有一行**：`FinalNorm` 是 `T × d_model`，但 `Trace.Logits` 只保存**最后一个位置**的那一行，宽度是词表大小——本模型把 96 维的向量点乘到 `TokEmbed` 的 256 行上，得到 256 个 logit（形状 `[T, 96] → [1, 256]`），所以第 7 步看的是「最后一个 token 之后的那个字」。
+- **`Logits` 只有一行，但预测不只有一次**：`FinalNorm` 是 `T × d_model`，`Trace.Logits` 只保存**最后一个位置**的那一行，宽度是词表大小——本模型把 96 维的向量点乘到 `TokEmbed` 的 256 行上，得到 256 个 logit（形状 `[T, 96] → [1, 256]`），所以第 7 步顶上那张卡片看的是「最后一个 token 之后的那个字」。但**每个位置都能预测**，而且前面 T−1 个位置的预测还有答案可核对：提示词里就写着真实的下一字节。第 7 步的「每个位置都在预测」卡片用 `Weights.Unembed` 把每一行投影一遍，逐位置比对，给出猜对率与平均交叉熵（本权重实测 24/35、1.121 nats，对着均匀猜测的 ln 256 = 5.545）。`Unembed` 与 `Forward` 用同一个 float32 累加顺序，所以最后一行的结果与 `Trace.Logits` **逐位相同**，由 `TestUnembedReproducesTheRecordedLogits` 钉住。
 
 每次 `Forward` 会把每个中间张量录进 `model.Trace`（`gpt.go`），界面只读这份缓存——所以拖动滑块、切换层/头都不需要重算整个网络。
 
@@ -174,6 +176,8 @@ go run . -weights /path/to/other.json  # 换一份权重（需为 vocab 256 的 
 - tokenizer 中英文往返一致；截断不会切在多字节字符中间
 - **逐张量与 PyTorch 对齐**：`tools/parity.py` 把同一份 `weights.json` 在 PyTorch 里跑一遍，导出 46 token 提示词的全部中间结果（embedding、每层 Norm1、每个头的 Q/K/V、score、attn、头输出、AttnProj、Norm2、GELU 前后、FFN 输出、最终 Norm、logits），Go 侧 `TestParityEveryTensor` 逐项比对，中间张量最大误差 3e-6，logits 1.6e-5——logit 是 256 项点积的和，误差在最后一步被放大。GELU 与 softmax 的 exp 都用查表近似，误差分别 ≤ 4e-7、2.4e-6，由 `TestGeluMatchesErf`、`TestExpNegMatchesExp` 锁定；标量与 SIMD 构建结果一致。这比只比最终 logits 严格得多：头切片顺序、拼接布局、GELU 变体、LayerNorm 的 eps 出错都会被抓到
 - 单头贡献之和严格等于该层的注意力输出（`TestHeadProjSumsToAttnProj`），界面上「本头贡献 Δ_h」不是拿总和冒充的
+- **逐位置预测与记录下来的 logits 逐位一致**：第 7 步的逐位置卡片用 `Weights.Unembed` 重新投影每一行，`TestUnembedReproducesTheRecordedLogits` 要求它对最后一行的结果与 `Forward` 存进 `Trace.Logits` 的值**每个 bit 都相同**——否则同一张卡片上两个数会不一致
+- **逐位置卡片报的损失不是编的**：`TestNextByteSkillMatchesTheModel` 逐位置核对「猜的是自己那一行的 argmax」「比对的是提示词的下一个字节」「损失就是 −ln p(正确字节)」；`TestNextByteSkillLossIsReal` 要求平均损失确实低于均匀猜测的 ln 256，且既不是全对也不是全错（否则色带只有一个颜色）。`TestNextByteSkillIsCalibratedAtTOne` 钉住一个反直觉的实测结果：平均损失对温度是 **U 形**的，最低点在 T = 1，往两端都变大——所以卡片必须说明这个数字随滑块移动，而不是模型变差了
 - 用 `ui.Tester` 模拟真实点击，验证阶段切换
 
 界面本身也能在没有窗口的情况下渲染成 PNG（`ui.Render`）：`RENDER=1 go test ./internal/app -run 'TestRenderSteps|TestRenderSizes'` 会把七个阶段、1180/1500/1920 三种窗口宽度、以及 64 token 长提示词的截图写到 `/tmp`，用于回归检查布局与溢出。加 `RENDER_DIR=<目录>` 可改输出位置（目录不存在会自动创建）——对比改动前后时把它指向两个目录，否则两次渲染会覆盖同一批文件。

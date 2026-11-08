@@ -193,11 +193,14 @@ func Forward(w *Weights, ids []int) *Trace {
 	tr.FinalNorm = layerNorm(x, w.LNFG, w.LNFB)
 	last := tr.FinalNorm[T-1]
 
-	// The unembedding is the token embedding matrix, tied as GPT-2 does.
-	tr.Logits = make([]float32, c.Vocab)
-	for id := 0; id < c.Vocab; id++ {
-		tr.Logits[id] = dot(last, w.TokEmbed[id*d:(id+1)*d])
-	}
+	// Only the last position is projected here. Every earlier row of
+	// tr.FinalNorm is a perfectly usable next-byte predictor — the model was
+	// trained to predict from all of them — and the output stage now shows that
+	// through Weights.Unembed. Forward still records one row because that is
+	// what the app's own sampling path reads, and computing 64 × 256 dots on
+	// every keystroke for a figure one stage uses would be work spent per
+	// keystroke for a number nobody is looking at.
+	tr.Logits = w.Unembed(last)
 	return tr
 }
 

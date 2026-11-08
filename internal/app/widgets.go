@@ -731,3 +731,117 @@ func labelStride(cw float32) int {
 	}
 	return stride
 }
+
+// predictionStrip draws one cell per position of the prompt, coloured by whether
+// the model's next-byte guess at that position was right.
+//
+// The palette question this widget has to answer is not "how big is this number"
+// but "was it right", which is binary, so it cannot reuse valueColor's signed
+// red/blue ramp or probColor's magnitude ramp — either would imply a scale the
+// reader would try to read off. Two colours and a muted wrong state say it
+// directly: green where the top-1 guess was the byte that came next, warm where
+// it was not. Wrong gets the stronger colour on purpose; on the bundled weights
+// wrong is the minority (11 of 35), and a card whose point is "this model is
+// often wrong" cannot paint wrong as the quiet case.
+//
+// The cells are clickable and hoverable, and both write the same state the rest
+// of the app uses for "which element of this figure am I asking about": the
+// inspector's per-position card follows it.
+func (a *App) predictionStrip(c *ui.Context, skill nextByteSkill) {
+	n := len(skill.Rows)
+	if n == 0 {
+		return
+	}
+	hover, sel := -1, a.PredSel
+	el := ui.Box(c).FillWidth().Height(26).Radius(4).Background(colPanel2).
+		Draw(func(p *ui.Painter, r ui.Rect) {
+			cw := r.W / float32(n)
+			for i, row := range skill.Rows {
+				x := r.X + float32(i)*cw
+				w := cw - 1.2
+				if w < 0.8 {
+					w = 0.8
+				}
+				fill := colWarm.Alpha(0.75)
+				if row.Hit {
+					fill = colGreen.Alpha(0.75)
+				}
+				// A losing position with almost no mass on the true byte is a
+				// different failure from one that was nearly right, and the
+				// strip should not flatten them: a loss of 2 nats means the
+				// model was surprised, 6 means it saw the byte as improbable.
+				if !row.Hit {
+					if row.Loss >= 4 {
+						fill = colWarm
+					}
+				}
+				p.Fill(ui.Rect{X: x, Y: r.Y, W: w, H: r.H}, fill, 1)
+			}
+			// The hovered cell gets a thin light outline and the pinned one a
+			// thicker accent outline — the same two weights the heatmap uses for
+			// pointer and pin, so the two figures read alike.
+			mark := func(i int, colour ui.Color, weight float32) {
+				if i < 0 || i >= n {
+					return
+				}
+				x := r.X + float32(i)*cw
+				p.Stroke(ui.Rect{X: x - 0.5, Y: r.Y - 0.5, W: cw + 1, H: r.H + 1},
+					colour, 1, weight)
+			}
+			mark(hover, colText, 1.6)
+			mark(sel, colAccent2, 2)
+		})
+	x, _, onStrip := el.PointerPosition()
+	if onStrip {
+		if i := int(x / (el.Bounds().W) * float32(n)); i >= 0 && i < n {
+			a.PredHover = i
+			hover = i
+		}
+	}
+	if el.Clicked() && hover >= 0 {
+		// Clicking the pinned position again releases it, like the heatmap's
+		// pinned cell — the reader has to be able to undo a click without
+		// knowing that Esc exists.
+		if a.PredSel == hover {
+			a.PredSel = -1
+		} else {
+			a.PredSel = hover
+		}
+	}
+	ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "t0").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
+		ui.Spacer(c).Grow(1)
+		ui.Text(c, fmt.Sprintf("每格是一个位置 t=%d … %d", 0, n-1)).
+			FontSize(fontMicro).TextColor(colFaint).Shrink(0)
+		ui.Spacer(c).Grow(1)
+		ui.Text(c, fmt.Sprintf("t%d", n-1)).FontSize(fontMicro).TextColor(colFaint).Shrink(0)
+	})
+}
+
+// predictionCursor is the position whose prediction the detail block describes:
+// the pinned one if any, then the pointer's, then the worst position in the
+// prompt.
+//
+// Starting on the worst position rather than on t0 is deliberate. The card's
+// whole claim is that this model is often wrong; opening on position 0 — where
+// the bundled weights happen to be right — would let a reader look once, see a
+// green cell, and move on. Opening on the largest loss makes the interesting
+// case the default one, and the strip above shows where it is.
+func (a *App) predictionCursor(skill nextByteSkill) int {
+	if len(skill.Rows) == 0 {
+		return -1
+	}
+	if a.PredSel >= 0 && a.PredSel < len(skill.Rows) {
+		return a.PredSel
+	}
+	if a.PredHover >= 0 && a.PredHover < len(skill.Rows) {
+		return a.PredHover
+	}
+	worst, worstLoss := 0, -1.0
+	for i, row := range skill.Rows {
+		if row.Loss > worstLoss {
+			worst, worstLoss = i, row.Loss
+		}
+	}
+	return worst
+}

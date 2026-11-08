@@ -638,3 +638,88 @@ func lnParamsAreLearned(w *model.Weights) bool {
 	}
 	return false
 }
+
+// positionPrediction is one position's next-byte guess, checked against the byte
+// the prompt actually has there.
+//
+// The model is trained to predict a next token at every position, not only at the
+// end of the prompt, and the trace already holds every such row: Trace.FinalNorm
+// is T × d_model and Forward only projects the last one. Teaching "this is a
+// next-token predictor" while showing a single row asks the reader to take the
+// other T-1 on faith — and, worse, hides the fact that the model is *wrong* at
+// most positions, which is the interesting part.
+type positionPrediction struct {
+	// Pos is the row that predicted; its prediction is the byte at Pos+1.
+	Pos int
+	// Guess and Actual are the predicted and the true next byte id.
+	Guess, Actual int
+	// Probs is the temperature-scaled distribution that Guess came from, kept so
+	// the caller can quote the probability without re-deriving it.
+	Probs []float32
+	// Loss is -ln p(actual) in nats: how surprised the model was by the byte the
+	// prompt actually contains.
+	Loss float64
+	// Hit reports whether Guess is the byte that came next.
+	Hit bool
+}
+
+// nextByteSkill is what the model got right over the prompt it was given, with
+// the reference points that make the figures mean something.
+type nextByteSkill struct {
+	Rows []positionPrediction
+	// Scored is len(Rows): every position with a successor, so T-1.
+	Scored int
+	Hits   int
+	// MeanLoss is the mean of Loss in nats. UniformReference is ln(vocab), the
+	// loss of a model that spreads its probability evenly over every byte, so the
+	// reader can tell 1.12 from "no better than guessing".
+	MeanLoss         float64
+	UniformReference float64
+	Temperature      float64
+}
+
+// computeNextByteSkill runs the model's own unembedding over every row of the
+// final LayerNorm and compares each prediction with the byte that followed.
+//
+// This is teacher forcing made visible: at position t the model sees the prompt
+// up to t and nothing after it (that is what the causal mask guarantees), so its
+// guess for t+1 is an honest prediction and not a lookup. The last row has no
+// successor in the prompt, which is why Scored is T-1 rather than T.
+func computeNextByteSkill(w *model.Weights, tr *model.Trace, temperature float64) nextByteSkill {
+	s := nextByteSkill{Temperature: temperature}
+	if w == nil || tr == nil || len(tr.Tokens) == 0 {
+		return s
+	}
+	s.UniformReference = math.Log(float64(w.Config.Vocab))
+	s.Scored = len(tr.FinalNorm) - 1
+	if s.Scored <= 0 {
+		return s
+	}
+	s.Rows = make([]positionPrediction, 0, s.Scored)
+	var total float64
+	for t := 0; t < s.Scored; t++ {
+		probs := model.Softmax(w.Unembed(tr.FinalNorm[t]), temperature)
+		guess, best := 0, float32(-1)
+		for id, p := range probs {
+			if p > best {
+				best, guess = p, id
+			}
+		}
+		actual := tr.Tokens[t+1].ID
+		pActual := float64(probs[actual])
+		loss := math.Inf(1)
+		if pActual > 0 {
+			loss = -math.Log(pActual)
+		}
+		hit := guess == actual
+		if hit {
+			s.Hits++
+		}
+		total += loss
+		s.Rows = append(s.Rows, positionPrediction{
+			Pos: t, Guess: guess, Actual: actual, Probs: probs, Loss: loss, Hit: hit,
+		})
+	}
+	s.MeanLoss = total / float64(s.Scored)
+	return s
+}

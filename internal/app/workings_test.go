@@ -67,10 +67,18 @@ func TestEveryWorkingsComputerHasATest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read workings.go: %v", err)
 	}
+	// Both test files count: the arithmetic tests for the newer blocks live in
+	// workings_test.go beside the assertions on their printed lines, and a helper
+	// covered there is covered.
 	testSrc, err := os.ReadFile("app_test.go")
 	if err != nil {
 		t.Fatalf("read app_test.go: %v", err)
 	}
+	more, err := os.ReadFile("workings_test.go")
+	if err != nil {
+		t.Fatalf("read workings_test.go: %v", err)
+	}
+	testSrc = append(testSrc, more...)
 
 	var missing []string
 	for _, line := range strings.Split(string(src), "\n") {
@@ -1554,5 +1562,308 @@ func TestLayerNumberingIsTheSameOnScreenAndInTheArithmetic(t *testing.T) {
 		if strings.Contains(chainLine, fmt.Sprintf("（层 %d）", layer+1)) && layer == 0 {
 			t.Fatalf("layer 0 is still called layer 1 in the arithmetic: %q", chainLine)
 		}
+	}
+}
+
+// TestNextByteSkillMatchesTheModel checks the per-position figures against the
+// trace, position by position: the guess must be the argmax of that row's own
+// distribution, the actual byte must be the token after it, and the loss must be
+// −ln of the probability the model gave the truth.
+//
+// Asserting on the rendered text is the point of the project's rule, but this
+// block's numbers come from a computation the stage would otherwise be trusted to
+// do correctly in private. Both sides are checked: this pins computeNextByteSkill
+// to the trace, and TestNextByteSkillCardQuotesItsOwnNumbers pins the card to
+// computeNextByteSkill.
+func TestNextByteSkillMatchesTheModel(t *testing.T) {
+	a := newTestApp(t)
+	skill := computeNextByteSkill(a.W, a.Trace, a.Temp)
+	n := len(a.Trace.Tokens)
+	if skill.Scored != n-1 {
+		t.Fatalf("scored %d positions for a %d-token prompt; every position except the "+
+			"last has a successor, so it should be %d", skill.Scored, n, n-1)
+	}
+	if len(skill.Rows) != skill.Scored {
+		t.Fatalf("%d rows for %d scored positions", len(skill.Rows), skill.Scored)
+	}
+	for i, row := range skill.Rows {
+		if row.Pos != i {
+			t.Fatalf("row %d describes position %d", i, row.Pos)
+		}
+		if row.Actual != a.Trace.Tokens[i+1].ID {
+			t.Fatalf("position %d compares against byte %d, the prompt's next byte is %d",
+				i, row.Actual, a.Trace.Tokens[i+1].ID)
+		}
+		if len(row.Probs) != a.W.Config.Vocab {
+			t.Fatalf("position %d carries %d probabilities, want %d", i, len(row.Probs), a.W.Config.Vocab)
+		}
+		// The guess is this row's argmax, taken from the same distribution the
+		// row keeps — not recomputed from the model a second way.
+		best, bestP := 0, row.Probs[0]
+		var sum float64
+		for id, p := range row.Probs {
+			sum += float64(p)
+			if p > bestP {
+				best, bestP = id, p
+			}
+		}
+		if row.Guess != best {
+			t.Fatalf("position %d says the model guessed byte %d; its argmax is %d", i, row.Guess, best)
+		}
+		if math.Abs(sum-1) > 1e-4 {
+			t.Fatalf("position %d's distribution sums to %v", i, sum)
+		}
+		wantLoss := -math.Log(float64(row.Probs[row.Actual]))
+		if math.Abs(row.Loss-wantLoss) > 1e-9 {
+			t.Fatalf("position %d: loss %.6f, −ln p(actual) is %.6f", i, row.Loss, wantLoss)
+		}
+		if row.Hit != (row.Guess == row.Actual) {
+			t.Fatalf("position %d: hit = %v with guess %d and actual %d",
+				i, row.Hit, row.Guess, row.Actual)
+		}
+	}
+	// The last position has no successor and must not be scored: the card claims
+	// T−1 checks, and scoring the last row would mean inventing an answer.
+	if last := skill.Rows[len(skill.Rows)-1]; last.Pos != n-2 {
+		t.Fatalf("the last scored position is %d, want %d (the last row has no successor)",
+			last.Pos, n-2)
+	}
+}
+
+// TestNextByteSkillLossIsReal pins the claim the summary makes: the model's mean
+// loss over the prompt is meaningfully below the uniform reference, and the
+// reference is ln(vocab). If the weights were random this would fail — which is
+// correct, since the card's sentence is written for a trained model.
+func TestNextByteSkillLossIsReal(t *testing.T) {
+	a := newTestApp(t)
+	skill := computeNextByteSkill(a.W, a.Trace, a.Temp)
+	if math.Abs(skill.UniformReference-math.Log(256)) > 1e-9 {
+		t.Fatalf("uniform reference %.6f, ln(256) is %.6f", skill.UniformReference, math.Log(256))
+	}
+	if skill.MeanLoss >= skill.UniformReference {
+		t.Fatalf("mean loss %.3f is not below the uniform reference %.3f; the summary "+
+			"claims the weights lower it", skill.MeanLoss, skill.UniformReference)
+	}
+	// A trained model is wrong on some positions but not most of them. Both
+	// bounds matter: all-right would make the colour legend's warm case unused,
+	// all-wrong would mean the tokenizer or the comparison is broken.
+	if skill.Hits == 0 {
+		t.Fatal("the model got no position right; the comparison is probably misaligned")
+	}
+	if skill.Hits == skill.Scored {
+		t.Fatalf("the model got all %d positions right, so the strip is one colour", skill.Scored)
+	}
+	t.Logf("top-1 %d/%d, mean loss %.3f nats, uniform %.3f", skill.Hits, skill.Scored,
+		skill.MeanLoss, skill.UniformReference)
+}
+
+// TestNextByteSkillIsCalibratedAtTOne is the measurement that made this test worth
+// writing: the mean loss is *not* monotone in temperature, and assuming it was
+// produced a failing assertion before this test was rewritten.
+//
+// Measured on the bundled weights with the default prompt: T=0.1 → 6.392 nats,
+// T=0.5 → 1.510, T=0.8 → 1.184, T=1.0 → 1.121, T=2.0 → 1.246, T=3.0 → 1.524. The
+// minimum sits at T = 1, which is the temperature the loss was trained at — the
+// weights are calibrated for exactly that scaling. Sharpening past it makes the
+// model confidently wrong about the positions it misses (T=0.1 turns an 11/35 miss
+// rate into 6.4 nats), and flattening it hands mass to 244 wrong bytes.
+//
+// That U shape is the reason the card names the temperature beside its figures:
+// a reader who drags the slider will watch a number the app presents as the
+// model's score move, and the honest explanation is that the score is defined at
+// T=1 and only the reader's choice of T changes it.
+func TestNextByteSkillIsCalibratedAtTOne(t *testing.T) {
+	a := newTestApp(t)
+	loss := func(temp float64) float64 {
+		return computeNextByteSkill(a.W, a.Trace, temp).MeanLoss
+	}
+	one := loss(1.0)
+	// Both directions cost more, which is the U shape rather than a slope.
+	for _, temp := range []float64{0.5, 2.0} {
+		if got := loss(temp); got <= one {
+			t.Fatalf("mean loss at T=%.1f is %.3f, not above T=1.0's %.3f; the loss is "+
+				"trained for T=1 and should be lowest there", temp, got, one)
+		}
+	}
+	// And the fall from sharpening is the steep one, so the ordering on each side
+	// is pinned too — a flat plateau would pass the check above.
+	if loss(0.1) <= loss(0.5) {
+		t.Fatalf("T=0.1 costs %.3f, T=0.5 costs %.3f; overconfidence must be the expensive end",
+			loss(0.1), loss(0.5))
+	}
+	// Temperature rescales a row's logits, so it cannot reorder them: the guesses
+	// and the hit count are the same at every temperature.
+	cold, hot := computeNextByteSkill(a.W, a.Trace, 0.5), computeNextByteSkill(a.W, a.Trace, 2.0)
+	if cold.Hits != hot.Hits || cold.Hits != computeNextByteSkill(a.W, a.Trace, 1.0).Hits {
+		t.Fatalf("the top-1 hit count moved with temperature: %d, %d, %d",
+			cold.Hits, hot.Hits, computeNextByteSkill(a.W, a.Trace, 1.0).Hits)
+	}
+	for i := range cold.Rows {
+		if cold.Rows[i].Guess != hot.Rows[i].Guess {
+			t.Fatalf("position %d: T=0.5 guesses byte %d, T=2.0 guesses %d; temperature "+
+				"rescales the distribution but cannot reorder it", i, cold.Rows[i].Guess, hot.Rows[i].Guess)
+		}
+	}
+}
+
+// TestNextByteSkillCardQuotesItsOwnNumbers reads the card's figures out of the
+// rendered text and checks them against the model — the rule this project follows
+// because a test that only recomputes would pass with the wrong number on screen.
+func TestNextByteSkillCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	a.SelToken = len(a.Trace.Tokens) - 1
+	tr := ui.NewTester(a.View, 1500, 2600)
+	tr.Frame()
+
+	skill := computeNextByteSkill(a.W, a.Trace, a.Temp)
+	if skill.Scored < 2 {
+		t.Fatalf("the default prompt scores only %d positions", skill.Scored)
+	}
+
+	// The header states how many positions there are to check.
+	header := ""
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "个可核对的位置") {
+			header = s
+		}
+	}
+	if header == "" {
+		t.Fatal("the per-position card is missing")
+	}
+	if want := fmt.Sprintf("%d 个可核对的位置", skill.Scored); !strings.Contains(header, want) {
+		t.Fatalf("the card's header says %q, the model has %q", header, want)
+	}
+
+	// The mean loss and the hit rate are both printed and both must match.
+	wantLoss := fmt.Sprintf("%.3f nats", skill.MeanLoss)
+	wantHits := fmt.Sprintf("猜对 %d / %d", skill.Hits, skill.Scored)
+	var sawLoss, sawHits bool
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, wantLoss) {
+			sawLoss = true
+		}
+		if strings.Contains(s, wantHits) {
+			sawHits = true
+		}
+	}
+	if !sawLoss {
+		t.Fatalf("the card does not print the mean loss %q", wantLoss)
+	}
+	if !sawHits {
+		t.Fatalf("the card does not print the hit count %q", wantHits)
+	}
+
+	// The reference line has to name ln(vocab), or 1.12 nats means nothing.
+	if !tr.HasText("均匀猜测") {
+		t.Fatal("the card does not give the uniform reference the loss is measured against")
+	}
+}
+
+// TestNextByteSkillCardOpensOnTheWorstPosition: the detail block defaults to the
+// position the model did worst at, not to position 0, because the card's point is
+// that this model is often wrong.
+func TestNextByteSkillCardOpensOnTheWorstPosition(t *testing.T) {
+	a := newTestApp(t)
+	skill := computeNextByteSkill(a.W, a.Trace, a.Temp)
+	worst, worstLoss := 0, -1.0
+	for i, row := range skill.Rows {
+		if row.Loss > worstLoss {
+			worst, worstLoss = i, row.Loss
+		}
+	}
+	if worst == 0 {
+		t.Skip("the worst position happens to be 0, so this test cannot tell the default from it")
+	}
+	if got := a.predictionCursor(skill); got != worst {
+		t.Fatalf("the detail block opens on position %d; the largest loss is at %d", got, worst)
+	}
+	// Pinning wins over the default, and hovering wins over nothing.
+	a.PredSel = 3
+	if got := a.predictionCursor(skill); got != 3 {
+		t.Fatalf("a pinned position 3 was ignored (cursor %d)", got)
+	}
+	a.PredSel = -1
+	a.PredHover = 5
+	if got := a.predictionCursor(skill); got != 5 {
+		t.Fatalf("a hovered position 5 was ignored (cursor %d)", got)
+	}
+}
+
+// TestPinnedPredictionSurvivesThePointerButNotThePrompt is the state-lifecycle
+// test this app's CONTRIBUTING demands for anything clickable: say what a pin
+// survives and what invalidates it.
+func TestPinnedPredictionSurvivesThePointerButNotThePrompt(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 2600)
+	tr.Frame()
+	a.PredSel = 4
+
+	// A pointer elsewhere must not drop the pin: that is what pinning is for.
+	tr.Move(1200, 40)
+	tr.Frame()
+	tr.Frame()
+	if a.PredSel != 4 {
+		t.Fatalf("moving the pointer cleared the pinned position (now %d)", a.PredSel)
+	}
+	// Esc is the documented way out, and it has to work here too.
+	tr.Key(0, ui.KeyEscape)
+	tr.Frame()
+	if a.PredSel != -1 {
+		t.Fatalf("Esc left the pinned position at %d", a.PredSel)
+	}
+
+	// A new prompt has different positions, and a stale pin would describe a
+	// position the new trace may not have — recompute must clear it.
+	a.PredSel = 4
+	a.Prompt = "hi"
+	a.recompute()
+	if a.PredSel != -1 {
+		t.Fatalf("the pinned position survived a prompt change: %d", a.PredSel)
+	}
+}
+
+// TestPredictionSentenceUsesTheAppsIndexing pins the fix for a bug this card had
+// in its first draft: the sentence mixed one-based and zero-based numbering, so a
+// panel headed "t=8" said "没有任何来自位置 9 及之后的信息 … 拿提示词的第 9 个字节"
+// when the byte it compared was token 9 (the ninth byte of a zero-based sequence
+// is token 8).
+//
+// The app numbers tokens from 0 everywhere — the strip, the heatmap axes, the
+// inspector's "token #35 / 35" — so the sentence has to as well.
+func TestPredictionSentenceUsesTheAppsIndexing(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	a.SelToken = len(a.Trace.Tokens) - 1
+	skill := computeNextByteSkill(a.W, a.Trace, a.Temp)
+	// Pick a position whose successor is a distinctive byte, then pin it.
+	pos := 8
+	if pos >= len(skill.Rows) {
+		pos = len(skill.Rows) - 1
+	}
+	a.PredSel = pos
+	// The per-position detail is the inspector's card, so the frame has to be the
+	// output stage with a tall enough window for the panel to have been laid out.
+	tr := ui.NewTester(a.View, 1500, 2600)
+	tr.Frame()
+
+	want := fmt.Sprintf("所以拿 token %d（%q）与它比对",
+		pos+1, byteText(a.Trace.Tokens[pos+1].ID))
+	var found string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "与它比对") && strings.Contains(s, "因果掩码") {
+			found = s
+		}
+	}
+	if found == "" {
+		t.Fatal("the honesty sentence is missing from the pinned prediction's panel")
+	}
+	if !strings.Contains(found, want) {
+		t.Fatalf("the sentence does not name the byte it compares (%q):\n%s", want, found)
+	}
+	if !strings.Contains(found, fmt.Sprintf("位置 %d 的计算", pos)) ||
+		!strings.Contains(found, fmt.Sprintf("位置 %d 及之后", pos+1)) {
+		t.Fatalf("the sentence's cut and its comparison are not both stated zero-based:\n%s", found)
 	}
 }

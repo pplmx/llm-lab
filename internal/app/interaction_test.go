@@ -87,6 +87,12 @@ func TestResetButtonRestoresTheDefaultPrompt(t *testing.T) {
 
 // TestSampleButtonAppendsAToken checks the sampling card's button, which the
 // existing sampling tests bypass by calling sampleNext.
+//
+// The card sits below the fold on the output stage, and the per-position strip
+// pushed it further down, so the frame has to scroll to it first. That is the
+// contract this test should state: the button is reachable by scrolling, and the
+// keyboard's Enter is the always-visible alternative (TestEveryShortcutHasA-
+// VisibleAlternative pins that the top bar's own button is on screen).
 func TestSampleButtonAppendsAToken(t *testing.T) {
 	a := newTestApp(t)
 	a.Step = 6
@@ -96,6 +102,19 @@ func TestSampleButtonAppendsAToken(t *testing.T) {
 	r, ok := tr.Find("采样并续写")
 	if !ok {
 		t.Fatal("sample button not found")
+	}
+	// Find reports layout coordinates that move with the scroll (measured: 1148
+	// before scrolling, 593 after), so this has to scroll until the button is
+	// actually inside the window, not just wheel a fixed number of times.
+	for i := 0; i < 12 && r.Y+r.H > 940; i++ {
+		tr.Wheel(600, 400, 0, 400)
+		tr.Advance(2e9)
+		tr.Frame()
+		r, _ = tr.Find("采样并续写")
+	}
+	if r.Y+r.H > 940 {
+		t.Fatalf("the sampling card's button is still below the window after scrolling "+
+			"(y=%.0f, Scroll.Y=%.0f); the action has no visible target", r.Y, a.Scroll.Y)
 	}
 	tr.ClickAt(r.X+r.W/2, r.Y+r.H/2)
 	tr.Frame()

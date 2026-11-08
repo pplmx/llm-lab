@@ -239,6 +239,36 @@ func (t *Trace) Probabilities(temperature float64) []float32 {
 	return softmaxCopy(t.Logits, temperature)
 }
 
+// Unembed projects one row of the final LayerNorm onto the vocabulary.
+//
+// The unembedding is the token embedding matrix, tied the way GPT-2 ties it, so
+// one row of the residual stream becomes one logit per byte. Forward calls this
+// for the last row; the app calls it for any row when it shows that this model
+// predicts a next byte at *every* position, not only at the end of the prompt.
+//
+// The dot product runs in the same float32 order as Forward always has, so a row
+// projected here is bit-identical to the logits Forward recorded for it. That
+// matters: the output stage prints one row's numbers twice, and two paths that
+// disagreed in the last digit would make the reader distrust both.
+func (w *Weights) Unembed(row []float32) []float32 {
+	c := w.Config
+	out := make([]float32, c.Vocab)
+	for id := 0; id < c.Vocab; id++ {
+		out[id] = dot(row, w.TokEmbed[id*c.DModel:(id+1)*c.DModel])
+	}
+	return out
+}
+
+// Softmax is the temperature-scaled softmax of any logit vector, exported so the
+// app can turn the logits of a position other than the last into probabilities
+// with the same code the last position goes through. A second implementation in
+// the UI would be free to disagree with this one about the temperature, the
+// maximum subtraction or the float64 accumulation, and the disagreement would
+// show up as two figures on one screen that cannot both be right.
+func Softmax(logits []float32, temperature float64) []float32 {
+	return softmaxCopy(logits, temperature)
+}
+
 // TopK returns the k token ids with the highest probability, most likely
 // first. A non-positive k returns no ids.
 func TopK(probs []float32, k int) []int {

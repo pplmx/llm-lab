@@ -235,3 +235,32 @@ func TestDocsImagesAreCurrent(t *testing.T) {
 		}
 	}
 }
+
+// TestPerPositionCardIsVisibleWithoutScrolling is the guard for the mistake this
+// round made: the output stage's per-position card was first appended after the
+// sampling card, which put its header at y=1091 in a 940-DIP window — entirely
+// below the fold, so no reader would ever see it, while every content test stayed
+// green because they ask whether a card exists, not whether it is on screen.
+//
+// It stays a position check rather than a scrolling one because of what this card
+// is: the stage's whole point is that the model predicts at every position, and a
+// reader who has to scroll to discover that has already formed their impression
+// from the single-row card above. The two other cards below it may scroll.
+func TestPerPositionCardIsVisibleWithoutScrolling(t *testing.T) {
+	// The two sizes the project renders and looks at: the minimum, and the default.
+	for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}} {
+		a := newTestApp(t)
+		a.Step = 6
+		tr := ui.NewTester(a.View, size.w, size.h)
+		tr.Frame()
+		r, ok := tr.Find("每个位置都在预测")
+		if !ok {
+			t.Fatalf("%dx%d: the per-position card is missing from the output stage", size.w, size.h)
+		}
+		if r.Y < 0 || r.Y+r.H > float32(size.h) {
+			t.Fatalf("%dx%d: the per-position card's header is at y=%.0f, outside a window "+
+				"%d DIP tall — the stage's own point would be below the fold",
+				size.w, size.h, r.Y, size.h)
+		}
+	}
+}

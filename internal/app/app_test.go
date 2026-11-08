@@ -8259,6 +8259,12 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 				if strings.Contains(s, "抽到 id ") {
 					continue
 				}
+				// Same for the per-position sentence: different weights put the largest loss at
+				// a different position, so the byte it quotes changes. That glyph is data — the
+				// sentence's wording is identical across weight sets.
+				if strings.Contains(s, "是在核对模型真的做过的一次预测") {
+					continue
+				}
 				set[num.ReplaceAllString(s, "#")] = true
 			}
 			out[step] = set
@@ -8397,7 +8403,13 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 		3: {"行可以比较", "第 # 层的头 #"}, // the short-sample branch, then the long one
 		// Confidence follows maxP; the last-position note appears only when the selected token is
 		// not the last one, which a one-token prompt makes impossible.
-		6: {"这么高的把握", "根本没有那么大的把握", "有那么大的把握", "选中的 t=# 不参与预测"},
+		// The per-position card needs two tokens to have anything to check; a one-token prompt gets
+		// an explanation instead of the strip, which is a designed branch rather than drift.
+		6: {"这么高的把握", "根本没有那么大的把握", "有那么大的把握", "选中的 t=# 不参与预测",
+			"这个提示词只有一个位置",
+			// The per-position card's body exists only when there is a position to score, so
+			// every fixed line of it is absent for a one-token prompt by design.
+			"当前损失 #", "均匀猜测", "与它比对"},
 	}
 
 	collect := func(prompt string) []map[string]bool {

@@ -352,3 +352,76 @@ func TestExpNegMatchesExp(t *testing.T) {
 		t.Fatalf("expNeg(NaN) = %v, want NaN", got)
 	}
 }
+
+// TestUnembedReproducesTheRecordedLogits pins the identity the output stage now
+// relies on twice: projecting a row of the final LayerNorm with Weights.Unembed
+// gives exactly the logits Forward recorded for that row.
+//
+// Exactly, not approximately. The stage prints a position's top-1 probability from
+// the per-position figures and the last position's distribution from Trace.Logits
+// side by side; two code paths that disagreed in the last digit would show one
+// number twice with two different values, which reads as a bug even when both are
+// defensible.
+func TestUnembedReproducesTheRecordedLogits(t *testing.T) {
+	w, err := Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	ids := make([]int, 0, len(w.Reference.Prompt))
+	for i := 0; i < len(w.Reference.Prompt); i++ {
+		ids = append(ids, int(w.Reference.Prompt[i]))
+	}
+	tr := Forward(w, ids)
+	got := w.Unembed(tr.FinalNorm[len(tr.FinalNorm)-1])
+	if len(got) != len(tr.Logits) {
+		t.Fatalf("Unembed returned %d logits, the trace holds %d", len(got), len(tr.Logits))
+	}
+	for id := range got {
+		if got[id] != tr.Logits[id] {
+			t.Fatalf("logit %d: Unembed gives %v, Forward recorded %v — the two paths "+
+				"must agree bit for bit or the stage prints one number twice", id, got[id], tr.Logits[id])
+		}
+	}
+}
+
+// TestUnembedDiffersPerPosition is the premise of the per-position card: the
+// model's prediction at position t is a different distribution from its
+// prediction at t+1, so showing only the last one shows one of many distinct
+// answers rather than a representative one.
+//
+// A rerun of the same row would satisfy a weaker version of this test, so it
+// compares the argmax across positions and requires several distinct winners.
+func TestUnembedDiffersPerPosition(t *testing.T) {
+	w, err := Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	ids := make([]int, 0, len(defaultTestPrompt))
+	for i := 0; i < len(defaultTestPrompt); i++ {
+		ids = append(ids, int(defaultTestPrompt[i]))
+	}
+	tr := Forward(w, ids)
+	if len(tr.FinalNorm) < 4 {
+		t.Fatalf("the test prompt has only %d positions", len(tr.FinalNorm))
+	}
+	winners := map[int]bool{}
+	for pos := range tr.FinalNorm {
+		logits := w.Unembed(tr.FinalNorm[pos])
+		best, bestVal := 0, logits[0]
+		for id, v := range logits {
+			if v > bestVal {
+				best, bestVal = id, v
+			}
+		}
+		winners[best] = true
+	}
+	if len(winners) < 3 {
+		t.Fatalf("all %d positions predict one of %d bytes (%v); the per-position "+
+			"card would be showing the same answer over and over",
+			len(tr.FinalNorm), len(winners), winners)
+	}
+}
+
+// defaultTestPrompt is the prompt the app opens with, repeated here so the model
+// package's tests do not import the app package (which would be a cycle).
+const defaultTestPrompt = "The transformer reads the tokens and"

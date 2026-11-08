@@ -73,6 +73,16 @@ type App struct {
 	// the way the FFN card does, so they get the same treatment: one index
 	// cannot be a dimension in a 24-wide row and a 96-wide row at once.
 	HoverDimHeadOut, HoverDimProj int
+	// PredHover/PredSel are the output stage's position strip: the position
+	// whose next-byte prediction the inspector's card describes. PredHover is
+	// rewritten by the strip every frame the pointer is on it and keeps its
+	// value afterwards, the way vectorStrip's dimension does — the reader should
+	// be able to point, then read the inspector, without the description
+	// reverting the moment they look away from the strip.
+	// PredSel is the position a click fixed, -1 when none; while it is set it
+	// wins, and -1 for both means "the position the model did worst at", which
+	// is the one a reader opening the card most wants to see.
+	PredHover, PredSel int
 
 	SidebarW   float32
 	InspectorW float32
@@ -130,6 +140,8 @@ func New(w *model.Weights) *App {
 		HoverDimOut:     -1,
 		HoverDimHeadOut: -1,
 		HoverDimProj:    -1,
+		PredHover:       -1,
+		PredSel:         -1,
 		SidebarW:        224,
 		InspectorW:      330,
 		theme:           labTheme(),
@@ -216,6 +228,13 @@ func (a *App) recompute() {
 	// The pointer's hover belongs to the old layout; the pinned cell does not.
 	a.clearPointer()
 	a.clampPinnedCell()
+	// A pinned prediction, unlike a pinned matrix cell, cannot be clamped: it
+	// names a position in a sequence, and a different prompt has different
+	// positions. Position 4 of the old prompt and position 4 of the new one are
+	// unrelated predictions, so the pin describes something that no longer
+	// exists and every way of changing the prompt has to drop it. The matrix
+	// cell survives because it is a (query, key) pair inside the same prompt.
+	a.PredSel = -1
 	// Refresh the per-trace summary alongside the trace it describes.
 	a.cancelStats = measureCancellation(a.Trace)
 	a.cancelStatsFor = a.Trace
@@ -358,6 +377,7 @@ func (a *App) stepToken(delta int) {
 func (a *App) clearHover() {
 	a.clearPointer()
 	a.KeyQ, a.KeyK = -1, -1
+	a.PredSel = -1
 }
 
 // clampPinnedCell keeps a pinned attention cell inside the triangle after the
@@ -403,6 +423,7 @@ func (a *App) clearPointer() {
 	a.HoverDimV, a.HoverDimH = -1, -1
 	a.HoverDimOut = -1
 	a.HoverDimHeadOut, a.HoverDimProj = -1, -1
+	a.PredHover = -1
 }
 
 // cancellation returns the cached summary for the current trace, computing it
@@ -563,9 +584,12 @@ func (a *App) handleKeys(c *ui.Context) {
 	case c.Shortcut(0, ui.KeyEscape):
 		// Esc is the one "let go of everything" key: it stops playback and
 		// releases a pinned cell, so a reader who clicked the matrix can get
-		// back to plain hovering without hunting for the cell again.
+		// back to plain hovering without hunting for the cell again. The
+		// output stage's pinned prediction is fixed the same way, for the same
+		// reason: it is the other thing in the app a click can pin.
 		a.stopPlayback()
 		a.KeyQ, a.KeyK = -1, -1
+		a.PredSel = -1
 	// Shift+arrows. On the two attention stages they walk the matrix, since a
 	// matrix cell is what those stages teach and was the last interaction only
 	// the mouse could reach; everywhere else they move the token selection, as
@@ -1001,6 +1025,7 @@ func (a *App) inspector(c *ui.Context) {
 				a.inspectorFFN(c)
 			case 6:
 				a.inspectorLogits(c, tr)
+				a.inspectorPrediction(c)
 			}
 			a.inspectorHoverCell(c)
 		})

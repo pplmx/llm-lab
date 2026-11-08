@@ -1245,6 +1245,8 @@ func (a *App) stageOutput(c *ui.Context) {
 			len(probs), ceiling, 100*ent/ceiling))
 	})
 
+	a.stageNextByteSkill(c)
+
 	card(c, func() {
 		// The list is a slice, and on this model the slice is essentially the
 		// whole distribution: the top 12 carry 99.99999% of the mass and the
@@ -1749,4 +1751,170 @@ func normText(v float64) string {
 		return fmt.Sprintf("%.2f", v)
 	}
 	return fmt.Sprintf("%.0f", v)
+}
+
+// nextByteSkillIntro is the opening paragraph of the per-position card, shared by
+// the card and by the one-token explanation so a reader always meets the idea
+// before the state that has no data for it.
+const nextByteSkillIntro = "模型不只在提示词末尾预测下一个字。因果掩码让位置 t 只看得到 t 及其之前的内容，" +
+	"所以每个位置都能给出一个诚实的下一字节猜测——而提示词里就写着正确答案。" +
+	"每一格是一个位置：绿色是猜对了，暖色是猜错了，颜色更深的错得更离谱。"
+
+// stageNextByteSkill shows that this model predicts a next byte at every
+// position, not only at the end of the prompt — and how often it is wrong.
+//
+// The output stage used to end on one row: the last position's distribution.
+// That is the row the sampler reads, so it is the right thing to put on top, but
+// it is one of T predictions the model makes and the only one with no answer to
+// check against — the prompt ends there. Every other row has one: the byte the
+// reader typed next. The trace already holds them (Trace.FinalNorm is T × d_model
+// and Forward projects only the last row), so this card costs one unembedding per
+// position and turns "this is a next-token predictor" from a claim into a score.
+//
+// Measured on the bundled weights and the default prompt: top-1 correct 24/35,
+// mean loss 1.121 nats against ln(256) = 5.545 for guessing uniformly. The loss is
+// the more informative figure — 69% accuracy sounds impressive until the per-row
+// detail shows the misses are mostly the corpus's own words.
+func (a *App) stageNextByteSkill(c *ui.Context) {
+	tr := a.Trace
+	skill := computeNextByteSkill(a.W, tr, a.Temp)
+	if skill.Scored <= 0 {
+		// One token, nothing to check against. Say why the card is empty rather
+		// than leaving the stage silent: this is the reader's first prompt if they
+		// typed a single character, and a missing card in a lesson that is all
+		// about "every position predicts" reads like a bug in the app.
+		card(c, func() {
+			sectionTitle(c, "每个位置都在预测", "这个提示词只有一个位置")
+			mutedText(c, nextByteSkillIntro)
+			mutedText(c, "只是这个提示词只有一个位置，而一次预测要拿提示词里真实的下一个字节来核对——"+
+				"位置 0 之后没有字节了。多打一个字，这张卡片就会变成逐位置的图。")
+			kv(c, "可以核对的位置", "0（需要至少两个 token）")
+		})
+		return
+	}
+	card(c, func() {
+		sectionTitle(c, "每个位置都在预测", fmt.Sprintf("T − 1 = %d 个可核对的位置", skill.Scored))
+		mutedText(c, nextByteSkillIntro)
+		a.predictionStrip(c, skill)
+		a.nextByteSkillSummary(c, tr, skill)
+		// One legend line, not four: the counts it would carry are already in the
+		// summary above, and on this stage every row of chrome pushes the sampling
+		// card's own button out of the window. What the strip's colours and its
+		// interaction need is one sentence, not a colour key that repeats numbers.
+		ui.Row(c).Gap(10).Wrap().AlignItems(ui.Center).Children(func() {
+			ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(9, 9).Radius(2).Background(colGreen.Alpha(0.75))
+				ui.Text(c, "猜对").FontSize(fontMicro).TextColor(colMuted)
+			})
+			ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(9, 9).Radius(2).Background(colWarm.Alpha(0.75))
+				ui.Text(c, "猜错").FontSize(fontMicro).TextColor(colMuted)
+			})
+			ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(9, 9).Radius(2).Background(colWarm)
+				ui.Text(c, "更深 = 猜得离谱（−ln p > 4）").FontSize(fontMicro).TextColor(colMuted)
+			})
+			ui.Row(c).Gap(5).AlignItems(ui.Center).Children(func() {
+				ui.Box(c).Size(9, 9).Radius(2).Border(1.5, colAccent2)
+				ui.Text(c, "点击固定，Esc 解除").FontSize(fontMicro).TextColor(colFaint)
+			})
+		})
+	})
+}
+
+// nextByteSkillSummary is the sentence under the per-position block: the two
+// aggregate figures with their reference points.
+func (a *App) nextByteSkillSummary(c *ui.Context, tr *model.Trace, skill nextByteSkill) {
+	if skill.Scored <= 0 {
+		return
+	}
+	pct := 100 * float64(skill.Hits) / float64(skill.Scored)
+	// ln(vocab) is the loss of a model that puts 1/256 on every byte — the
+	// "no better than guessing" line. Quoting 1.12 nats without it leaves the
+	// reader unable to tell a good number from a bad one, the same problem the
+	// entropy line above has and solves the same way.
+	saved := 100 * (1 - skill.MeanLoss/skill.UniformReference)
+	// One line, not a three-line workings block: this card sits above the sampling
+	// card on the tallest stage, and each extra line here pushes that card's own
+	// button further past the window's bottom edge. The arithmetic is still all
+	// present — the total, the mean and the reference it beats — it just reads as
+	// a sentence rather than a derivation, because the derivation is visible in
+	// the individual positions the inspector shows.
+	workingsLines(c, []string{
+		fmt.Sprintf("猜对 %d / %d（%.0f%%）· 平均损失 %.3f nats · 均匀猜测 ln(%d) = %.3f → 降低了 %.0f%%",
+			skill.Hits, skill.Scored, pct, skill.MeanLoss,
+			int(math.Round(math.Exp(skill.UniformReference))), skill.UniformReference, saved),
+	})
+	// The loss is computed at the reader's temperature, and the curve is not a
+	// slope: it is U-shaped with its minimum at T=1, the value the weights were
+	// trained at. Measured on the bundled weights and the default prompt, mean
+	// loss runs 6.392 (T=0.1), 1.510 (T=0.5), 1.121 (T=1.0), 1.246 (T=2.0). That
+	// shape is the useful lesson and the card states it whether or not the reader
+	// has moved the slider, because the number on screen is about to move and
+	// nothing else on the stage says why.
+	losses := fmt.Sprintf("%.3f", skill.MeanLoss)
+	if skill.Temperature != 1 {
+		// Quote the T=1 figure beside the current one: the reader needs to know
+		// which way their slider moved this number and by how much.
+		atOne := computeNextByteSkill(a.W, tr, 1.0).MeanLoss
+		losses = fmt.Sprintf("%.3f（T=1 时是 %.3f）", skill.MeanLoss, atOne)
+	}
+	ui.Text(c, fmt.Sprintf("当前损失 %s。平均损失是 U 形的，最低点在 T = 1——权重训练在那个标度上；"+
+		"往两端调都变大，但那是温度的标度，不是模型变差（argmax 一个都不会变）。", losses)).
+		FontSize(fontMicro).TextColor(colFaint).LineHeight(1.4)
+}
+
+// inspectorPrediction is the output stage's second inspector card: one position's
+// prediction in full — what the model guessed, what the prompt actually had, and
+// the probability it gave the truth, so the loss below can be re-derived by hand.
+//
+// It lives in the inspector rather than in the stage card because that is where
+// this app puts "one element of the figure, in full": the attention cell, the
+// token's bytes and the LayerNorm dimension all do the same. The strip itself
+// stays in the stage column, where it is wide enough to be a figure — 35 cells in
+// a 330-DIP panel would be 8 DIP each.
+func (a *App) inspectorPrediction(c *ui.Context) {
+	tr := a.Trace
+	// Two tokens are the minimum for a prediction to have an answer to check.
+	if len(tr.Tokens) < 2 {
+		return
+	}
+	skill := computeNextByteSkill(a.W, tr, a.Temp)
+	i := a.predictionCursor(skill)
+	if i < 0 || i >= len(skill.Rows) {
+		return
+	}
+	row := skill.Rows[i]
+	source := "损失最大的位置"
+	switch {
+	case a.PredSel >= 0:
+		source = "已固定 · Esc 或再点一次解除"
+	case a.PredHover >= 0:
+		source = "指针所在的位置"
+	}
+	card(c, func() {
+		sectionTitle(c, fmt.Sprintf("t=%d 的预测", row.Pos), source)
+		// The inspector is 330 DIP wide and its card is padded, so the label column
+		// has to stay narrow enough to leave the values room on one line. The labels
+		// are worded for that width rather than shortened at render time: "实际是"
+		// and "给答案的概率" say the whole thing in 6 characters, where "实际下一个
+		// 字节" wrapped its own value onto the next line.
+		const labelW = 76
+		kvW(c, "模型猜", fmt.Sprintf("%q（p = %.4f）", byteText(row.Guess), row.Probs[row.Guess]), labelW)
+		kvW(c, "实际是", fmt.Sprintf("%q", byteText(row.Actual)), labelW)
+		kvW(c, "给答案的概率", fmt.Sprintf("%.4f", row.Probs[row.Actual]), labelW)
+		kvW(c, "损失", fmt.Sprintf("−ln(%.4f) = %.3f nats", row.Probs[row.Actual], row.Loss), labelW)
+		// The premise of the whole card, checked rather than asserted: the causal
+		// mask means row t was computed without ever seeing token t+1.
+		//
+		// Both indices are zero-based and named as such. The app numbers tokens
+		// and positions from 0 everywhere — the strip, the heatmap axes, "token
+		// #35 / 35" — and the first draft of this sentence mixed the two bases,
+		// so a panel headed t=8 said it compared "第 9 个字节" while comparing
+		// token 9, which is the tenth.
+		mutedText(c, fmt.Sprintf("位置 %d 的计算里没有任何来自位置 %d 及之后的信息"+
+			"（因果掩码在第 %d 个位置截断），所以拿 token %d（%q）与它比对，"+
+			"是在核对模型真的做过的一次预测。",
+			row.Pos, row.Pos+1, row.Pos, row.Pos+1, byteText(row.Actual)))
+	})
 }
