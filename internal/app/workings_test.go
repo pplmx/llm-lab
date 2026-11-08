@@ -3667,3 +3667,50 @@ func TestUnderflowNoteReachesTheCard(t *testing.T) {
 		t.Fatalf("the card does not explain the underflow (%q)", want)
 	}
 }
+
+// TestLessonNumbersAreComputedNotQuoted guards the property an audit of the lesson bodies
+// was looking for and, this time, found intact.
+//
+// Three rounds have each fixed a prose claim that was measured once and then shown for every
+// prompt: the logit lens callout (round 15), the loss curve's minimum (round 24), and the
+// embedding structure figure. The lesson bodies are the largest block of hand-written prose
+// in the app, so they are the next place that shape could hide. It is not there — the FFN
+// lesson's sparsity sentence comes from sparsityEvidence(tr) and tracks the prompt:
+//
+//	"hi"                                  40% / 3% / 64%
+//	"The transformer reads the tokens and" 44% / 2% / 73%
+//
+// This test states that as a fact to preserve rather than a bug to fix. If a future edit
+// replaces the computation with literal percentages, the two prompts will agree and this
+// fails, which is the cue to look at the sentence.
+func TestLessonNumbersAreComputedNotQuoted(t *testing.T) {
+	evidence := func(prompt string) string {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 5 // the FFN lesson carries the sparsity sentence
+		tr := ui.NewTester(a.View, 1500, 3400)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "最大的十分之一") {
+				return s
+			}
+		}
+		return ""
+	}
+	short := evidence("hi")
+	long := evidence("The transformer reads the tokens and")
+	if short == "" || long == "" {
+		t.Fatal("the FFN lesson's sparsity sentence is missing on one of the prompts")
+	}
+	if short == long {
+		t.Fatalf("the sparsity sentence is identical for a 2-token and a 36-token prompt, so its "+
+			"numbers are no longer computed from the trace:\n%s", long)
+	}
+	// And the sentence has to name the four quantities, not just differ.
+	for _, want := range []string{"最大的十分之一", "中位数", "低于峰值的十分之一", "恰好为 0"} {
+		if !strings.Contains(long, want) {
+			t.Fatalf("the sparsity sentence no longer mentions %q", want)
+		}
+	}
+}
