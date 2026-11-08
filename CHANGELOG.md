@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+### Added
+
+- 第 4 步新增「四个头各自在做什么」：用**整句平均**比较同一层四个头的行为，而不是只比一行的熵
+  - 检查器原先只列出「四个头在这一行的熵」。那是一个 query 的四个数，答不了「头有没有分工」——两个头可以在同一行上有完全相同的熵，却在看完全不同的地方
+  - 改量的两个量都是矩阵里真能看出来的行为：**每行给紧邻前一个 token 的平均权重**，以及**有多少行把一半以上权重压在同一个 key 上**
+  - 实测（默认提示词 35 行）：**第 0 层的四个头是 66% / 22% / 37% / 61%（跨度 44 个百分点），第 1 层是 13% / 14% / 14% / 12%（跨度 3 个百分点）**。所以「每个头学到不同的模式」在这份权重里**只对第 0 层成立**，卡片把结论按层写出来，不让读者去第 1 层找一个不存在的差别
+  - `TestHeadProfilesMeasureWhatTheyClaim` 在**两层**上逐头重算四个量；`TestHeadProfilesDistinguishTheTwoLayers` 钉住「第 0 层跨度 ≥ 0.2 且大于第 1 层」这个前提——否则卡片那句「换到第 0 层看看」就是在骗人；`TestHeadProfilesCardRendersBothVerdicts` 逐层从渲染文字里读结论
+- 修：`Esc` 那一行 README 只写了「停止自动播放」，实际它还解除固定的热力图格子与固定的逐位置预测。补全并加 `TestEscReleasesEverythingItClaims`（三个状态一起验，且要求 README 那行三样都写到）
+- 修：写新卡片时又写出 `**加粗**`——本项目 `ui.Text` 不解析 markdown。第 3 轮加的 `TestNoLiteralMarkdownInRenderedText` 直接抓到
+- 修：`TestEachStripWidthHasItsOwnCursor` 用默认窗口扫描向量条，新卡片把注意力阶段的三条向量条挤到视口外，测试报「找不到」。这条测试问的是「哪条条写哪个 hover 变量」，与布局无关，改用高窗口；布局能否滚到由 `TestEveryStageCanBeScrolledToItsEnd` 负责
+- 修：`TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned` 的「每个允许的分支都要被走到」检查**从不切换层**，而新卡片的结论按层变化，于是「很接近」那一支永远走不到。该检查补上按层扫描
+
 ### Fixed
 
 - **logit lens 的最后一格对每个位置都返回同一个答案，36 个位置里错了 30 个。** 这是第 259 轮引入的 bug：最后一格无条件取 `tr.Logits`，而 `Trace.Logits` **只存最后一个位置**那一行（`Forward` 只投影那一个位置）

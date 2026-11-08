@@ -2493,7 +2493,12 @@ func TestEachStripWidthHasItsOwnCursor(t *testing.T) {
 	// Attention: the head output row is d_head wide, the projection rows are
 	// d_model wide. Pointing at one must not set the other.
 	a.Step = 3
-	tr := ui.NewTester(a.View, 1500, 940)
+	// A tall window, not the default: this test is about which hover field each strip
+	// writes, and the attention stage's strips sit below the fold once the four-head
+	// comparison card is on it. A layout that scrolls is TestEveryStageCanBeScrolledToItsEnd's
+	// business; making this test scroll too would confuse "the strip is missing" with
+	// "the strip is off screen".
+	tr := ui.NewTester(a.View, 1500, 2400)
 	tr.Frame()
 	headX, headY := stripPoint(t, a, tr, "head")
 	tr.Move(headX, headY)
@@ -8300,7 +8305,9 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 	// unexpected difference must match none of them.
 	allowed := map[int][]string{
 		// Matched against the number-stripped text, so digits are already "#".
-		3: {"第 # 层的头 #"}, // the per-weights attention description
+		// the per-weights attention description, and the four-head comparison verdict,
+		// which reads "差别明显" for one weight set and "很接近" for another
+		3: {"第 # 层的头 #", "四个头差别明显", "四个头在这一层上很接近", "这里换两个能区分行为的量"},
 		// gamma and beta learned versus identity, plus the logit lens ladder: it
 		// describes what these particular weights say at each depth, so every one of
 		// its sentences moves with them — which rungs agree with the final answer,
@@ -8475,8 +8482,13 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 	num := regexp.MustCompile(`[-+]?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?%?`)
 	// allowed lists, per stage, the fragments a designed difference is expected to contain.
 	allowed := map[int][]string{
-		2: {"所有分数都是负的"},           // the all-negative legend note
-		3: {"行可以比较", "第 # 层的头 #"}, // the short-sample branch, then the long one
+		2: {"所有分数都是负的"}, // the all-negative legend note
+		// the short-sample branch, then the long one, then the four-head comparison,
+		// whose verdict depends on how many rows there are to average over
+		// ..., plus every line of the four-head comparison card: it needs at least two
+		// tokens to have any row to average, so a one-token prompt renders none of it.
+		3: {"行可以比较", "第 # 层的头 #", "四个头差别明显", "四个头在这一层上很接近", "看不出分工",
+			"这里换两个能区分行为的量", "前一位权重", "押注超过半数"},
 		// Confidence follows maxP; the last-position note appears only when the selected token is
 		// not the last one, which a one-token prompt makes impossible.
 		// The per-position card needs two tokens to have anything to check; a one-token prompt gets
@@ -8546,12 +8558,27 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 	}
 
 	// Every allowed branch must still be reached somewhere, or it is not being tested.
+	//
+	// The layer control is swept too. collect() leaves Layer at 0, and the four-head
+	// comparison card says something different per layer — "差别明显" on layer 0,
+	// "很接近" on layer 1 — so without sweeping it the layer-1 verdict is an allowed
+	// branch that is never reached, which this check correctly calls out as gone.
 	all := map[string]bool{}
 	for _, prompt := range []string{"a", "hi", "abc", "The transformer reads the tokens and"} {
 		for step := range lessons {
 			for s := range collect(prompt)[step] {
 				all[s] = true
 			}
+		}
+	}
+	for layer := 0; layer < 2; layer++ {
+		a := newTestApp(t)
+		a.Step = 3
+		a.Layer = layer
+		tr := ui.NewTester(a.View, 1500, 2800)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			all[s] = true
 		}
 	}
 	for step, frags := range allowed {

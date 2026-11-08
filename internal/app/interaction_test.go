@@ -1696,3 +1696,47 @@ func TestShortcutLineExplainsFocusPrecedence(t *testing.T) {
 			"is what gets pressed", b.Prompt)
 	}
 }
+
+// TestEscReleasesEverythingItClaims pins what the README says Esc does.
+//
+// The row used to read only "停止自动播放", which understated it by two thirds: Esc
+// also releases the pinned matrix cell and the pinned per-position prediction. A
+// reader looking for how to let go of a pin would read that row and conclude Esc was
+// not the key, then hunt for the cell to click again.
+func TestEscReleasesEverythingItClaims(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.KeyQ, a.KeyK = 5, 3 // pinned matrix cell
+	a.PredSel = 2         // pinned prediction
+	a.Playing = true
+	a.NextAt = a.NextAt.Add(1)
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	tr.Key(0, ui.KeyEscape)
+	tr.Frame()
+	if a.KeyQ >= 0 || a.KeyK >= 0 {
+		t.Fatalf("Esc left the matrix cell pinned at (%d,%d)", a.KeyQ, a.KeyK)
+	}
+	if a.PredSel >= 0 {
+		t.Fatalf("Esc left the position pinned at %d", a.PredSel)
+	}
+	if a.Playing {
+		t.Fatal("Esc left autoplay running")
+	}
+	// And the README says all three.
+	doc := readREADME(t)
+	var row string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| `Esc` |") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatal("the README no longer documents Esc")
+	}
+	for _, want := range []string{"自动播放", "格子", "预测"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("the Esc row does not mention %q, which Esc releases:\n%s", want, row)
+		}
+	}
+}

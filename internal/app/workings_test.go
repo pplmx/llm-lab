@@ -2161,3 +2161,129 @@ func TestLogitLensCardQuotesItsOwnNumbers(t *testing.T) {
 		t.Fatal("the logit lens card has no misconception callout")
 	}
 }
+
+// TestHeadProfilesMeasureWhatTheyClaim checks the four-head card's figures against the
+// trace, for both layers — the two layers behave differently, so testing one would
+// miss the layer-1 case entirely.
+func TestHeadProfilesMeasureWhatTheyClaim(t *testing.T) {
+	a := newTestApp(t)
+	n := len(a.Trace.Tokens)
+	for li := range a.Trace.Layers {
+		profiles := computeHeadProfiles(a.Trace.Layers[li], n)
+		if len(profiles) != len(a.Trace.Layers[li].Heads) {
+			t.Fatalf("layer %d: %d profiles for %d heads", li, len(profiles), len(a.Trace.Layers[li].Heads))
+		}
+		for _, p := range profiles {
+			h := &a.Trace.Layers[li].Heads[p.Head]
+			// Recompute independently.
+			var ent, prev float64
+			peakRows := 0
+			var peak float64
+			rows := 0
+			for q := 1; q < n; q++ {
+				var e float64
+				bw := float64(-1)
+				for k := 0; k <= q; k++ {
+					v := float64(h.Attn[q][k])
+					if v > 1e-9 {
+						e -= v * math.Log(v)
+					}
+					if v > bw {
+						bw = v
+					}
+				}
+				ent += e
+				prev += float64(h.Attn[q][q-1])
+				if bw > peak {
+					peak = bw
+				}
+				if bw > 0.5 {
+					peakRows++
+				}
+				rows++
+			}
+			if math.Abs(p.MeanEntropy-ent/float64(rows)) > 1e-9 {
+				t.Fatalf("L%dH%d entropy: profile %.6f, recomputed %.6f",
+					li, p.Head, p.MeanEntropy, ent/float64(rows))
+			}
+			if math.Abs(p.PrevShare-prev/float64(rows)) > 1e-9 {
+				t.Fatalf("L%dH%d prev share: profile %.6f, recomputed %.6f",
+					li, p.Head, p.PrevShare, prev/float64(rows))
+			}
+			if p.PeakRows != peakRows {
+				t.Fatalf("L%dH%d peak rows: profile %d, recomputed %d", li, p.Head, p.PeakRows, peakRows)
+			}
+			if math.Abs(p.Peak-peak) > 1e-9 {
+				t.Fatalf("L%dH%d peak: profile %.6f, recomputed %.6f", li, p.Head, p.Peak, peak)
+			}
+			if p.Rows != n-1 {
+				t.Fatalf("L%dH%d rows: %d, want %d", li, p.Head, p.Rows, n-1)
+			}
+			if math.Abs(p.EntropyCeiling-math.Log(float64(n))) > 1e-9 {
+				t.Fatalf("L%dH%d ceiling: %.6f vs ln(%d)", li, p.Head, p.EntropyCeiling, n)
+			}
+		}
+	}
+}
+
+// TestHeadProfilesDistinguishTheTwoLayers is the premise of the card's verdict: layer 0's
+// four heads are spread out and layer 1's are not.
+//
+// If that stopped being true the card's "换到第 0 层看看" advice would be wrong, and the
+// card would be telling a reader to go look at a layer that is just as uniform.
+func TestHeadProfilesDistinguishTheTwoLayers(t *testing.T) {
+	a := newTestApp(t)
+	n := len(a.Trace.Tokens)
+	if len(a.Trace.Layers) < 2 {
+		t.Skip("the claim names two layers")
+	}
+	spread := func(li int) float64 {
+		ps := computeHeadProfiles(a.Trace.Layers[li], n)
+		lo, hi := ps[0].PrevShare, ps[0].PrevShare
+		for _, p := range ps[1:] {
+			if p.PrevShare < lo {
+				lo = p.PrevShare
+			}
+			if p.PrevShare > hi {
+				hi = p.PrevShare
+			}
+		}
+		return hi - lo
+	}
+	s0, s1 := spread(0), spread(1)
+	if s0 < 0.2 {
+		t.Fatalf("layer 0's previous-token share spread is %.2f; the card's verdict needs it "+
+			"to be wide enough to read as specialisation", s0)
+	}
+	if s1 > s0 {
+		t.Fatalf("layer 1's spread (%.2f) is wider than layer 0's (%.2f); the card tells a "+
+			"reader that layer 1 is the uniform one", s1, s0)
+	}
+	t.Logf("prev-share spread: layer 0 %.2f, layer 1 %.2f", s0, s1)
+}
+
+// TestHeadProfilesCardRendersBothVerdicts reads the verdict out of the rendered text on
+// each of the two layers, since the card says different things about them.
+func TestHeadProfilesCardRendersBothVerdicts(t *testing.T) {
+	for layer, want := range map[int]string{0: "四个头差别明显", 1: "四个头在这一层上很接近"} {
+		a := newTestApp(t)
+		a.Step = 3
+		a.Layer = layer
+		tr := ui.NewTester(a.View, 1500, 2400)
+		tr.Frame()
+		// The verdict is one long sentence, so this matches a substring rather than
+		// HasText (which requires the whole string to be equal).
+		var lines []string
+		for _, s := range tr.Texts() {
+			lines = append(lines, s)
+		}
+		joined := strings.Join(lines, "\n")
+		if !strings.Contains(joined, "四个头各自在做什么") {
+			t.Fatalf("layer %d: the four-head card is missing", layer)
+		}
+		found := strings.Contains(joined, want)
+		if !found {
+			t.Fatalf("layer %d: no verdict containing %q", layer, want)
+		}
+	}
+}

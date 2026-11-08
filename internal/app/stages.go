@@ -692,6 +692,8 @@ func (a *App) stageSoftmax(c *ui.Context) {
 				colMin, colMax, float64(len(h.Attn))))
 	})
 
+	a.stageHeadProfiles(c)
+
 	card(c, func() {
 		sectionTitle(c, "加权求和", "本头的输出，以及它在残差里的份额")
 		// Three strips, two different widths: the first is d_head, the other two are d_model,
@@ -2086,5 +2088,91 @@ func (a *App) inspectorPrediction(c *ui.Context) {
 			"（因果掩码在第 %d 个位置截断），所以拿 token %d（%q）与它比对，"+
 			"是在核对模型真的做过的一次预测。",
 			row.Pos, row.Pos+1, row.Pos, row.Pos+1, byteText(row.Actual)))
+	})
+}
+
+// stageHeadProfiles compares what the four heads of this layer do over the whole
+// prompt, which is the question the lesson asserts an answer to and never showed.
+//
+// The inspector already lists one row's entropy per head, which is four numbers about
+// a single query: two heads can tie there while looking at completely different
+// places. These are the two behaviours actually visible in this model's matrices — how
+// much a row puts on the token immediately before it, and how many rows concentrate
+// more than half their weight on one key.
+//
+// The measured result is worth a card because it is uneven rather than uniform: on the
+// bundled weights and the default prompt, layer 0's previous-token share runs
+// 0.66 / 0.22 / 0.37 / 0.61 across its four heads, while layer 1's four sit at
+// 0.12–0.14 — indistinguishable. So "each head learns a different pattern" is true of
+// the first layer and false of the second, and a reader switching the head control on
+// layer 1 would otherwise be looking for a difference that is not there.
+func (a *App) stageHeadProfiles(c *ui.Context) {
+	l := a.layer()
+	profiles := computeHeadProfiles(*l, len(a.Trace.Tokens))
+	if len(profiles) == 0 {
+		return
+	}
+	card(c, func() {
+		sectionTitle(c, "四个头各自在做什么", fmt.Sprintf("层 %d · 整句 %d 行的平均", a.Layer, profiles[0].Rows))
+		// No markdown in this app: ui.Text draws the characters it is given.
+		mutedText(c, "检查器里那张「这一行的统计」只描述一行：两个头可以在同一行上有相同的熵，"+
+			"却在看完全不同的地方。这里换两个能区分行为的量——行内有多少权重落在紧邻的前一个 token，"+
+			"以及有多少行把一半以上的权重压在同一个 key 上。")
+		// Bars share one axis across the heads so the comparison is a shape.
+		rows := make([]barRow, 0, len(profiles))
+		var maxPrev float64
+		for _, p := range profiles {
+			if p.PrevShare > maxPrev {
+				maxPrev = p.PrevShare
+			}
+		}
+		for _, p := range profiles {
+			label := fmt.Sprintf("H%d", p.Head)
+			colour := colGreen
+			if p.Head == a.Head {
+				label = fmt.Sprintf("H%d ◂", p.Head)
+				colour = colAccent2
+			}
+			rows = append(rows, barRow{
+				Label:      label,
+				Value:      float32(p.PrevShare),
+				ValueText:  fmt.Sprintf("%.0f%%", 100*p.PrevShare),
+				Color:      colour,
+				LabelWidth: 40,
+				ValueWidth: 40,
+				Tip: fmt.Sprintf("头 %d：平均 %.0f%% 的权重给紧邻的前一个 token · %d / %d 行把半数以上押在同一个 key · 平均熵 %.2f / %.2f nats",
+					p.Head, 100*p.PrevShare, p.PeakRows, p.Rows, p.MeanEntropy, p.EntropyCeiling),
+			})
+		}
+		ui.Text(c, "每行给「紧邻的前一个 token」的平均权重").FontSize(fontMicro).TextColor(colFaint)
+		bars(c, rows, float32(maxPrev), colGreen)
+		// The spread is the thing worth naming: four heads doing one thing, or four
+		// heads doing four things, are different pictures and the bars show which.
+		lo, hi := profiles[0].PrevShare, profiles[0].PrevShare
+		for _, p := range profiles[1:] {
+			if p.PrevShare < lo {
+				lo = p.PrevShare
+			}
+			if p.PrevShare > hi {
+				hi = p.PrevShare
+			}
+		}
+		spread := hi - lo
+		verdict := fmt.Sprintf("四个头在这一层上很接近（%.0f%%–%.0f%%），看不出分工——"+
+			"换到第 0 层看看，那里的头差别明显得多", 100*lo, 100*hi)
+		if spread >= 0.2 {
+			verdict = fmt.Sprintf("四个头差别明显：%.0f%%–%.0f%%，也就是有的头主要在盯前一个 token、"+
+				"有的在整句里找别的位置——这就是「每个头学到不同的模式」在这份权重里的具体样子",
+				100*lo, 100*hi)
+		}
+		workingsLinesCopyable(c, []string{
+			fmt.Sprintf("前一位权重：H0 %.0f%% · H1 %.0f%% · H2 %.0f%% · H3 %.0f%%",
+				100*profiles[0].PrevShare, 100*profiles[1].PrevShare,
+				100*profiles[2].PrevShare, 100*profiles[3].PrevShare),
+			fmt.Sprintf("押注超过半数的行：H0 %d · H1 %d · H2 %d · H3 %d（共 %d 行）",
+				profiles[0].PeakRows, profiles[1].PeakRows,
+				profiles[2].PeakRows, profiles[3].PeakRows, profiles[0].Rows),
+			verdict,
+		})
 	})
 }
