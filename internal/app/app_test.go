@@ -8926,7 +8926,17 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 		// strips were still perfectly hoverable (measured: the residual strips write HoverDimIn at
 		// y=1058, between the old probe's 1000 and 1100 rows). The question this test asks is
 		// whether a stage has hover feedback at all, so the probe has to be able to find it.
-		for y := 400; y < 2200; y += 25 {
+		//
+		// The sweep stops at the first hit. The question is whether the stage has hover
+		// feedback at all, and one hit answers it; continuing to the end cost 4,500 frame
+		// renders across the seven stages and made this the slowest test in the repository
+		// by a wide margin — measured at 133s of a 310s suite, which pushed `go test` past
+		// its 300s timeout under -timeout and turned CI red while every assertion was green.
+		// Start below the card-row chips (they end near y=235 at this window size) so a
+		// tooltip on a chip cannot be mistaken for a strip highlight, but above the first
+		// card's contents: measured, the residual stage's first strip sits at y=400-419, so
+		// starting at 420 skipped the very thing this sweep is looking for.
+		for y := 320; y < 2200 && best == 0; y += 25 {
 			for x := 300; x < 1150; x += 100 {
 				tr.Move(float32(x), float32(y))
 				tr.Frame()
@@ -8943,6 +8953,7 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 				}
 				if d > best {
 					best = d
+					break
 				}
 			}
 		}
