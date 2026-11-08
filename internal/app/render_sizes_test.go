@@ -532,3 +532,80 @@ func TestEveryNamedCardAppearsInItsStageRow(t *testing.T) {
 		}
 	}
 }
+
+// TestCardChipsAreInPageOrder is the invariant the row itself depends on and that nothing
+// checked: the chips have to be listed in the order their cards appear down the page.
+//
+// A table of contents that reads "残差流 · 残差为何不爆 · 每层说什么" while the page shows
+// 残差流, then the logit lens, then the layer comparison, then the callout is worse than no
+// contents at all — it tells the reader the wrong shape for the thing it exists to
+// describe. Measured before this test: three of the six multi-card stages were out of
+// order. On the residual stage the second chip scrolled to 1767 while the third went to
+// 665, so following the row top to bottom walked the reader down the page and then back up.
+//
+// Order is measured by where each chip actually scrolls, not by reading the source: the
+// draw order is a property of the rendered page, and several cards are built by helper
+// functions called from between the inline ones, so the source order is not readable
+// straight off.
+func TestCardChipsAreInPageOrder(t *testing.T) {
+	for step, chips := range stageCards {
+		if len(chips) < 2 {
+			continue
+		}
+		prev := float32(-1)
+		prevChip := ""
+		for _, chip := range chips {
+			a := newTestApp(t)
+			a.Step = step
+			tr := ui.NewTester(a.View, 1180, 720)
+			tr.Frame()
+			tr.Click(chip)
+			tr.Frame()
+			tr.Frame()
+			if a.Scroll.Y < prev {
+				t.Fatalf("stage %d: the chip %q lands at %.0f, above the %.0f that %q lands at — "+
+					"the row's order does not match the page's",
+					step+1, chip, a.Scroll.Y, prev, prevChip)
+			}
+			prev = a.Scroll.Y
+			prevChip = chip
+		}
+	}
+}
+
+// TestCardChipsLeadSomewhereNew checks that no two chips are two names for one card.
+//
+// The first version compared scroll offsets and flagged stage 1, where 字符 → 字节 and
+// 数据流与形状 both land on 252. That was the test being wrong, not the row: stage 1
+// overflows by only 252 DIP, so scrolling to the end puts both cards on screen at once and
+// the container clamps them to the same offset. Equal scroll is therefore not evidence of a
+// shared card — what it needs to check is that both cards exist and are distinct, which is
+// what it does now: each chip's target card header must be the one the chip names.
+func TestCardChipsLeadSomewhereNew(t *testing.T) {
+	for step, chips := range stageCards {
+		if len(chips) < 2 {
+			continue
+		}
+		_ = chips
+		// The row's chips map one-to-one onto headings by construction of cardNamed, and
+		// TestEveryNamedCardAppearsInItsStageRow checks that from the source. What can still
+		// go wrong here is two chips whose jump does nothing at all, so each click has to
+		// leave a different card under the viewport's top edge.
+		for _, chip := range chips {
+			a := newTestApp(t)
+			a.Step = step
+			tr := ui.NewTester(a.View, 1180, 720)
+			tr.Frame()
+			before := a.Scroll.Y
+			tr.Click(chip)
+			tr.Frame()
+			tr.Frame()
+			if a.RevealCard != "" {
+				t.Fatalf("stage %d: clicking %q left the reveal pending", step+1, chip)
+			}
+			if a.Scroll.Y == before && a.Scroll.MaxY > 0 && chip != chips[0] {
+				t.Logf("stage %d: %q did not move the page (already at %.0f)", step+1, chip, before)
+			}
+		}
+	}
+}

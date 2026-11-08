@@ -2473,10 +2473,18 @@ func (a *App) stageLayerRewrite(c *ui.Context) {
 var stageCards = [][]string{
 	{"token 序列", "字符 → 字节", "数据流与形状"},
 	{"嵌入向量", "位置向量", "位置编码的形状"},
-	{"Q / K / V", "掩码反事实", "分数矩阵"},
+	// The mask counterfactual is drawn after the score matrix (measured: matrix 400,
+	// counterfactual 930), so the row lists them in that order.
+	{"Q / K / V", "分数矩阵", "掩码反事实"},
 	{"注意力矩阵", "四个头", "加权求和"},
-	{"残差流", "残差为何不爆", "每层说什么", "每层改多少", "LayerNorm"},
-	{"哪个单元在干活", "FFN 内部"},
+	// Order must match the draw order: the row is a table of contents, and a chip whose
+	// position disagrees with its card's position is worse than no row. Measured from the
+	// scroll each chip produces: 残差流 93, 每层说什么 665, 每层改多少 1133, LayerNorm 1460,
+	// 残差为何不爆 1767. The registry had the last three in a different order than the page.
+	{"残差流", "每层说什么", "每层改多少", "LayerNorm", "残差为何不爆"},
+	// The stage's own FFN figure comes first (measured at 93 against 664 for the
+	// concentration card, which was placed after it last round for exactly this reason).
+	{"FFN 内部", "哪个单元在干活"},
 	{"最后位置", "每位置预测", "Top-12", "采样"},
 }
 
