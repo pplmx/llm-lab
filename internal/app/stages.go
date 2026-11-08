@@ -109,7 +109,7 @@ var lessons = []lesson{
 	{
 		name:    "输出 / 采样",
 		title:   "从向量到下一个字",
-		body:    "最后一层的输出经过最终 LayerNorm，再与嵌入矩阵相乘（权重绑定），只把**最后一个位置**的向量投影到词表上（形状从 [T, 96] 变成 [1, 256]），得到下一个 token 的 logit——前面的位置也算得出来，但不参与这次预测。logit 不是概率，要除以温度再做 softmax。温度趋近 0 等于贪心，温度大于 1 会让分布变平、输出更随机。",
+		body:    "最后一层的输出经过最终 LayerNorm，再与嵌入矩阵相乘（权重绑定），只把最后一个位置的向量投影到词表上（形状从 [T, 96] 变成 [1, 256]），得到下一个 token 的 logit——但每个位置其实都算得出下一个字节（下面「每个位置都在预测」那张卡片把它们逐个核对了）。logit 不是概率，要除以温度再做 softmax。温度趋近 0 等于贪心，温度大于 1 会让分布变平、输出更随机。",
 		formula: "p = softmax(logits / T)",
 	},
 }
@@ -761,6 +761,14 @@ func (a *App) stageResidual(c *ui.Context) {
 	l := a.layer()
 	i := clampIndex(a.SelToken, len(tr.Tokens))
 
+	// The ladder comes first because it answers the question the strips below
+	// raise: they show that the stream accumulates a vector, and a reader's next
+	// question is what the model says with it at each depth. Placed after them it
+	// was measured at y=1260 in a 940-DIP window — entirely below the fold, on a
+	// stage that already overflows by 874 DIP, so the card would have existed for
+	// nobody.
+	a.stageLogitLens(c)
+
 	card(c, func() {
 		sectionTitle(c, "残差流", fmt.Sprintf("层 %d · 两次加法，信息都绕过了子层", a.Layer))
 		// The three strips below are the residual chain, and it is easy to label
@@ -838,6 +846,9 @@ func (a *App) stageResidual(c *ui.Context) {
 		if p := computeLN(before, w.LN2G, w.LN2B, dim); p.ok {
 			lnWorkings(c, dim, p)
 		}
+	})
+
+	card(c, func() {
 		// The two numbers that make the point: γ/β leave the variance a little
 		// off 1, but the LENGTH of a normalized row is pinned near √d_model no
 		// matter how large the stream feeding it has grown.
@@ -857,6 +868,134 @@ func (a *App) stageResidual(c *ui.Context) {
 				normText(inMean), normText(outMean), outMean/inMean,
 				pin, lnLo, lnHi, 100*lnLo/pin, 100*lnHi/pin))
 	})
+}
+
+// stageLogitLens answers a question the residual stage raises but never answers:
+// the stream accumulates a vector, so what does the model *say* with it, at each
+// depth?
+//
+// This is the logit lens: apply the final LayerNorm and the tied unembedding to a
+// row that is not the final row. It is a read-out trick, not a computation the
+// network performs, and the measured result on this model is that it is a *bad*
+// way to explain the network: of 180 intermediate rungs across the prompt, 153
+// disagree with the final answer and 105 of those are more than 90% sure of
+// themselves. So the card's job is not "watch the prediction improve" — it is to
+// show that a confident intermediate answer means nothing, which is the same lesson
+// the output stage's "97% is not correctness" callout makes from the other side.
+func (a *App) stageLogitLens(c *ui.Context) {
+	tr := a.Trace
+	pos := clampIndex(a.SelToken, len(tr.Tokens))
+	// At T=1, not at the reader's temperature. The temperature slider is scoped to
+	// the output stage — dimmed everywhere else, with a tooltip saying which stages
+	// read it — and TestEachControlChangesOnlyItsOwnStages enforces that. Reading a
+	// diagnostic through the reader's temperature made the residual stage redraw when
+	// the slider moved, which is the contract breaking rather than a nicety: a control
+	// that "does nothing here" must not do something here.
+	lens := computeLogitLens(a.W, tr, pos, 1.0)
+	if !lens.OK {
+		return
+	}
+	finalRung := lens.Rungs[len(lens.Rungs)-1]
+	card(c, func() {
+		sectionTitle(c, "每一层会说什么", fmt.Sprintf("在位置 %d 上逐层读出预测", pos))
+		// No markdown in this app: ui.Text draws the characters it is given.
+		mutedText(c, "把网络最后一层的 LayerNorm 与反嵌入提前套用到中间某一层，就是「logit lens」——"+
+			"它问的是「如果模型停在这里，它会说什么」。这不是模型真的算过的东西："+
+			"网络只对最后一行做一次投影，中间这些答案没被训练过、也不参与输出。")
+		// The bar is p(final answer) at each depth, not the top-1 probability and
+		// not the entropy. Those two were the first thing drawn here and they made a
+		// chart with no information in it: this model's intermediate distributions are
+		// near one-hot (entropy 0.00 against a 5.55-nat ceiling), so every bar was a
+		// hairline. p(final) is the quantity that actually moves, and the one that
+		// answers the question — how much of the final answer is already here.
+		rows := make([]barRow, 0, len(lens.Rungs))
+		var maxP float32
+		for _, rung := range lens.Rungs {
+			if p := rung.Probs[lens.Final]; p > maxP {
+				maxP = p
+			}
+		}
+		for _, rung := range lens.Rungs {
+			p := rung.Probs[lens.Final]
+			label := rung.Name
+			colour := colGreen
+			switch {
+			case rung.IsFinal:
+				colour = colAccent2
+			case rung.AgreesWithFinal:
+				colour = colAccent
+			}
+			rows = append(rows, barRow{
+				Label:      label,
+				Value:      p,
+				ValueText:  fmt.Sprintf("%.1f%%", 100*p),
+				Color:      colour,
+				LabelWidth: 96,
+				ValueWidth: 56,
+				Tip: fmt.Sprintf("%s：它对最终答案 %q 给了 %.2f%%，自己的答案是 %q（%.1f%%）%s",
+					label, byteText(lens.Final), 100*p,
+					byteText(rung.Top), 100*rung.Probs[rung.Top], agreeNote(rung)),
+			})
+		}
+		bars(c, rows, maxP, colGreen)
+		kv(c, "横条", fmt.Sprintf("每一层给最终答案 %q 的概率", byteText(lens.Final)))
+
+		// Scoped to this position and said so: the callout below quotes the
+		// whole-prompt figures, and the two must not read as disagreeing
+		// measurements of one quantity.
+		agreement := fmt.Sprintf("只看这个位置：%d / %d 个中间层说对了", countAgree(lens), lens.RungsCompared)
+		if lens.ConfidentWrong > 0 {
+			agreement = fmt.Sprintf("只看这个位置：%d / %d 个中间层「自信地错」——答案不是最终答案，"+
+				"却对自己的答案有 90%% 以上的把握", lens.ConfidentWrong, lens.RungsCompared)
+		}
+		// The first working line used to read "最终答案 "␣"：输入向量 x 给了 0.00%",
+		// which is a sentence about a probability that was never computed for that
+		// row in a way a reader can use — the input vector's lens answer is a
+		// different byte entirely, and 0.00% is the rounded residue of that. Say
+		// what the first rung actually claims instead.
+		// The last intermediate rung, which is the one a reader comparing "before the
+		// final projection" with "the final output" will look at.
+		lastIntermediate := lens.Rungs[len(lens.Rungs)-2]
+		first := lens.Rungs[0]
+		workingsLinesCopyable(c, []string{
+			fmt.Sprintf("%s 的答案是 %q（它给最终答案 %.2f%%）",
+				first.Name, byteText(first.Top), 100*first.Probs[lens.Final]),
+			fmt.Sprintf("最后一个中间层「%s」给最终答案 %.2f%%，最终输出 %.2f%%",
+				lastIntermediate.Name, 100*lastIntermediate.Probs[lens.Final],
+				100*finalRung.Probs[lens.Final]),
+			agreement,
+		})
+		// The whole-prompt figure, which is what makes this more than one position's
+		// anecdote. Measured on the bundled weights and the default prompt.
+		misconception(c,
+			"「logit lens 能说明模型是一层一层把答案想清楚的」",
+			"它不能。把整句提示词的每一层都读一遍：180 个中间层里有 153 个的答案与最终答案不同，"+
+				"其中 105 个对自己的错误答案有 90% 以上的把握，36 个位置里有 31 个至少有一层如此。"+
+				"所以中间层「很确定」不说明它和最终答案一致——这和输出阶段那条「97% 不等于正确」"+
+				"是同一件事的两个方向。lens 可以用来看某一层「偏向什么」，不能用来看它「知道什么」。")
+	})
+}
+
+// countAgree counts the intermediate rungs that already give the final answer.
+func countAgree(lens logitLens) int {
+	n := 0
+	for _, r := range lens.Rungs {
+		if !r.IsFinal && r.AgreesWithFinal {
+			n++
+		}
+	}
+	return n
+}
+
+// agreeNote says whether a rung agrees with the final answer, for the bar tooltip.
+func agreeNote(r lensRung) string {
+	switch {
+	case r.IsFinal:
+		return " · 这是模型真正的输出"
+	case r.AgreesWithFinal:
+		return " · 与最终答案一致"
+	}
+	return " · 与最终答案不同"
 }
 
 // cancellationStats summarises the heads' cancellation over every row of the

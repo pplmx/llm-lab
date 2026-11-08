@@ -264,3 +264,27 @@ func TestPerPositionCardIsVisibleWithoutScrolling(t *testing.T) {
 		}
 	}
 }
+
+// TestLogitLensCardIsVisibleWithoutScrolling applies round 257's lesson to this
+// round's card: a card appended to the end of a stage can end up entirely below the
+// fold, where every content test still passes because they ask whether it exists.
+//
+// Measured at 1500×940 before the card was moved: the header sat at y=1260 in a
+// 940-DIP window, on a stage that already overflows by 874 DIP. It now opens the
+// stage, because it answers the question the strips below it raise.
+func TestLogitLensCardIsVisibleWithoutScrolling(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}, {1920, 1080}} {
+		a := newTestApp(t)
+		a.Step = 4
+		tr := ui.NewTester(a.View, size.w, size.h)
+		tr.Frame()
+		r, ok := tr.Find("每一层会说什么")
+		if !ok {
+			t.Fatalf("%dx%d: the logit lens card is missing from the residual stage", size.w, size.h)
+		}
+		if r.Y < 0 || r.Y+r.H > float32(size.h) {
+			t.Fatalf("%dx%d: the logit lens card's header is at y=%.0f, outside a window %d DIP tall",
+				size.w, size.h, r.Y, size.h)
+		}
+	}
+}

@@ -259,6 +259,28 @@ func (w *Weights) Unembed(row []float32) []float32 {
 	return out
 }
 
+// LogitLens reads a projection out of the residual stream at some intermediate
+// depth: it applies the model's *final* LayerNorm parameters and the tied
+// unembedding to a row that is not the final row.
+//
+// This is a read-out trick, not something the model computes. The network applies
+// one final LayerNorm and one unembedding, to the last block's output. Applying
+// them earlier is the "logit lens" of nostalgebraist: it answers "what would the
+// model's answer be if it stopped here", which is not a question the forward pass
+// asks, and the early answers are not calibrated.
+//
+// It lives in the model package so the normalisation is the same code the real
+// final projection uses. A second LayerNorm in the app could drift from this one in
+// eps, in which parameters it applies, or in float32 rounding.
+//
+// The argument must be a *pre-normalisation* residual row: Trace.Input or a layer's
+// AfterAttn/AfterFFN. Passing Trace.FinalNorm through it normalises twice — measured,
+// all 256 logits then differ from Trace.Logits. The final rung of any ladder built
+// with this is Trace.Logits itself, not a lens call.
+func (w *Weights) LogitLens(row []float32) []float32 {
+	return w.Unembed(layerNorm([][]float32{row}, w.LNFG, w.LNFB)[0])
+}
+
 // Softmax is the temperature-scaled softmax of any logit vector, exported so the
 // app can turn the logits of a position other than the last into probabilities
 // with the same code the last position goes through. A second implementation in

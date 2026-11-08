@@ -29,7 +29,7 @@ func readREADME(t *testing.T) string {
 // TestReadmeCalloutCountMatchesTheStages: "第 3–7 步各带「常见误解」卡片，共六条".
 func TestReadmeCalloutCountMatchesTheStages(t *testing.T) {
 	doc := readREADME(t)
-	if !strings.Contains(doc, "共六条") {
+	if !strings.Contains(doc, "共七条") {
 		t.Fatal("the README no longer states the callout count; update or remove this test")
 	}
 
@@ -47,20 +47,29 @@ func TestReadmeCalloutCountMatchesTheStages(t *testing.T) {
 			}
 		}
 	}
-	if total != 6 {
-		t.Fatalf("the README says 共六条, the app renders %d", total)
+	if total != 7 {
+		t.Fatalf("the README says 共七条, the app renders %d", total)
 	}
-	// And they are on stages 3-7 with one extra on the fourth.
+	// And they are on stages 3-7, with two callouts on step 4 (Softmax) and on
+	// step 5 (residual: the stream-grows rebuttal and the logit-lens one).
+	//
+	// Written with the stage's zero-based index in the switch and its one-based
+	// number in the message, which is how the rest of the app talks; the mismatch
+	// between the two is what made this map read as "one extra on the fourth" while
+	// the numbers wanted a different stage.
 	for step := 0; step < 7; step++ {
 		want := 0
 		switch step {
-		case 2, 4, 5, 6:
+		case 2, 5, 6:
 			want = 1
-		case 3:
+		case 3, 4:
+			// step 4 Softmax: row/column sums + head cancellation
+			// step 5 residual: the stream grows + the logit-lens rebuttal
 			want = 2
 		}
 		if counts[step] != want {
-			t.Fatalf("step %d renders %d callouts, want %d", step+1, counts[step], want)
+			t.Fatalf("step %d (index %d) renders %d callouts, want %d",
+				step+1, step, counts[step], want)
 		}
 	}
 }

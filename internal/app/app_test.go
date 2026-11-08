@@ -8300,8 +8300,12 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 	// unexpected difference must match none of them.
 	allowed := map[int][]string{
 		// Matched against the number-stripped text, so digits are already "#".
-		3: {"第 # 层的头 #"},            // the per-weights attention description
-		4: {"训练出来的", "这份权重没有训练过"},   // gamma and beta learned versus identity
+		3: {"第 # 层的头 #"}, // the per-weights attention description
+		// gamma and beta learned versus identity, plus the logit lens ladder: it
+		// describes what these particular weights say at each depth, so every one of
+		// its sentences moves with them — which rungs agree with the final answer,
+		// how many are confidently wrong, and the rung names in the sentence.
+		4: {"训练出来的", "这份权重没有训练过", "只看这个位置", "最后一个中间层"},
 		5: {"只剩一根柱子", "还能看出分布的形状"},  // the GELU squeeze note
 		6: {"这么高的把握", "根本没有那么大的把握"}, // the confidence note
 	}
@@ -9498,6 +9502,32 @@ func TestEveryPinReleaseTriggerIsInTheReadme(t *testing.T) {
 		if !strings.Contains(row, r.phrase) {
 			t.Fatalf("the README's pinned-cell row does not mention %q, which releases the "+
 				"pin:\n%s", r.phrase, row)
+		}
+	}
+}
+
+// TestNoLiteralMarkdownInRenderedText: ui.Text draws the characters it is given,
+// so a markdown emphasis sequence renders as its asterisks.
+//
+// Found by accident while writing another test this round: the output stage's
+// lesson paragraph carried "只把**最后一个位置**的向量投影到词表上", which a reader
+// saw as four asterisks around the phrase. Nothing was checking for it, and this
+// project's prose is dense enough that a stray marker is easy to introduce.
+func TestNoLiteralMarkdownInRenderedText(t *testing.T) {
+	// A tall window so every card on every stage is laid out and rendered.
+	for step := 0; step < len(lessons); step++ {
+		a := newTestApp(t)
+		a.Step = step
+		a.KeyQ, a.KeyK = 20, 5 // so the score stage's conditional block renders too
+		tr := ui.NewTester(a.View, 1500, 3000)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "**") {
+				t.Fatalf("stage %d renders a literal markdown emphasis marker: %q", step+1, s)
+			}
+			if strings.Contains(s, "`") {
+				t.Fatalf("stage %d renders a literal backtick: %q", step+1, s)
+			}
 		}
 	}
 }

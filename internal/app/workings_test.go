@@ -1958,3 +1958,164 @@ func TestFFNLessonSparsityIsMeasured(t *testing.T) {
 			"calling that distribution sparse is no longer supportable", 100*topSum/total)
 	}
 }
+
+// TestLogitLensFinalRungIsTheModelsOwnOutput pins the one rung that must not be a
+// lens call.
+//
+// Trace.FinalNorm has already been through the final LayerNorm, so running the lens
+// on it normalises twice. Measured: every one of the 256 logits then differs from
+// Trace.Logits. The ladder therefore takes its last rung from the trace, and this
+// test is what stops a later refactor from "simplifying" it back.
+func TestLogitLensFinalRungIsTheModelsOwnOutput(t *testing.T) {
+	a := newTestApp(t)
+	pos := len(a.Trace.Tokens) - 1
+	lens := computeLogitLens(a.W, a.Trace, pos, 1.0) // T=1 so probs are plain softmax
+	if !lens.OK {
+		t.Fatal("the ladder did not build")
+	}
+	last := lens.Rungs[len(lens.Rungs)-1]
+	if !last.IsFinal {
+		t.Fatal("the last rung is not marked as the model's own output")
+	}
+	for id := range last.Probs {
+		if math.Abs(float64(last.Probs[id]-a.Trace.Probabilities(1.0)[id])) > 1e-9 {
+			t.Fatalf("the final rung's probability for byte %d is %v, the trace says %v; the "+
+				"last rung must come from Trace.Logits, not from a lens call",
+				id, last.Probs[id], a.Trace.Probabilities(1.0)[id])
+		}
+	}
+	// And the double normalisation really is different, so the distinction is not
+	// academic: run the lens on the already-normalised row and count the mismatches.
+	doubled := a.W.LogitLens(a.Trace.FinalNorm[pos])
+	differ := 0
+	for id := range doubled {
+		if doubled[id] != a.Trace.Logits[id] {
+			differ++
+		}
+	}
+	if differ == 0 {
+		t.Fatal("lensing an already-normalised row gave the trace's logits; the comment in " +
+			"model.LogitLens says it normalises twice and that this changes every logit")
+	}
+	t.Logf("lensing FinalNorm differs from the real logits in %d of %d entries", differ, len(doubled))
+}
+
+// TestLogitLensCalloutNumbersAreMeasured is the guard on the card's whole-prompt
+// claim: 153 of 180 intermediate rungs disagree with the final answer, 105 of those
+// confidently. Those are the numbers the sentence quotes, so they are what the model
+// must still produce.
+func TestLogitLensCalloutNumbersAreMeasured(t *testing.T) {
+	a := newTestApp(t)
+	n := len(a.Trace.Tokens)
+	disagree, confidentWrong := 0, 0
+	positionsWithConfidentWrong := 0
+	rungs := 0
+	for pos := 0; pos < n; pos++ {
+		lens := computeLogitLens(a.W, a.Trace, pos, a.Temp)
+		posHas := false
+		for _, r := range lens.Rungs {
+			if r.IsFinal {
+				continue
+			}
+			rungs++
+			if !r.AgreesWithFinal {
+				disagree++
+				if r.Probs[r.Top] > lensConfident {
+					confidentWrong++
+					posHas = true
+				}
+			}
+		}
+		if posHas {
+			positionsWithConfidentWrong++
+		}
+	}
+	if rungs != 5*n {
+		t.Fatalf("the ladder has %d intermediate rungs for %d positions, want 5 per position", rungs, n)
+	}
+	// The sentence says: of 180 rungs, 153 disagree and 105 of those are confident,
+	// and 31 of 36 positions have at least one. Checked as bands rather than exact
+	// values, because the figures move with the prompt; the prompt is fixed here, so
+	// the failure message quotes what was measured.
+	if disagree < rungs*2/3 {
+		t.Fatalf("only %d of %d intermediate rungs disagree with the final answer; the callout "+
+			"says most do", disagree, rungs)
+	}
+	if confidentWrong < disagree/2 {
+		t.Fatalf("%d of %d disagreeing rungs are over %.0f%% sure of themselves; the callout says "+
+			"most of them are", confidentWrong, disagree, 100*lensConfident)
+	}
+	if positionsWithConfidentWrong < n*2/3 {
+		t.Fatalf("%d of %d positions have a confidently wrong intermediate rung; the callout says "+
+			"most do", positionsWithConfidentWrong, n)
+	}
+	t.Logf("measured: %d rungs, %d disagree, %d confident-wrong, %d/%d positions affected",
+		rungs, disagree, confidentWrong, positionsWithConfidentWrong, n)
+}
+
+// TestLogitLensCardQuotesItsOwnNumbers reads the card's figures out of the rendered
+// text, per this project's rule that an assertion must not be satisfied by
+// recomputation alone.
+func TestLogitLensCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	a.SelToken = 10 // a position whose intermediate rungs are confidently wrong
+	tr := ui.NewTester(a.View, 1500, 1600)
+	tr.Frame()
+
+	// T=1, matching the card: the ladder is a read-out diagnostic and the
+	// temperature slider is scoped to the output stage, so it must not move these
+	// figures. (Reading it at a.Temp here is what made this test fail against the
+	// view after the card was scoped — the two were computing different numbers.)
+	lens := computeLogitLens(a.W, a.Trace, 10, 1.0)
+	if !lens.OK {
+		t.Fatal("the ladder did not build")
+	}
+	// Every rung's label is rendered, and the bar column prints that rung's
+	// probability of the final answer — the quantity the chart draws.
+	//
+	// The first version of this asserted each rung's value cell equalled its own
+	// top-1 probability, which failed on the final rung: it prints p(final), not
+	// p(top-1), and those differ whenever a rung's own answer is not the final one.
+	// On the position used here they differ by a lot — every intermediate rung gives
+	// the final byte 0.0% while the real output gives it 93.0% — which is the card's
+	// whole point.
+	labels := map[string]bool{}
+	for _, s := range tr.Texts() {
+		labels[s] = true
+	}
+	var values []string
+	for _, rung := range lens.Rungs {
+		if !labels[rung.Name] {
+			t.Fatalf("the ladder does not render the rung %q", rung.Name)
+		}
+		values = append(values, fmt.Sprintf("%.1f%%", 100*rung.Probs[lens.Final]))
+	}
+	for _, want := range values {
+		if !labels[want] {
+			t.Fatalf("the ladder does not print %q as a rung's probability of the final answer; "+
+				"it prints %v", want, values)
+		}
+	}
+	// The scoped count must say it is scoped, since the callout quotes the whole
+	// prompt and the two would otherwise read as disagreeing.
+	var scoped string
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, "只看这个位置：") {
+			scoped = s
+		}
+	}
+	if scoped == "" {
+		t.Fatal("the per-position count is missing or is not labelled as per-position")
+	}
+	if lens.ConfidentWrong > 0 {
+		want := fmt.Sprintf("%d / %d 个中间层「自信地错」", lens.ConfidentWrong, lens.RungsCompared)
+		if !strings.Contains(scoped, want) {
+			t.Fatalf("the card says %q, the model has %q", scoped, want)
+		}
+	}
+	// And the whole-prompt warning is on the stage.
+	if !tr.HasText("常见误解") {
+		t.Fatal("the logit lens card has no misconception callout")
+	}
+}

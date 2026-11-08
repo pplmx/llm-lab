@@ -779,3 +779,114 @@ func sparsityEvidence(tr *model.Trace) string {
 		rows, dims, 100*share, 100*median/peak,
 		100*float64(below)/float64(len(abs)), zeros)
 }
+
+// lensRung is one depth's answer, read out of the residual stream at that depth.
+//
+// The ladder walks the same row down the network: the input vector, then each
+// layer's attention output and FFN output, and finally the model's real answer.
+type lensRung struct {
+	// Name labels the depth the way the rest of the app names tensors.
+	Name string
+	// Step is the lesson step whose figure draws that tensor, or -1 when the
+	// tensor has no stage of its own. It lets the ladder point at where the
+	// reader can see the vector this row was read from.
+	Step int
+	// Probs is the lens's next-byte distribution at this depth, temperature
+	// applied. For the final rung it comes from the real projection rather than
+	// from the lens.
+	Probs []float32
+	// Top is the argmax of Probs.
+	Top int
+	// Entropy is the distribution's Shannon entropy in nats.
+	Entropy float64
+	// AgreesWithFinal reports whether this depth's top-1 is the final answer's.
+	AgreesWithFinal bool
+	// IsFinal marks the rung that is the model's own output, so the view can say
+	// which rung is a read-out trick and which is the real thing.
+	IsFinal bool
+}
+
+// logitLens is the ladder for one position.
+type logitLens struct {
+	Rungs []lensRung
+	// Pos is the position the ladder was read at.
+	Pos int
+	// Final is the model's own top-1 at that position.
+	Final int
+	// ConfidentWrong counts intermediate rungs that disagree with the final
+	// answer while giving their own answer more than lensConfident probability.
+	// It is the number that justifies the card's warning: on the bundled weights
+	// and the default prompt it is 105 of 180 rungs, and 31 of 36 positions have
+	// at least one of them.
+	ConfidentWrong int
+	// RungsCompared is how many intermediate rungs there were to disagree.
+	RungsCompared int
+	OK            bool
+}
+
+// lensConfident is where a rung counts as sure of itself. 0.9 rather than a
+// softer threshold because the card says "自信地错" and has to mean it: a rung at
+// 60% is hedging, one at 90% has stopped hedging.
+const lensConfident = 0.9
+
+// computeLogitLens builds the ladder for position pos.
+//
+// The idea it makes visible: the residual stream holds a usable next-byte
+// distribution long before the network is done, so a reader can ask what the model
+// "would have said" at each depth. Measured on the bundled weights and the default
+// prompt at the last position, the answer is that attention alone does not decide
+// anything — after layer 0's attention the argmax is still whatever the input
+// vector already pointed at — and the FFN is what turns it into the final byte.
+// Across all 36 positions: the input and post-attention rows agree with the final
+// argmax in 0 of 36, after layer 0's FFN 25 of 36, after layer 1's FFN 35 of 36.
+//
+// The last rung is Trace.Logits, not a lens call on Trace.FinalNorm. That row has
+// already been normalised by the final LayerNorm, and running the lens on it would
+// normalise a second time — measured, every one of the 256 logits then differs from
+// what the model computed.
+func computeLogitLens(w *model.Weights, tr *model.Trace, pos int, temperature float64) logitLens {
+	lens := logitLens{Pos: pos}
+	if w == nil || tr == nil || pos < 0 || pos >= len(tr.Tokens) || len(tr.Layers) == 0 {
+		return lens
+	}
+	add := func(name string, step int, logits []float32, isFinal bool) {
+		probs := model.Softmax(logits, temperature)
+		top, best := 0, float32(-1)
+		for id, p := range probs {
+			if p > best {
+				top, best = id, p
+			}
+		}
+		lens.Rungs = append(lens.Rungs, lensRung{
+			Name: name, Step: step, Probs: probs, Top: top, IsFinal: isFinal,
+			Entropy: float64(model.Entropy(probs)),
+		})
+	}
+
+	add("输入向量 x", 1, w.LogitLens(tr.Input[pos]), false)
+	for li := range tr.Layers {
+		l := &tr.Layers[li]
+		// Only the last layer's FFN output is what the model actually projects;
+		// naming the step is still right for earlier layers because the residual
+		// stage draws the same tensor per layer.
+		// Both tensors are drawn by the residual stage, so the ladder can point a
+		// reader at where to see the vector each rung was read from.
+		add(fmt.Sprintf("层 %d 注意力后", li), 4, w.LogitLens(l.AfterAttn[pos]), false)
+		add(fmt.Sprintf("层 %d FFN 后", li), 4, w.LogitLens(l.AfterFFN[pos]), false)
+	}
+	add("最终输出", 6, tr.Logits, true)
+
+	lens.Final = lens.Rungs[len(lens.Rungs)-1].Top
+	for i := range lens.Rungs {
+		lens.Rungs[i].AgreesWithFinal = lens.Rungs[i].Top == lens.Final
+		if lens.Rungs[i].IsFinal {
+			continue
+		}
+		lens.RungsCompared++
+		if !lens.Rungs[i].AgreesWithFinal && lens.Rungs[i].Probs[lens.Rungs[i].Top] > lensConfident {
+			lens.ConfidentWrong++
+		}
+	}
+	lens.OK = true
+	return lens
+}
