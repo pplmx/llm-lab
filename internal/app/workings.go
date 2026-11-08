@@ -17,6 +17,7 @@ package app
 // each has a test.
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"unicode/utf8"
@@ -722,4 +723,59 @@ func computeNextByteSkill(w *model.Weights, tr *model.Trace, temperature float64
 	}
 	s.MeanLoss = total / float64(s.Scored)
 	return s
+}
+
+// sparsityEvidence states, in one clause, what makes this model's activations
+// "sparse but continuous" — the claim the FFN lesson makes.
+//
+// It aggregates over every row of the trace rather than quoting the selected
+// token's row, and that is deliberate: the FFN stage's card already prints the
+// selected row's concentration figure ("最大的 38 / 384 个维度承担 49%…"). A
+// lesson paragraph repeating those words with a different number would read as
+// two disagreeing measurements of one quantity, so the two figures answer
+// different questions and say which: the card describes the row the reader has
+// selected, this describes the whole prompt.
+//
+// Every number is measured, because the lesson's job is to describe this
+// checkpoint rather than repeat the GELU literature. Measured on the bundled
+// weights and the default prompt over all 36 rows × 384 dimensions.
+func sparsityEvidence(tr *model.Trace) string {
+	if tr == nil || len(tr.Layers) == 0 || len(tr.Layers[0].Hidden) == 0 {
+		return ""
+	}
+	rows, dims := len(tr.Layers[0].Hidden), len(tr.Layers[0].Hidden[0])
+	all := make([]float32, 0, rows*dims)
+	var peak float64
+	for _, row := range tr.Layers[0].Hidden {
+		all = append(all, row...)
+		for _, v := range row {
+			if a := math.Abs(float64(v)); a > peak {
+				peak = a
+			}
+		}
+	}
+	if peak == 0 {
+		return ""
+	}
+	share, _ := activationConcentration(all)
+	abs := make([]float64, len(all))
+	for i, v := range all {
+		abs[i] = math.Abs(float64(v))
+	}
+	sort.Float64s(abs)
+	median := abs[len(abs)/2]
+	cut := 0.1 * peak
+	below, zeros := 0, 0
+	for i, v := range abs {
+		if v < cut {
+			below++
+		}
+		if all[i] == 0 {
+			zeros++
+		}
+	}
+	return fmt.Sprintf("全部 %d 个位置 × %d 维里，最大的十分之一承担 %.0f%% 的激活绝对值、"+
+		"中位数只有峰值的 %.0f%%、%.0f%% 的维度低于峰值的十分之一，恰好为 0 的有 %d 个",
+		rows, dims, 100*share, 100*median/peak,
+		100*float64(below)/float64(len(abs)), zeros)
 }

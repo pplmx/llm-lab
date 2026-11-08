@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"math"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -1865,5 +1866,95 @@ func TestPredictionSentenceUsesTheAppsIndexing(t *testing.T) {
 	if !strings.Contains(found, fmt.Sprintf("位置 %d 的计算", pos)) ||
 		!strings.Contains(found, fmt.Sprintf("位置 %d 及之后", pos+1)) {
 		t.Fatalf("the sentence's cut and its comparison are not both stated zero-based:\n%s", found)
+	}
+}
+
+// TestFFNLessonSparsityIsMeasured pins the numbers in the FFN lesson's "sparse but
+// continuous" sentence.
+//
+// The sentence used to be an unqualified claim — "所以激活会呈现稀疏但连续的分布" —
+// carried from the GELU literature. It is true of this checkpoint, but the lesson's
+// job is to describe what the reader's screen shows, and the card right below it
+// already reports a concentration figure for the selected row. Two sentences making
+// the same claim with different numbers is the defect this project keeps finding.
+//
+// The replacement quotes three measured figures plus the exact-zero count, and this
+// test checks each of them against the trace.
+func TestFFNLessonSparsityIsMeasured(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	tr := ui.NewTester(a.View, 1500, 1400)
+	tr.Frame()
+
+	var lesson string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "GELU 是固定的数学函数") {
+			lesson = s
+		}
+	}
+	if lesson == "" {
+		t.Fatal("the FFN lesson paragraph is missing")
+	}
+
+	// The four figures, each derived here from the trace independently of the
+	// helper under test — so a change to the helper cannot silently agree with
+	// itself.
+	rows, dims := len(a.Trace.Layers[0].Hidden), len(a.Trace.Layers[0].Hidden[0])
+	all := make([]float32, 0, rows*dims)
+	var peak float64
+	for _, row := range a.Trace.Layers[0].Hidden {
+		all = append(all, row...)
+		for _, v := range row {
+			if x := math.Abs(float64(v)); x > peak {
+				peak = x
+			}
+		}
+	}
+	abs := make([]float64, len(all))
+	for i, v := range all {
+		abs[i] = math.Abs(float64(v))
+	}
+	sort.Float64s(abs)
+	median := abs[len(abs)/2]
+	below, zeros := 0, 0
+	for i, v := range abs {
+		if v < 0.1*peak {
+			below++
+		}
+		if all[i] == 0 {
+			zeros++
+		}
+	}
+	var total float64
+	for _, v := range abs {
+		total += v
+	}
+	var topSum float64
+	for _, v := range abs[len(abs)-len(abs)/10:] {
+		topSum += v
+	}
+
+	for _, want := range []string{
+		fmt.Sprintf("%d 个位置 × %d 维", rows, dims),
+		fmt.Sprintf("%.0f%% 的激活绝对值", 100*topSum/total),
+		fmt.Sprintf("中位数只有峰值的 %.0f%%", 100*median/peak),
+		fmt.Sprintf("%.0f%% 的维度低于峰值的十分之一", 100*float64(below)/float64(len(abs))),
+		fmt.Sprintf("恰好为 0 的有 %d 个", zeros),
+	} {
+		if !strings.Contains(lesson, want) {
+			t.Fatalf("the lesson does not state %q:\n%s", want, lesson)
+		}
+	}
+
+	// And the premise the sentence depends on: this checkpoint's activations really
+	// are concentrated and really are never exactly zero. If a future checkpoint
+	// broke either, the wording would need to change rather than the numbers.
+	if zeros != 0 {
+		t.Fatalf("this trace has %d exact zeros; the lesson says GELU never truncates "+
+			"to zero and quotes that count", zeros)
+	}
+	if topSum/total < 0.3 {
+		t.Fatalf("the largest tenth carries only %.0f%% of the absolute activation; "+
+			"calling that distribution sparse is no longer supportable", 100*topSum/total)
 	}
 }
