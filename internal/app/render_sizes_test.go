@@ -265,26 +265,95 @@ func TestPerPositionCardIsVisibleWithoutScrolling(t *testing.T) {
 	}
 }
 
-// TestLogitLensCardIsVisibleWithoutScrolling applies round 257's lesson to this
-// round's card: a card appended to the end of a stage can end up entirely below the
-// fold, where every content test still passes because they ask whether it exists.
+// TestLogitLensCardIsReachable replaces an earlier version of this test that required
+// the card to be above the fold.
 //
-// Measured at 1500×940 before the card was moved: the header sat at y=1260 in a
-// 940-DIP window, on a stage that already overflows by 874 DIP. It now opens the
-// stage, because it answers the question the strips below it raise.
-func TestLogitLensCardIsVisibleWithoutScrolling(t *testing.T) {
+// That rule was written when the ladder was the only analytical card, and it does not
+// survive contact with a stage that has several: a stage cannot keep every card on the
+// first screen, and demanding it pushes the stage's own figure off instead — which is
+// what happened, measured: with the ladder and the layer-rewrite cards leading the
+// residual stage, the residual-stream card itself began at y=1071 in a 720-DIP window.
+// The invariant worth keeping is that the stage opens on its own figure
+// (TestEveryStageOpensOnItsOwnFigure), and that every card is reachable by scrolling.
+//
+// This one keeps the narrower promise for the ladder specifically: it must not be
+// lost, and the reader must be able to get to it.
+func TestLogitLensCardIsReachable(t *testing.T) {
 	for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}, {1920, 1080}} {
 		a := newTestApp(t)
 		a.Step = 4
 		tr := ui.NewTester(a.View, size.w, size.h)
 		tr.Frame()
-		r, ok := tr.Find("每一层会说什么")
-		if !ok {
+		if _, ok := tr.Find("每一层会说什么"); !ok {
 			t.Fatalf("%dx%d: the logit lens card is missing from the residual stage", size.w, size.h)
 		}
-		if r.Y < 0 || r.Y+r.H > float32(size.h) {
-			t.Fatalf("%dx%d: the logit lens card's header is at y=%.0f, outside a window %d DIP tall",
-				size.w, size.h, r.Y, size.h)
+		// Scroll to the end and require the card to have come into view on the way.
+		seen := false
+		for i := 0; i < 40; i++ {
+			r, ok := tr.Find("每一层会说什么")
+			if ok && r.Y >= 0 && r.Y+r.H <= float32(size.h) {
+				seen = true
+				break
+			}
+			tr.Move(float32(size.w)/2, float32(size.h)/2)
+			tr.Wheel(float32(size.w)/2, float32(size.h)/2, 0, 200)
+			tr.Advance(2e9)
+			tr.Frame()
+		}
+		if !seen {
+			t.Fatalf("%dx%d: the logit lens card never came into view while scrolling the stage",
+				size.w, size.h)
+		}
+	}
+}
+
+// TestEveryStageOpensOnItsOwnFigure is the contract that keeps the stages usable as
+// they grow: whatever else a stage accumulates, the figure it is named for has to be on
+// screen when the reader arrives, at the smallest supported window.
+//
+// This became worth pinning after several rounds of adding analytical cards. Measured,
+// the residual stage reached 4.4 screens of scrolling at 1180×720 — long is acceptable
+// for a tool whose whole method is "look at this number, then that one", but only if
+// the first thing a reader sees is the subject. It regressed once: with the logit-lens
+// and layer-rewrite cards placed at the top of the residual stage, the residual-stream
+// card itself started at y=1071 in a 720-DIP window, so a stage named 残差流 opened on
+// two explanation cards and never showed the residual stream.
+//
+// The entries name the first figure each stage is built around, not a card that merely
+// appears: "加权求和" is on the Softmax stage but the matrix is what the stage is for.
+func TestEveryStageOpensOnItsOwnFigure(t *testing.T) {
+	primary := map[int]string{
+		0: "提示词变成 token 序列",
+		1: "token embedding",
+		2: "分数矩阵",
+		3: "注意力矩阵",
+		4: "残差流",
+		5: "升维 → GELU → 降维",
+		6: "每个位置都在预测",
+	}
+	if len(primary) != len(lessons) {
+		t.Fatalf("this test names %d stages, the app has %d", len(primary), len(lessons))
+	}
+	for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}} {
+		for step := 0; step < len(lessons); step++ {
+			a := newTestApp(t)
+			a.Step = step
+			tr := ui.NewTester(a.View, size.w, size.h)
+			tr.Frame()
+			want, ok := primary[step]
+			if !ok {
+				t.Fatalf("stage %d has no entry in this test", step+1)
+			}
+			r, found := tr.Find(want)
+			if !found {
+				t.Fatalf("%dx%d stage %d: the stage's figure %q is not rendered",
+					size.w, size.h, step+1, want)
+			}
+			if r.Y < 0 || r.Y+r.H > float32(size.h) {
+				t.Fatalf("%dx%d stage %d: the figure the stage is named for (%q) is at y=%.0f, "+
+					"outside a window %d DIP tall — the stage opens on something else",
+					size.w, size.h, step+1, want, r.Y, size.h)
+			}
 		}
 	}
 }

@@ -840,16 +840,6 @@ func (a *App) stageResidual(c *ui.Context) {
 	l := a.layer()
 	i := clampIndex(a.SelToken, len(tr.Tokens))
 
-	// The ladder comes first because it answers the question the strips below
-	// raise: they show that the stream accumulates a vector, and a reader's next
-	// question is what the model says with it at each depth. Placed after them it
-	// was measured at y=1260 in a 940-DIP window — entirely below the fold, on a
-	// stage that already overflows by 874 DIP, so the card would have existed for
-	// nobody.
-	a.stageLogitLens(c)
-
-	a.stageLayerRewrite(c)
-
 	card(c, func() {
 		sectionTitle(c, "残差流", fmt.Sprintf("层 %d · 两次加法，信息都绕过了子层", a.Layer))
 		// The three strips below are the residual chain, and it is easy to label
@@ -884,6 +874,16 @@ func (a *App) stageResidual(c *ui.Context) {
 			residualWorkings(c, dim, steps, l == &tr.Layers[len(tr.Layers)-1], a.Layer)
 		}
 	})
+
+	// The two analytical cards come after the stage's namesake figure, not before it.
+	// They used to lead the stage, which measured as: the residual-stream card — the
+	// one the stage is named for — started at y=1071 in a 720-DIP window, entirely
+	// below the fold, because two explanation cards were sitting on top of it. A
+	// reader opening "残差 / LN" must see the residual stream first; the questions of
+	// what the layers say and how much they rewrite are follow-ups.
+	a.stageLogitLens(c)
+
+	a.stageLayerRewrite(c)
 
 	card(c, func() {
 		before := l.AfterAttn[i]
