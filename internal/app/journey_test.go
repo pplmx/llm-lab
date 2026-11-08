@@ -723,3 +723,71 @@ func TestSamplingDropsAPinItWouldContradict(t *testing.T) {
 		t.Fatalf("the inspector does not name the new token %d", a.SelToken)
 	}
 }
+
+// TestEveryAdvertisedKeyHasAClickablePathOnEveryStage extends the visible-alternative
+// contract to the keys added in the last few rounds, and to *every* stage rather than
+// one sample.
+//
+// The contract this project states is that a reader who never touches the keyboard is
+// not locked out, and conversely that a key the shortcut line advertises has something
+// on screen that does the same thing. Ctrl+Z broke it: the shortcut line named it on
+// all seven stages from the moment a destructive action had happened, but its only
+// button lived on the output stage's sampling card — and at 1180×720 that card is
+// below the fold (measured y=1151 in a 720-tall window). Six of seven stages
+// therefore offered the key and no clickable path, and no test noticed because
+// TestEveryShortcutHasAVisibleAlternative checks a fixed list of labels on one stage.
+func TestEveryAdvertisedKeyHasAClickablePathOnEveryStage(t *testing.T) {
+	for step := 0; step < len(lessons); step++ {
+		for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}} {
+			a := newTestApp(t)
+			tr := ui.NewTester(a.View, size.w, size.h)
+			tr.Frame()
+			// A destructive action, so the undo exists and is advertised.
+			if err := tr.Click("中文"); err != nil {
+				t.Fatalf("%dx%d: no preset chip to click: %v", size.w, size.h, err)
+			}
+			tr.Frame()
+			a.Step = step
+			tr.Frame()
+
+			visible := func(label string) bool {
+				r, ok := tr.Find(label)
+				return ok && r.W > 0 && r.Y >= 0 && r.Y+r.H <= float32(size.h) &&
+					r.X >= 0 && r.X+r.W <= float32(size.w)
+			}
+			var line string
+			for _, s := range tr.Texts() {
+				if strings.HasPrefix(s, "快捷键：") {
+					line = s
+				}
+			}
+			if line == "" {
+				t.Fatalf("%dx%d step %d: no shortcut line", size.w, size.h, step+1)
+			}
+			// For each advertised key, the thing that does the same job by clicking.
+			type pair struct{ key, label string }
+			pairs := []pair{
+				{"Ctrl+Z", "撤销"},
+				{"← →", "下一步 →"},
+				{"空格", "▶ 自动播放"},
+				{"Enter", "采样下一个 token"},
+			}
+			for _, p := range pairs {
+				if !strings.Contains(line, p.key) {
+					continue // not advertised on this stage
+				}
+				if !visible(p.label) {
+					t.Fatalf("%dx%d step %d: the line advertises %q but %q is not clickable "+
+						"on screen; a keyboard-only alternative must not be the only path",
+						size.w, size.h, step+1, p.key, p.label)
+				}
+			}
+			// The scroll keys: the column must actually be scrollable on the stages
+			// that advertise them, or the key does nothing.
+			if strings.Contains(line, "PgUp/PgDn") && a.Scroll.MaxY <= 0 {
+				t.Fatalf("%dx%d step %d: the line advertises PgUp/PgDn but the column has "+
+					"nothing to scroll (MaxY=0)", size.w, size.h, step+1)
+			}
+		}
+	}
+}

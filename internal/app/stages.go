@@ -1485,19 +1485,12 @@ func (a *App) stageOutput(c *ui.Context) {
 			if ui.PrimaryButton(c, "采样并续写").Clicked() {
 				a.sampleNext()
 			}
-			// The undo only exists while there is something to take back: a button
-			// that is always there and usually does nothing would read as broken,
-			// and this app dims or hides controls that cannot act.
-			//
-			// Its label names the action being taken back. It used to be fixed at
-			// "撤销上次采样", which stopped being true when the undo grew to cover the
-			// presets and 重置: after a preset click that button would have claimed to
-			// undo a sample that was never drawn.
+			// The undo button is in the top bar, not here: this card is on one stage
+			// and below the fold at 1180×720, so a button here left Ctrl+Z with no
+			// clickable path on six of the seven stages. What stays on this card is
+			// the keyboard hint, next to the sampling it usually takes back.
 			if a.undo != nil {
-				if ui.Button(c, "撤销「"+a.undo.what+"」").Clicked() {
-					a.undoPrompt()
-				}
-				ui.Text(c, "Ctrl+Z").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
+				ui.Text(c, "Ctrl+Z 撤销「"+a.undo.what+"」").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
 			}
 			ui.Text(c, "续写结果会追加到提示词，并重新跑一遍前向。").FontSize(fontMicro).TextColor(colFaint)
 		})

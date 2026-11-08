@@ -850,6 +850,26 @@ func (a *App) topbar(c *ui.Context) {
 			if ui.Button(c, "重置").Clicked() {
 				a.applyPrompt(defaultPrompt)
 			}
+			// The undo lives here, beside 重置, because this bar is the one thing on
+			// screen at every stage. It used to exist only on the output stage's
+			// sampling card, which meant Ctrl+Z was advertised on all seven stages
+			// while its only clickable path was on one of them — and at 1180×720 even
+			// that one was below the fold (measured y=1151 in a 940-tall window).
+			// This app's own rule is that every shortcut has something on screen to
+			// click instead; the note in the shortcut line is not a substitute.
+			//
+			// The label is short because the top row is the tightest space in the
+			// window: measured at 1180 wide, the buttons ended 28 DIP from the stage
+			// column's edge, so a long label would shrink the prompt field badly. The
+			// tooltip names the action being taken back.
+			if a.undo != nil {
+				label := "撤销"
+				undoBtn := ui.Button(c, label)
+				if undoBtn.Clicked() {
+					a.undoPrompt()
+				}
+				undoBtn.Tooltip("撤销「" + a.undo.what + "」（Ctrl+Z）")
+			}
 			if ui.PrimaryButton(c, "采样下一个 token").Clicked() {
 				a.sampleNext()
 			}
