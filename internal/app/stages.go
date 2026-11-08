@@ -2192,11 +2192,15 @@ func (a *App) nextByteSkillSummary(c *ui.Context, tr *model.Trace, skill nextByt
 	// present — the total, the mean and the reference it beats — it just reads as
 	// a sentence rather than a derivation, because the derivation is visible in
 	// the individual positions the inspector shows.
-	workingsLinesCopyable(c, []string{
-		fmt.Sprintf("猜对 %d / %d（%.0f%%）· 平均损失 %.3f nats · 均匀猜测 ln(%d) = %.3f → 降低了 %.0f%%",
-			skill.Hits, skill.Scored, pct, skill.MeanLoss,
-			int(math.Round(math.Exp(skill.UniformReference))), skill.UniformReference, saved),
-	})
+	summary := fmt.Sprintf("猜对 %d / %d（%.0f%%）· 平均损失 %.3f nats · 均匀猜测 ln(%d) = %.3f → 降低了 %.0f%%",
+		skill.Hits, skill.Scored, pct, skill.MeanLoss,
+		int(math.Round(math.Exp(skill.UniformReference))), skill.UniformReference, saved)
+	if skill.Underflowed > 0 {
+		// Saying "平均损失 +Inf nats" reads as a fault in the app. The cause is arithmetic:
+		// the true byte's probability rounded to zero, so its loss has no finite value.
+		summary += fmt.Sprintf("（%d 个位置的真实字节概率下溢到 0，未计入均值）", skill.Underflowed)
+	}
+	workingsLinesCopyable(c, []string{summary})
 	// The loss is computed at the reader's temperature, and the curve is not a
 	// slope: it is U-shaped with its minimum at T=1, the value the weights were
 	// trained at. Measured on the bundled weights and the default prompt, mean
@@ -2211,9 +2215,34 @@ func (a *App) nextByteSkillSummary(c *ui.Context, tr *model.Trace, skill nextByt
 		atOne := computeNextByteSkill(a.W, tr, 1.0).MeanLoss
 		losses = fmt.Sprintf("%.3f（T=1 时是 %.3f）", skill.MeanLoss, atOne)
 	}
-	ui.Text(c, fmt.Sprintf("当前损失 %s。平均损失是 U 形的，最低点在 T = 1——权重训练在那个标度上；"+
-		"往两端调都变大，但那是温度的标度，不是模型变差（argmax 一个都不会变）。", losses)).
-		FontSize(fontMicro).TextColor(colFaint).LineHeight(1.4)
+	// Which temperature minimises the loss is measured, not asserted. This sentence used to
+	// say in fixed prose that the minimum is at T=1 "the value the weights were trained at" —
+	// true for the default prompt when it was written, and false for most prompts: measured,
+	// "attention is all you need" bottoms out at 1.5 and "hi" at 2.0, and even the default
+	// prompt's minimum is at 1.25 rather than exactly 1.0.
+	curve := computeTemperatureCurve(a.W, tr)
+	if curve.OK {
+		shape := fmt.Sprintf("当前损失 %s。这条曲线是实测的：在本句提示词上，平均损失最低在 T = %.2f（%.3f nats），T = 1 时是 %.3f。",
+			losses, curve.Best, curve.BestLoss, curve.AtOne)
+		if math.Abs(curve.Best-1) < 1e-9 {
+			shape += "权重就是训练在 T = 1 那个标度上，所以最低点落在那里。"
+		} else if curve.Best > 1 {
+			// Only the measurement is stated. An earlier draft added "说明真值字节不是模型的首选",
+			// which is a plausible cause but not something this card measures — the card can see
+			// the curve, not why it bends.
+			shape += "最低点不在 T = 1，而在更暖的一侧：把分布压得更尖（往冷调）会让损失变大。"
+			if math.Abs(curve.Best-2.0) < 1e-9 {
+				shape += "滑块到顶是 2.0，这条提示词的曲线到顶仍未回头。"
+			}
+		} else {
+			shape += "最低点在更冷的一侧：模型对首选字节的把握比损失数字看上去的更大。"
+		}
+		shape += "往两端调损失都变大，但那是温度的标度，不是模型变差（argmax 一个都不会变）。"
+		ui.Text(c, shape).FontSize(fontMicro).TextColor(colFaint).LineHeight(1.4)
+	} else {
+		ui.Text(c, fmt.Sprintf("当前损失 %s。往两端调损失都变大，但那是温度的标度，不是模型变差（argmax 一个都不会变）。", losses)).
+			FontSize(fontMicro).TextColor(colFaint).LineHeight(1.4)
+	}
 }
 
 // inspectorPrediction is the output stage's second inspector card: one position's

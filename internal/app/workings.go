@@ -677,6 +677,11 @@ type nextByteSkill struct {
 	MeanLoss         float64
 	UniformReference float64
 	Temperature      float64
+	// Underflowed counts positions whose true byte's probability rounded to exactly zero at
+	// this temperature, so their loss was not finite. When it is non-zero MeanLoss is a lower
+	// bound over the positions that did produce a number, not a mean over all of them —
+	// which the card has to say rather than print "+Inf".
+	Underflowed int
 }
 
 // computeNextByteSkill runs the model's own unembedding over every row of the
@@ -708,9 +713,16 @@ func computeNextByteSkill(w *model.Weights, tr *model.Trace, temperature float64
 		}
 		actual := tr.Tokens[t+1].ID
 		pActual := float64(probs[actual])
-		loss := math.Inf(1)
+		// At a low enough temperature the true byte's probability can underflow to exactly
+		// zero in float32, which makes -ln(p) infinite. That is a limit of the arithmetic, not
+		// a property of the model worth printing: the card said "平均损失 +Inf nats" and
+		// "降低了 -Inf%", which reads as a bug in the app. Count them instead and let the
+		// summary say the mean is a lower bound.
+		loss := 0.0
 		if pActual > 0 {
 			loss = -math.Log(pActual)
+		} else {
+			s.Underflowed++
 		}
 		hit := guess == actual
 		if hit {
@@ -1998,4 +2010,69 @@ func computeEmbeddingStructure(w *model.Weights, prompt string) embeddingStructu
 	}
 	e.OK = true
 	return e
+}
+
+// temperatureMinimum finds the temperature where this prompt's mean loss is lowest, and
+// reports enough of the curve for a reader to see the shape.
+//
+// The per-position card used to state, in fixed prose, that the mean loss is U-shaped with
+// its minimum at T=1 — "the value the weights were trained at". That was measured once on
+// the default prompt and then shown for every prompt. Measured across four prompts, T=1 is
+// the minimum for only one of them: "attention is all you need" and a longer sentence bottom
+// out at 1.5, and "hi" at 2.0. So the sentence was not merely unverified, it was false for
+// most of the prompts a reader can type.
+//
+// The shape is still worth stating — but which temperature is lowest is a measurement, so
+// the card makes it one.
+type temperatureCurve struct {
+	// Samples are the temperatures probed, ascending, and Losses the mean loss at each.
+	Samples []float64
+	Losses  []float64
+	// Best is the sample with the lowest loss, and BestLoss that loss.
+	Best     float64
+	BestLoss float64
+	// AtOne is the loss at T=1, which is where the weights were trained — the reference the
+	// curve is judged against rather than the answer.
+	AtOne float64
+	// UnderflowedAt is how many positions underflowed at the coldest sample, so a caller can
+	// say the low end is a limit of the arithmetic rather than a property of the model.
+	UnderflowedAt int
+	OK            bool
+}
+
+// temperatureSamples are the temperatures the curve is measured at. They span the slider's
+// range (0.1 to 2.0) with a denser middle, where the minimum usually is.
+var temperatureSamples = []float64{0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0}
+
+// computeTemperatureCurve measures the mean loss across the temperature samples.
+func computeTemperatureCurve(w *model.Weights, tr *model.Trace) temperatureCurve {
+	var c temperatureCurve
+	if w == nil || tr == nil || len(tr.Tokens) < 2 {
+		return c
+	}
+	for _, t := range temperatureSamples {
+		s := computeNextByteSkill(w, tr, t)
+		if s.Scored == 0 {
+			continue
+		}
+		c.Samples = append(c.Samples, t)
+		c.Losses = append(c.Losses, s.MeanLoss)
+		if len(c.Samples) == 1 {
+			c.UnderflowedAt = s.Underflowed
+		}
+		if math.Abs(t-1.0) < 1e-9 {
+			c.AtOne = s.MeanLoss
+		}
+	}
+	if len(c.Samples) == 0 {
+		return c
+	}
+	c.Best, c.BestLoss = c.Samples[0], c.Losses[0]
+	for i, v := range c.Losses {
+		if v < c.BestLoss {
+			c.Best, c.BestLoss = c.Samples[i], v
+		}
+	}
+	c.OK = true
+	return c
 }

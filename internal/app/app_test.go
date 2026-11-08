@@ -8361,7 +8361,10 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 		// the confidence note, plus the word-boundary sentence: whether the gap it
 		// describes exists is a property of the weights, so with random ones it is
 		// absent rather than false
-		6: {"这么高的把握", "根本没有那么大的把握", "错得最多的地方是词边界"},
+		// the confidence note, the word-boundary sentence, and the temperature curve: which
+		// temperature minimises the loss is a property of the weights, so the whole sentence
+		// differs between trained and random
+		6: {"这么高的把握", "根本没有那么大的把握", "错得最多的地方是词边界", "这条曲线是实测的"},
 	}
 
 	collect := func(w *model.Weights) []map[string]bool {

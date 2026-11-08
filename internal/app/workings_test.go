@@ -3523,3 +3523,147 @@ func TestEmbeddingStructureCardQuotesItsOwnNumbers(t *testing.T) {
 		t.Fatal("a byte is rendered with Go's \\u escaping instead of the app's byte notation")
 	}
 }
+
+// TestTemperatureCurveFindsTheActualMinimum checks that the curve reports the temperature it
+// actually measured rather than assuming T=1.
+//
+// The card used to state in fixed prose that the mean loss is U-shaped with its minimum at
+// T=1. Measured, that is false for most prompts: "attention is all you need" bottoms out at
+// 1.5 and "hi" at 2.0, and even the default prompt's minimum is 1.25 rather than 1.0. So the
+// sentence is now built from this curve, and the curve has to agree with a fresh scan.
+func TestTemperatureCurveFindsTheActualMinimum(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+		"hi",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		if len(a.Trace.Tokens) < 2 {
+			continue
+		}
+		c := computeTemperatureCurve(a.W, a.Trace)
+		if !c.OK {
+			t.Fatalf("prompt %q: no curve", prompt)
+		}
+		if len(c.Samples) != len(c.Losses) || len(c.Samples) == 0 {
+			t.Fatalf("prompt %q: %d samples, %d losses", prompt, len(c.Samples), len(c.Losses))
+		}
+		// Every quoted loss must be the one that temperature produces.
+		for i, temp := range c.Samples {
+			want := computeNextByteSkill(a.W, a.Trace, temp).MeanLoss
+			if math.Abs(c.Losses[i]-want) > 1e-9 {
+				t.Fatalf("prompt %q T=%.2f: curve says %.6f, recomputed %.6f",
+					prompt, temp, c.Losses[i], want)
+			}
+		}
+		// The reported best must be the argmin of the samples.
+		lowest := 0
+		for i, v := range c.Losses {
+			if v < c.Losses[lowest] {
+				lowest = i
+			}
+		}
+		if math.Abs(c.Best-c.Samples[lowest]) > 1e-12 || math.Abs(c.BestLoss-c.Losses[lowest]) > 1e-9 {
+			t.Fatalf("prompt %q: card says best T=%.2f (%.6f), the samples say T=%.2f (%.6f)",
+				prompt, c.Best, c.BestLoss, c.Samples[lowest], c.Losses[lowest])
+		}
+		// And T=1 must be represented, since the sentence quotes it.
+		if math.Abs(c.AtOne-computeNextByteSkill(a.W, a.Trace, 1.0).MeanLoss) > 1e-9 {
+			t.Fatalf("prompt %q: AtOne %.6f disagrees with the T=1 measurement", prompt, c.AtOne)
+		}
+	}
+}
+
+// TestTemperatureMinimumIsNotAlwaysOne records the fact that made the old sentence wrong.
+//
+// This is deliberately a statement about the bundled weights rather than a tautology: if a
+// future checkpoint did put every prompt's minimum at T=1, the card's "最低点不在 T = 1"
+// branch would stop being reached, and this test failing is the signal to re-read the prose.
+func TestTemperatureMinimumIsNotAlwaysOne(t *testing.T) {
+	offOne := 0
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+		"hi",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		if len(a.Trace.Tokens) < 2 {
+			continue
+		}
+		c := computeTemperatureCurve(a.W, a.Trace)
+		if c.OK && math.Abs(c.Best-1) > 1e-9 {
+			offOne++
+		}
+	}
+	if offOne == 0 {
+		t.Fatal("every prompt now minimises at T=1, so the card's \"最低点不在 T = 1\" branch " +
+			"is never reached; re-read the sentence and this test")
+	}
+	t.Logf("%d of 3 prompts minimise away from T=1", offOne)
+}
+
+// TestUnderflowIsCountedNotPrinted checks that a probability rounding to zero produces a
+// count rather than an infinite loss, and that the mean stays finite.
+//
+// At T=0.1 the true byte's probability can underflow in float32. The loss then has no finite
+// value, and the card printed "平均损失 +Inf nats" and "降低了 -Inf%", which reads as a fault
+// in the app rather than as a limit of the arithmetic.
+func TestUnderflowIsCountedNotPrinted(t *testing.T) {
+	// A long prompt with a low-probability truth is the surest way to underflow at T=0.1.
+	a := newTestApp(t)
+	a.Prompt = "Attention lets every token look at the tokens before it."
+	a.recompute()
+	cold := computeNextByteSkill(a.W, a.Trace, 0.1)
+	if cold.Scored == 0 {
+		t.Fatal("nothing scored")
+	}
+	if cold.Underflowed == 0 {
+		t.Skip("this prompt does not underflow at T=0.1; nothing to check")
+	}
+	if math.IsInf(cold.MeanLoss, 0) || math.IsNaN(cold.MeanLoss) {
+		t.Fatalf("the mean loss is %v with %d underflowed positions; it must stay finite",
+			cold.MeanLoss, cold.Underflowed)
+	}
+	// Every row's loss must be finite too, or the inspector would print an Inf.
+	for _, row := range cold.Rows {
+		if math.IsInf(row.Loss, 0) || math.IsNaN(row.Loss) {
+			t.Fatalf("position %d has loss %v", row.Pos, row.Loss)
+		}
+	}
+	// At T=1 nothing should underflow on any of these prompts.
+	warm := computeNextByteSkill(a.W, a.Trace, 1.0)
+	if warm.Underflowed != 0 {
+		t.Fatalf("%d positions underflow at T=1", warm.Underflowed)
+	}
+}
+
+// TestUnderflowNoteReachesTheCard reads the note out of the rendered text.
+func TestUnderflowNoteReachesTheCard(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "Attention lets every token look at the tokens before it."
+	a.recompute()
+	a.Step = 6
+	a.Temp = 0.1
+	cold := computeNextByteSkill(a.W, a.Trace, 0.1)
+	if cold.Underflowed == 0 {
+		t.Skip("this prompt does not underflow at T=0.1")
+	}
+	tr := ui.NewTester(a.View, 1500, 3400)
+	tr.Frame()
+	joined := ""
+	for _, s := range tr.Texts() {
+		joined += s + "\n"
+		if strings.Contains(s, "+Inf") {
+			t.Fatalf("the card renders %q; an infinite loss is an arithmetic artefact, not a "+
+				"measurement the reader can use", s)
+		}
+	}
+	want := fmt.Sprintf("%d 个位置的真实字节概率下溢到 0，未计入均值", cold.Underflowed)
+	if !strings.Contains(joined, want) {
+		t.Fatalf("the card does not explain the underflow (%q)", want)
+	}
+}
