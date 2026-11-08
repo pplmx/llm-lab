@@ -145,7 +145,7 @@ func TestReadmeFadeDurationMatchesTheTransition(t *testing.T) {
 func TestReadmeGraphLegendsMatchTheCode(t *testing.T) {
 	doc := readREADME(t)
 	for _, section := range []string{
-		"### 图上每个元素怎么读",
+		"## 图上每个元素怎么读",
 		"色深上限",
 		"向量条带两端的",
 		"直方图的竖线",
@@ -462,5 +462,92 @@ func TestSamplingHasTwoLabelsAndTheReadmeSaysSo(t *testing.T) {
 			t.Fatalf("the README's sampling row does not name %q, which the app renders:\n%s",
 				label, row)
 		}
+	}
+}
+
+// TestReadmeSectionsStayUnderTheRightParent keeps the README's outline from drifting.
+//
+// The document grew a section per card over many rounds, and the new sections were
+// appended wherever the end of the file happened to be — which by then was past 目录, the
+// file listing. Four teaching sections ended up below the table of contents, so a reader
+// scrolling top to bottom met the most interesting material after the appendices. The fix
+// was to gather them under one heading; this test is what stops it happening again.
+//
+// It checks the outline rather than the prose: every `###` must belong to a `##` that
+// appears above it, no `##` may repeat, and the card sections must all sit under the same
+// parent instead of scattered through the document.
+func TestReadmeSectionsStayUnderTheRightParent(t *testing.T) {
+	doc := readREADME(t)
+	var level2 []string
+	var current2 string
+	cardSections := map[string]string{}
+	// The card sections are the ones whose headings are questions the cards answer.
+	cardHeadings := []string{
+		"### 为什么第 5 步多了一张「每一层会说什么」",
+		"### 权重绑定让预测变成一个余弦",
+		"### 学出来的位置编码和 sin/cos 长得完全不一样",
+		"### 四个头真的在分工吗",
+		"### 掩码到底挡掉了什么",
+		"### FFN 的单元也不是平均出力",
+		"### 两层做的活不一样多",
+	}
+	for _, line := range strings.Split(doc, "\n") {
+		switch {
+		case strings.HasPrefix(line, "## "):
+			current2 = strings.TrimPrefix(line, "## ")
+			level2 = append(level2, current2)
+		case strings.HasPrefix(line, "### "):
+			if current2 == "" {
+				t.Fatalf("the heading %q appears before any ## heading", line)
+			}
+			for _, want := range cardHeadings {
+				if line == want {
+					cardSections[want] = current2
+				}
+			}
+		}
+	}
+	seen := map[string]bool{}
+	for _, h := range level2 {
+		if seen[h] {
+			t.Fatalf("the ## heading %q appears twice", h)
+		}
+		seen[h] = true
+	}
+	if len(cardSections) != len(cardHeadings) {
+		t.Fatalf("%d of %d card sections are present", len(cardSections), len(cardHeadings))
+	}
+	var parent string
+	for _, heading := range cardHeadings {
+		got := cardSections[heading]
+		if parent == "" {
+			parent = got
+			continue
+		}
+		if got != parent {
+			t.Fatalf("%q sits under %q while the other card sections sit under %q; they are "+
+				"one topic and belong together", heading, got, parent)
+		}
+	}
+	// And that parent has to come before the appendices, not after them. The appendices
+	// are the parts a reader consults rather than reads: the model card, the correctness
+	// notes, the limitations and the file listing.
+	appendix := map[string]bool{"模型": true, "正确性": true, "已知限制": true, "目录": true}
+	parentAt, appendixAt := -1, -1
+	for i, h := range level2 {
+		if h == parent {
+			parentAt = i
+		}
+		if appendix[h] && appendixAt < 0 {
+			appendixAt = i
+		}
+	}
+	if parentAt < 0 {
+		t.Fatalf("the card sections' parent %q is not a ## heading", parent)
+	}
+	if appendixAt >= 0 && parentAt > appendixAt {
+		t.Fatalf("the card sections sit under %q at position %d, after the appendix %q at %d; "+
+			"teaching material should not be filed behind the appendices",
+			parent, parentAt, level2[appendixAt], appendixAt)
 	}
 }
