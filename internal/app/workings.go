@@ -1671,3 +1671,83 @@ func pearson(a, b []float64) float64 {
 	}
 	return num / (math.Sqrt(da) * math.Sqrt(db))
 }
+
+// headIndependence measures whether the heads' outputs are complements or near-copies,
+// which is the justification for concatenating them instead of summing.
+//
+// The Softmax stage draws each head's contribution and then the sum, and says the heads
+// are "相加" — but never says why they are worth having separately. Measured on the
+// bundled weights at layer 0, the four heads' projected outputs are close to orthogonal
+// (pairwise mean cosine 0.027 to 0.144) and carry comparable magnitudes (19% to 32% of
+// the total), so summing them before their own projections would be destructive: the
+// whole point of the four-slice concatenation is that the slices say different things.
+type headIndependence struct {
+	// Layer is the block the measurement is for, and Heads is how many it has.
+	Layer int
+	Heads int
+	// MaxPairCosine is the largest mean cosine between any two heads' projected outputs,
+	// so a small value means every pair is close to orthogonal.
+	MaxPairCosine float64
+	// MinPairCosine is the smallest, so the pair range is readable.
+	MinPairCosine float64
+	// MinShare and MaxShare bound the share of the total ‖Δ_h‖ each head contributes.
+	MinShare, MaxShare float64
+	OK                 bool
+}
+
+// computeHeadIndependence measures one layer's head outputs against each other.
+func computeHeadIndependence(l model.LayerTrace, tokens int) headIndependence {
+	c := headIndependence{Layer: -1, Heads: len(l.HeadProj), MinPairCosine: math.Inf(1), MaxPairCosine: math.Inf(-1)}
+	if tokens < 1 || len(l.HeadProj) < 2 {
+		return c
+	}
+	// Pairwise cosine, averaged over positions.
+	first := true
+	for i := 0; i < len(l.HeadProj); i++ {
+		for j := i + 1; j < len(l.HeadProj); j++ {
+			var sum float64
+			rows := 0
+			for p := 0; p < tokens && p < len(l.HeadProj[i]) && p < len(l.HeadProj[j]); p++ {
+				sum += cosineF32(l.HeadProj[i][p], l.HeadProj[j][p])
+				rows++
+			}
+			if rows == 0 {
+				continue
+			}
+			mean := sum / float64(rows)
+			if mean < c.MinPairCosine {
+				c.MinPairCosine = mean
+			}
+			if mean > c.MaxPairCosine {
+				c.MaxPairCosine = mean
+			}
+			first = false
+		}
+	}
+	if first {
+		return c
+	}
+	// Each head's share of the total length.
+	lengths := make([]float64, len(l.HeadProj))
+	var total float64
+	for i := range l.HeadProj {
+		for p := 0; p < tokens && p < len(l.HeadProj[i]); p++ {
+			lengths[i] += float64(norm(l.HeadProj[i][p]))
+		}
+		total += lengths[i]
+	}
+	if total > 0 {
+		c.MinShare, c.MaxShare = math.Inf(1), math.Inf(-1)
+		for _, v := range lengths {
+			share := v / total
+			if share < c.MinShare {
+				c.MinShare = share
+			}
+			if share > c.MaxShare {
+				c.MaxShare = share
+			}
+		}
+	}
+	c.OK = true
+	return c
+}

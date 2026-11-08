@@ -840,6 +840,8 @@ func (a *App) stageSoftmax(c *ui.Context) {
 
 	a.stageHeadProfiles(c)
 
+	a.stageHeadIndependence(c)
+
 	a.cardNamed(c, "加权求和", func() {
 		sectionTitle(c, "加权求和", "本头的输出，以及它在残差里的份额")
 		// Three strips, two different widths: the first is d_head, the other two are d_model,
@@ -2478,7 +2480,7 @@ var stageCards = [][]string{
 	// The mask counterfactual is drawn after the score matrix (measured: matrix 400,
 	// counterfactual 930), so the row lists them in that order.
 	{"Q / K / V", "分数矩阵", "掩码反事实"},
-	{"注意力矩阵", "四个头", "加权求和"},
+	{"注意力矩阵", "四个头", "头之间重合吗", "加权求和"},
 	// Order must match the draw order: the row is a table of contents, and a chip whose
 	// position disagrees with its card's position is worse than no row. Measured from the
 	// scroll each chip produces: 残差流 93, 每层说什么 665, 每层改多少 1133, LayerNorm 1460,
@@ -2623,5 +2625,94 @@ func (a *App) stageWeightTying(c *ui.Context) {
 				"绑定不是免费的：它把输入空间和输出空间焊在一起，这是一个结构选择，不只是省了 2.4 万个参数。",
 				p.EmbedNormMin, p.EmbedNormMax, p.LogitCosineCorrelation,
 				100*float64(p.PairsOrderedDifferently)/float64(p.Pairs)))
+	})
+}
+
+// stageHeadIndependence answers why the heads are concatenated rather than summed, which
+// the stage shows as a drawing and never justifies.
+//
+// The 加权求和 card draws each head's contribution and then "全部头相加", and the reason
+// four slices are worth carrying is that they say different things. That is measurable:
+// the projected outputs of two heads can be compared as vectors, per position. On the
+// bundled weights at layer 0 the four heads are close to orthogonal — pairwise mean cosine
+// 0.027 to 0.144 — and their lengths are comparable, 19% to 32% of the total. Summing them
+// before their own projections would therefore be destructive rather than merely
+// redundant.
+//
+// Layer 1 is a different picture (0.098 to 0.537), so the card measures the layer the
+// reader has selected rather than quoting one number for the model; the two layers'
+// attention heads are not equally specialised, which is the same asymmetry the residual
+// stage reports.
+func (a *App) stageHeadIndependence(c *ui.Context) {
+	rows := make([]headIndependence, 0, len(a.Trace.Layers))
+	for li := range a.Trace.Layers {
+		m := computeHeadIndependence(a.Trace.Layers[li], len(a.Trace.Tokens))
+		if !m.OK {
+			continue
+		}
+		m.Layer = li
+		rows = append(rows, m)
+	}
+	if len(rows) == 0 {
+		return
+	}
+	a.cardNamed(c, "头之间重合吗", func() {
+		sectionTitle(c, "四个头说的是同一件事吗", "两两比较各头的投影输出")
+		mutedText(c, "下面那张图画的是「每个头各写了多少」，这张问的是另一件事：四个头写的东西像不像。"+
+			"像，那四个头就是浪费；不像，把四段拼接起来才是对的。量法是两点：两两之间投影输出的平均余弦（越接近 0 越互不相干），"+
+			"以及每个头占了多少长度。")
+		out := make([]barRow, 0, len(rows))
+		var maxPair float64
+		for _, r := range rows {
+			if r.MaxPairCosine > maxPair {
+				maxPair = r.MaxPairCosine
+			}
+		}
+		if maxPair <= 0 {
+			maxPair = 1
+		}
+		for _, r := range rows {
+			label := fmt.Sprintf("层 %d", r.Layer)
+			colour := colGreen
+			if r.Layer == a.Layer {
+				label = fmt.Sprintf("层 %d ◂", r.Layer)
+				colour = colAccent2
+			}
+			out = append(out, barRow{
+				Label:      label,
+				Value:      float32(r.MaxPairCosine),
+				ValueText:  fmt.Sprintf("最大 cos %+.3f", r.MaxPairCosine),
+				Color:      colour,
+				LabelWidth: 46,
+				ValueWidth: 104,
+				Tip: fmt.Sprintf("层 %d：两两平均余弦 %+.3f 到 %+.3f；各头占长度 %.0f%%–%.0f%%",
+					r.Layer, r.MinPairCosine, r.MaxPairCosine, 100*r.MinShare, 100*r.MaxShare),
+			})
+		}
+		ui.Text(c, "两两之间最大的平均余弦（越接近 0，四个头越各说各的）").
+			FontSize(fontMicro).TextColor(colFaint)
+		bars(c, out, float32(maxPair), colGreen)
+		for _, r := range rows {
+			workingsLinesCopyable(c, []string{
+				fmt.Sprintf("层 %d：四个头的投影输出两两平均余弦在 %+.3f 到 %+.3f 之间",
+					r.Layer, r.MinPairCosine, r.MaxPairCosine),
+				fmt.Sprintf("层 %d：各头占 ‖Δ‖ 总量的 %.0f%%–%.0f%%，量级相当",
+					r.Layer, 100*r.MinShare, 100*r.MaxShare),
+			})
+		}
+		first := rows[0]
+		if len(rows) > 1 {
+			first = rows[a.Layer]
+		}
+		if first.MaxPairCosine < 0.25 {
+			misconception(c,
+				"「多头注意力就是把同样的注意力做几遍再取平均，多几个头只是更稳」",
+				fmt.Sprintf("四个头不是彼此的副本。层 %d 上，任意两个头的投影输出之间的平均余弦只有 %+.3f 到 %+.3f，"+
+					"几乎互不相干，而且每个头的量级相当（%.0f%%–%.0f%%）。"+
+					"把它们各自乘上自己的 Wo 切片再拼起来，等于让模型在同一个位置同时读四种不同的关系；"+
+					"若是先相加再投影，这些差别会互相抵消。所以「多几个头」不是求平均求稳，而是并行的四条通道。",
+					first.Layer, first.MinPairCosine, first.MaxPairCosine,
+					100*first.MinShare, 100*first.MaxShare))
+		}
 	})
 }

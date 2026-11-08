@@ -29,7 +29,7 @@ func readREADME(t *testing.T) string {
 // TestReadmeCalloutCountMatchesTheStages: "第 3–7 步各带「常见误解」卡片，共六条".
 func TestReadmeCalloutCountMatchesTheStages(t *testing.T) {
 	doc := readREADME(t)
-	if !strings.Contains(doc, "共十二条") {
+	if !strings.Contains(doc, "共十三条") {
 		t.Fatal("the README no longer states the callout count; update or remove this test")
 	}
 
@@ -47,8 +47,8 @@ func TestReadmeCalloutCountMatchesTheStages(t *testing.T) {
 			}
 		}
 	}
-	if total != 12 {
-		t.Fatalf("the README says 共十二条, the app renders %d", total)
+	if total != 13 {
+		t.Fatalf("the README says 共十三条, the app renders %d", total)
 	}
 	// And they are on stages 3-7, with two callouts on step 4 (Softmax) and on
 	// step 5 (residual: the stream-grows rebuttal and the logit-lens one).
@@ -62,8 +62,10 @@ func TestReadmeCalloutCountMatchesTheStages(t *testing.T) {
 		switch step {
 		case 1:
 			want = 1 // sin/cos is not the only option
-		case 2, 3:
-			want = 2 // sign is not a switch + mask counterfactual / rows vs columns + heads cancel
+		case 2:
+			want = 2 // sign is not a switch + mask counterfactual
+		case 3:
+			want = 3 // rows vs columns + heads cancel + heads are not copies
 		case 4:
 			want = 3 // stream grows + logit lens + layer rewrite
 		case 5:

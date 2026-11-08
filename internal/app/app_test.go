@@ -1985,6 +1985,7 @@ func TestFFNOutputFormulaIgnoresTheHiddenStrip(t *testing.T) {
 	if cfg.DFF == cfg.DModel {
 		t.Fatal("d_ff equals d_model, so this case cannot be tested")
 	}
+	const sweepTo = float32(940) // the window this test builds
 	tr := ui.NewTester(a.View, 1500, 940)
 	tr.Frame()
 
@@ -1999,9 +2000,9 @@ func TestFFNOutputFormulaIgnoresTheHiddenStrip(t *testing.T) {
 
 	// Find the hidden strip first: hovering the output strip below it changes
 	// the text above, which can reflow the page and move the hidden strip.
-	hidX, hidY := stripPoint(t, a, tr, "hidden")
+	hidX, hidY := stripPoint(t, a, tr, sweepTo, "hidden")
 
-	outX, outY := stripPoint(t, a, tr, "out")
+	outX, outY := stripPoint(t, a, tr, sweepTo, "out")
 	tr.Move(outX, outY)
 	tr.Frame()
 	if a.HoverDimOut < 0 {
@@ -2024,7 +2025,7 @@ func TestFFNOutputFormulaIgnoresTheHiddenStrip(t *testing.T) {
 		if a.HoverDimH < 0 {
 			// Scrolled out from under the pointer at this x; re-anchor by
 			// re-finding the strip, since the page may have reflowed.
-			hidX, hidY = stripPoint(t, a, tr, "hidden")
+			hidX, hidY = stripPoint(t, a, tr, sweepTo, "hidden")
 			continue
 		}
 		if a.HoverDimH > lastHidden {
@@ -2454,9 +2455,13 @@ func TestResidualWorkingsFollowTheHoveredDimension(t *testing.T) {
 // stripPoint finds a point inside one of a stage's vector strips by sweeping the
 // stage column and watching which hover field the strip writes. kind is
 // "hidden" (HoverDimH), "out" (HoverDimOut) or "head" (HoverDimHeadOut).
-func stripPoint(t *testing.T, a *App, tr *ui.Tester, kind string) (x, y float32) {
+func stripPoint(t *testing.T, a *App, tr *ui.Tester, sweepTo float32, kind string) (x, y float32) {
 	t.Helper()
-	for probe := float32(250); probe < 1500; probe += 3 {
+	// Sweep the whole window rather than a fixed 1500 DIP. The constant was the reason this
+	// helper reported "no strip writing head found" after a card was added above the strips:
+	// the caller grew the window to fit the stage, but the sweep never looked past its old
+	// bound. The height comes from the caller because Tester exposes no size accessor.
+	for probe := float32(250); probe < sweepTo; probe += 3 {
 		tr.Move(400, probe)
 		tr.Frame()
 		var got int
@@ -2494,13 +2499,31 @@ func TestEachStripWidthHasItsOwnCursor(t *testing.T) {
 	// d_model wide. Pointing at one must not set the other.
 	a.Step = 3
 	// A tall window, not the default: this test is about which hover field each strip
-	// writes, and the attention stage's strips sit below the fold once the four-head
-	// comparison card is on it. A layout that scrolls is TestEveryStageCanBeScrolledToItsEnd's
-	// business; making this test scroll too would confuse "the strip is missing" with
-	// "the strip is off screen".
-	tr := ui.NewTester(a.View, 1500, 2400)
+	// writes, and the attention stage's strips sit far below the fold once the four-head
+	// comparison and head-independence cards are on it. A layout that scrolls is
+	// TestEveryStageCanBeScrolledToItsEnd's business; making this test scroll would confuse
+	// "the strip is missing" with "the strip is off screen".
+	//
+	// The height is derived from the stage's own content rather than guessed, because it had
+	// to be raised twice: each new card above the strips pushed them past whatever number
+	// was written here, and the failure read "no strip writing head found".
+	a.Step = 3
+	measure := ui.NewTester(a.View, 1500, 800)
+	measure.Frame()
+	measure.Move(600, 400)
+	for i := 0; i < 60; i++ {
+		measure.Wheel(600, 400, 0, 600)
+		measure.Advance(2e9)
+	}
+	measure.Frame()
+	need := a.Scroll.MaxY + a.StageViewportH + 60
+	if need < 1600 {
+		need = 1600
+	}
+	tr := ui.NewTester(a.View, 1500, int(need))
 	tr.Frame()
-	headX, headY := stripPoint(t, a, tr, "head")
+	tr.Frame()
+	headX, headY := stripPoint(t, a, tr, need, "head")
 	tr.Move(headX, headY)
 	tr.Frame()
 	if a.HoverDimHeadOut < 0 {
@@ -2509,8 +2532,19 @@ func TestEachStripWidthHasItsOwnCursor(t *testing.T) {
 	if head := a.HoverDimHeadOut; head >= cfg.DModel {
 		t.Fatalf("head output hovered at d%d, past d_head %d", head, cfg.DHead())
 	}
-	if a.HoverDimProj >= 0 {
-		t.Fatalf("the head output strip also set HoverDimProj=%d", a.HoverDimProj)
+	// The projection field may still hold a value from an earlier hover — that is by
+	// design, documented at vectorStrip: the formulas under a strip follow the last
+	// hovered dimension, so clearing on leave would snap them back to d0 as the reader
+	// moved towards the working. What must not be true is that pointing at the head strip
+	// puts the *projection's* readout on screen, since a readout claims "this is the cell
+	// under your cursor".
+	for _, line := range tr.Texts() {
+		if strings.HasPrefix(line, "d") && strings.Contains(line, " = ") {
+			if !strings.HasPrefix(line, fmt.Sprintf("d%d ", a.HoverDimHeadOut)) {
+				t.Fatalf("pointing at the head output strip shows the readout %q, which is not "+
+					"d%d but a value from another strip", line, a.HoverDimHeadOut)
+			}
+		}
 	}
 
 	// The readout must not outlive the pointer: it claims "this is the cell
@@ -8500,6 +8534,9 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 		// ..., plus every line of the four-head comparison card: it needs at least two
 		// tokens to have any row to average, so a one-token prompt renders none of it.
 		3: {"行可以比较", "第 # 层的头 #", "四个头差别明显", "四个头在这一层上很接近", "看不出分工",
+			// The head-independence card needs a second position to compare any two heads
+			// over; with one token it draws nothing.
+			"四个头说的是同一件事吗", "不是彼此的副本", "两两之间最大的平均余弦",
 			"这里换两个能区分行为的量", "前一位权重", "押注超过半数"},
 		// Confidence follows maxP; the last-position note appears only when the selected token is
 		// not the last one, which a one-token prompt makes impossible.

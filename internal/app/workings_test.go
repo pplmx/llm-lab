@@ -3098,3 +3098,122 @@ func TestWeightTyingCardQuotesItsOwnNumbers(t *testing.T) {
 		}
 	}
 }
+
+// TestHeadIndependenceMatchesTheHeadProj recomputes the pairwise cosines and the shares.
+func TestHeadIndependenceMatchesTheHeadProj(t *testing.T) {
+	a := newTestApp(t)
+	n := len(a.Trace.Tokens)
+	for li := range a.Trace.Layers {
+		l := a.Trace.Layers[li]
+		c := computeHeadIndependence(l, n)
+		if !c.OK {
+			t.Fatalf("layer %d: no independence measured", li)
+		}
+		if c.Heads != len(l.HeadProj) {
+			t.Fatalf("layer %d: %d heads measured, %d present", li, c.Heads, len(l.HeadProj))
+		}
+		// Recompute the pair range.
+		minC, maxC := math.Inf(1), math.Inf(-1)
+		for i := 0; i < len(l.HeadProj); i++ {
+			for j := i + 1; j < len(l.HeadProj); j++ {
+				var sum float64
+				for p := 0; p < n; p++ {
+					sum += cosineF32(l.HeadProj[i][p], l.HeadProj[j][p])
+				}
+				m := sum / float64(n)
+				if m < minC {
+					minC = m
+				}
+				if m > maxC {
+					maxC = m
+				}
+			}
+		}
+		if math.Abs(c.MinPairCosine-minC) > 1e-9 || math.Abs(c.MaxPairCosine-maxC) > 1e-9 {
+			t.Fatalf("layer %d pair range: card %+.6f..%+.6f, recomputed %+.6f..%+.6f",
+				li, c.MinPairCosine, c.MaxPairCosine, minC, maxC)
+		}
+		// Recompute the share range.
+		lengths := make([]float64, len(l.HeadProj))
+		var total float64
+		for i := range l.HeadProj {
+			for p := 0; p < n; p++ {
+				lengths[i] += float64(norm(l.HeadProj[i][p]))
+			}
+			total += lengths[i]
+		}
+		minS, maxS := math.Inf(1), math.Inf(-1)
+		for _, v := range lengths {
+			s := v / total
+			if s < minS {
+				minS = s
+			}
+			if s > maxS {
+				maxS = s
+			}
+		}
+		if math.Abs(c.MinShare-minS) > 1e-9 || math.Abs(c.MaxShare-maxS) > 1e-9 {
+			t.Fatalf("layer %d share range: card %.6f..%.6f, recomputed %.6f..%.6f",
+				li, c.MinShare, c.MaxShare, minS, maxS)
+		}
+	}
+}
+
+// TestHeadIndependenceSaysHeadsDiffer is the premise of the card: the heads' outputs are
+// far from copies.
+//
+// The card tells the reader that concatenating is right because the slices say different
+// things. That claim needs the cosines to be small; if a weight set made the four heads
+// produce near-identical vectors, the sentence would be false rather than merely
+// unverified. Layer 1 is the looser case, so the bound is checked there too.
+func TestHeadIndependenceSaysHeadsDiffer(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		n := len(a.Trace.Tokens)
+		for li := range a.Trace.Layers {
+			c := computeHeadIndependence(a.Trace.Layers[li], n)
+			if !c.OK {
+				t.Fatalf("prompt %q layer %d: no measurement", prompt, li)
+			}
+			if c.MaxPairCosine > 0.7 {
+				t.Fatalf("prompt %q layer %d: two heads reach cosine %.3f; the card says the "+
+					"heads are far from copies", prompt, li, c.MaxPairCosine)
+			}
+			// And no head may dominate: if one carried nearly everything, "four parallel
+			// channels" would misdescribe it.
+			if c.MaxShare > 0.6 {
+				t.Fatalf("prompt %q layer %d: one head carries %.0f%% of the total length",
+					prompt, li, 100*c.MaxShare)
+			}
+		}
+	}
+}
+
+// TestHeadIndependenceCardQuotesItsOwnNumbers reads the per-layer figures out of the text.
+func TestHeadIndependenceCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 3
+	tr := ui.NewTester(a.View, 1500, 3400)
+	tr.Frame()
+	n := len(a.Trace.Tokens)
+	joined := ""
+	for _, s := range tr.Texts() {
+		joined += s + "\n"
+	}
+	if !strings.Contains(joined, "四个头说的是同一件事吗") {
+		t.Fatal("the head-independence card is missing")
+	}
+	for li := range a.Trace.Layers {
+		c := computeHeadIndependence(a.Trace.Layers[li], n)
+		want := fmt.Sprintf("层 %d：四个头的投影输出两两平均余弦在 %+.3f 到 %+.3f 之间",
+			li, c.MinPairCosine, c.MaxPairCosine)
+		if !strings.Contains(joined, want) {
+			t.Fatalf("the card does not print %q", want)
+		}
+	}
+}
