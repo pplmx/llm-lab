@@ -6159,13 +6159,21 @@ func TestFFNLessonQuotesTheLoadedWeights(t *testing.T) {
 //
 // The paragraph says "第 0 层的头 0 几乎每个位置都盯着紧邻的前一个 token，第 1 层的几个头则
 // 反复回到同一小批位置上" — a claim about what this checkpoint's attention actually does.
-// Nothing verified it. If a new checkpoint, a different prompt or a changed forward pass
-// made layer 0's head 0 stop attending to the previous token, the lesson would keep
-// asserting it and the heatmap would quietly disagree.
+// Nothing verified the second half. The test that was here measured only the
+// previous-token rate of both layers' head 0 and said in its own comment that this
+// checked "the layer-0 head-0 peak count being far higher than layer 1's, which is
+// the contrast the sentence draws". It does not: a head that peaks on 35 different
+// positions, each exactly one before its query, and a head that peaks on one position
+// 35 times both score 100% on that measure. The two clauses need two measurements.
 //
-// "几乎每个" is checked as "most rows"; "几个头…同一小批位置" is checked by the layer-0
-// head-0 peak count being far higher than layer 1's, which is the contrast the sentence
-// draws.
+// Measured on the bundled weights and the default prompt (35 rows):
+//
+//	         distinct peaks   largest share of rows on one key
+//	L0 H0..H3   31/25/22/30          2 / 4 / 5 / 2
+//	L1 H0..H3   10/10/ 9/ 7         15 / 15 / 8 / 10
+//
+// So layer 1 does concentrate — 7 to 10 distinct positions instead of 22 to 31, with
+// one key taking up to 15 of the 35 rows — which is what "反复回到同一小批位置" says.
 func TestSoftmaxLessonClaimsMatchTheAttention(t *testing.T) {
 	a := newTestApp(t)
 	tr := a.Trace
@@ -6173,6 +6181,31 @@ func TestSoftmaxLessonClaimsMatchTheAttention(t *testing.T) {
 		t.Skip("the claim names two layers and head 0")
 	}
 
+	// peaks counts, for one head, how many distinct keys are some row's argmax and
+	// how many rows the most-chosen key takes.
+	peaks := func(layer, head int) (distinct, maxRepeat, rows int) {
+		h := tr.Layers[layer].Heads[head]
+		counts := map[int]int{}
+		for i := 1; i < len(tr.Tokens); i++ {
+			row := h.Attn[i]
+			best, bestJ := float32(-1), -1
+			for j := 0; j <= i; j++ {
+				if row[j] > best {
+					best, bestJ = row[j], j
+				}
+			}
+			if bestJ >= 0 {
+				counts[bestJ]++
+				rows++
+			}
+		}
+		for _, c := range counts {
+			if c > maxRepeat {
+				maxRepeat = c
+			}
+		}
+		return len(counts), maxRepeat, rows
+	}
 	peakOnPrevious := func(layer int) (hits, rows int) {
 		h := tr.Layers[layer].Heads[0]
 		for i := 1; i < len(tr.Tokens); i++ {
@@ -6194,26 +6227,65 @@ func TestSoftmaxLessonClaimsMatchTheAttention(t *testing.T) {
 	}
 
 	firstHits, firstRows := peakOnPrevious(0)
-	secondHits, secondRows := peakOnPrevious(1)
-	if firstRows == 0 || secondRows == 0 {
+	if firstRows == 0 {
 		t.Skip("no rows to measure")
 	}
 
-	// "几乎每个位置" — the sentence says almost every position.
+	// Clause 1: "几乎每个位置" — the sentence says almost every position.
 	if frac := float64(firstHits) / float64(firstRows); frac < 0.8 {
 		t.Fatalf("the lesson says layer 0 head 0 watches the previous token almost "+
 			"everywhere, but only %d of %d rows peak there", firstHits, firstRows)
 	}
 
-	// "第 1 层的几个头则反复回到同一小批位置上" — the contrast is that layer 1 does not do
-	// the same thing, which is what the sentence is pointing out.
-	if frac1, frac0 := float64(secondHits)/float64(secondRows),
-		float64(firstHits)/float64(firstRows); frac1 >= frac0 {
-		t.Fatalf("the lesson contrasts layer 0 with layer 1, but layer 1's head 0 peaks "+
-			"on the previous token at %.0f%% against layer 0's %.0f%%",
-			frac1*100, frac0*100)
+	// Clause 2: "第 1 层的几个头则反复回到同一小批位置上". Two things have to hold for
+	// that sentence to be supportable, and the previous version of this test asserted
+	// neither: layer 1's heads must use fewer distinct positions than layer 0's, and
+	// at least one of them must return to the same position often enough to be
+	// "反复". Checked on every head, since the sentence says "几个头".
+	var l0Distinct, l1Distinct []int
+	for head := 0; head < len(tr.Layers[0].Heads); head++ {
+		d0, _, _ := peaks(0, head)
+		l0Distinct = append(l0Distinct, d0)
+		if head < len(tr.Layers[1].Heads) {
+			d1, rep, rows := peaks(1, head)
+			l1Distinct = append(l1Distinct, d1)
+			// "反复回到同一小批位置" is a claim about concentration, and a raw repeat
+			// count does not measure it: 8 of 35 rows on one key could be repetition or
+			// could be the largest share when 9 keys share the rows. Compare against
+			// what an uninformative head would give — with d distinct keys chosen over
+			// rows draws, the expected share of the most-chosen key is about
+			// rows/d. Requiring the observed peak to beat that by 1.5x is the claim
+			// this app makes everywhere else: a number has to be compared against a
+			// reference to mean anything.
+			//
+			// Measured: L1 H0..H3 choose 10/10/9/7 distinct keys and repeat the top one
+			// 15/15/8/10 times, against an expected 3.5/3.5/3.9/5.0 — a factor of 2 to 4.
+			// Layer 0's heads sit at 31/25/22/30 distinct with a maximum repeat of
+			// 2/4/5/2, where the same expected share is ~1.1-1.6.
+			expected := float64(rows) / float64(d1)
+			if float64(rep) < 1.5*expected {
+				t.Fatalf("layer 1 head %d puts its most-chosen key on %d of %d rows while "+
+					"spreading over %d distinct keys (an uninformative head would give "+
+					"about %.1f); the lesson says layer 1's heads repeatedly return to the "+
+					"same small set of positions", head, rep, rows, d1, expected)
+			}
+		}
 	}
-	_ = secondHits
+	// The first clause of the contrast: fewer distinct peaks in layer 1. Compared as
+	// sums rather than head by head, because the sentence compares the layers.
+	if sum(l1Distinct) >= sum(l0Distinct) {
+		t.Fatalf("layer 1 uses %d distinct peak positions against layer 0's %d; the "+
+			"lesson contrasts the two, saying layer 1 concentrates", sum(l1Distinct), sum(l0Distinct))
+	}
+}
+
+// sum adds a slice of ints, for the layer comparison above.
+func sum(v []int) int {
+	total := 0
+	for _, n := range v {
+		total += n
+	}
+	return total
 }
 
 // TestScoreColourRangeMatchesTheDocumentedFigures pins the range that the README and the
