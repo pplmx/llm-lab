@@ -982,3 +982,113 @@ func computeHeadProfiles(l model.LayerTrace, tokens int) (profiles []headProfile
 	}
 	return profiles
 }
+
+// maskCounterfactual is what one row of an attention head would attend to if the
+// causal mask were not there.
+//
+// The mask is architecture, not a learned weight, and the stage says so — but its
+// effect is only ever shown negatively ("the upper triangle is empty"). This asks the
+// question the empty triangle invites: what would row q look at if it could see
+// everything? The scores above the diagonal are -Inf in the trace, so they are not
+// recoverable from Scores; they are recomputed here from the same Q and K the model
+// stored, with the same 1/√d_head scale.
+type maskCounterfactual struct {
+	// Row is the query row the counterfactual was computed for.
+	Row int
+	// FutureShare is the total attention the row would put on keys after it — the
+	// positions the mask hides. This is the number that makes the mask's purpose
+	// concrete: measured over this model, every head puts 51–84% of its unmasked
+	// attention there.
+	FutureShare float64
+	// FutureTop is the future key with the largest share, and FutureTopShare is that
+	// share. At row 0 the answer is striking: the model would give the rest of the
+	// prompt the whole distribution.
+	FutureTop      int
+	FutureTopShare float64
+	// MeanEntropy is the row's entropy without the mask, against the ceiling ln(n).
+	MeanEntropy float64
+	// VisibleEntropy is the same row's entropy as the model actually computes it,
+	// over the q+1 keys it can see.
+	VisibleEntropy float64
+	// Total is how many keys the unmasked row spreads over.
+	Total int
+	OK    bool
+}
+
+// computeMaskCounterfactual recomputes row q of one head without the causal mask.
+func computeMaskCounterfactual(h model.HeadTrace, q, tokens, dHead int) maskCounterfactual {
+	c := maskCounterfactual{Row: q, Total: tokens}
+	if q < 0 || q >= tokens || dHead <= 0 || len(h.Q) <= q || len(h.K) < tokens {
+		return c
+	}
+	scale := float64(float32(1 / math.Sqrt(float64(dHead))))
+	scores := make([]float64, tokens)
+	maxScore := math.Inf(-1)
+	for k := 0; k < tokens; k++ {
+		// Same float32 dot the model takes, so the numbers below are the ones the
+		// mask actually removed rather than a float64 re-derivation of them.
+		var dot float32
+		for d := 0; d < dHead; d++ {
+			dot += h.Q[q][d] * h.K[k][d]
+		}
+		scores[k] = float64(dot) * scale
+		if scores[k] > maxScore {
+			maxScore = scores[k]
+		}
+	}
+	var sum float64
+	for k := range scores {
+		scores[k] = math.Exp(scores[k] - maxScore)
+		sum += scores[k]
+	}
+	if sum == 0 {
+		return c
+	}
+	for k := range scores {
+		scores[k] /= sum
+	}
+	// The row as the model computes it, for the entropy comparison.
+	var visibleEntropy float64
+	for k := 0; k <= q && k < len(h.Attn[q]); k++ {
+		if p := float64(h.Attn[q][k]); p > 1e-9 {
+			visibleEntropy -= p * math.Log(p)
+		}
+	}
+	var entropy float64
+	c.FutureTop = -1
+	for k, p := range scores {
+		if p > 1e-9 {
+			entropy -= p * math.Log(p)
+		}
+		if k > q {
+			c.FutureShare += p
+			if p > c.FutureTopShare {
+				c.FutureTopShare = p
+				c.FutureTop = k
+			}
+		}
+	}
+	c.MeanEntropy = entropy
+	c.VisibleEntropy = visibleEntropy
+	c.OK = true
+	return c
+}
+
+// meanFutureShare is the average, over every row that has a future, of how much of the
+// unmasked distribution lands on keys the mask hides. It is the per-head figure the
+// stage quotes, and it is what turns "the upper triangle is empty" into a number.
+func meanFutureShare(h model.HeadTrace, tokens, dHead int) (share float64, rows int) {
+	if tokens < 2 {
+		return 0, 0
+	}
+	for q := 0; q < tokens-1; q++ {
+		if c := computeMaskCounterfactual(h, q, tokens, dHead); c.OK {
+			share += c.FutureShare
+			rows++
+		}
+	}
+	if rows == 0 {
+		return 0, 0
+	}
+	return share / float64(rows), rows
+}

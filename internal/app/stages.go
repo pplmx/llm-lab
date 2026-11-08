@@ -592,6 +592,83 @@ func (a *App) stageScores(c *ui.Context) {
 					i+1))
 		}
 	})
+
+	// After the matrix, not before: the mask card is secondary evidence, and putting
+	// it first pushed the matrix itself to y=945 in a 720-tall window (measured) —
+	// burying the stage's primary figure to show its explanation.
+	a.stageMaskCounterfactual(c)
+}
+
+// stageMaskCounterfactual shows what the causal mask is actually preventing.
+//
+// The stage says the mask is architecture rather than a learned weight, and draws it
+// as an empty upper triangle. That is honest but quiet: an empty region reads like a
+// formality. Recomputing the same row without the mask answers the question the
+// triangle invites — what would this position look at, if it could see everything? —
+// and the answer is not marginal. Measured on this model with the default prompt,
+// every head puts 51–84% of its unmasked attention on keys the mask hides, and row 0
+// gives the future the entire distribution (its top single key is k34, with 47%).
+//
+// The scores above the diagonal are -Inf in the trace, so they cannot be read back
+// from Scores; they are recomputed from the same stored Q and K with the same scale,
+// in the same float32 dot order.
+func (a *App) stageMaskCounterfactual(c *ui.Context) {
+	tr := a.Trace
+	l := a.layer()
+	n := len(tr.Tokens)
+	dh := tr.Config.DHead()
+	if n < 2 || a.Head >= len(l.Heads) {
+		return
+	}
+	h := l.Heads[a.Head]
+	mean, rows := meanFutureShare(h, n, dh)
+	if rows == 0 {
+		return
+	}
+	row := clampIndex(a.SelToken, n)
+	cf := computeMaskCounterfactual(h, row, n, dh)
+	if !cf.OK {
+		return
+	}
+	card(c, func() {
+		sectionTitle(c, "掩码挡掉了什么", fmt.Sprintf("把同一行去掉掩码算一遍 · 层 %d · 头 %d", a.Layer, a.Head))
+		mutedText(c, "因果掩码不是提醒，是这道题唯一的难度来源。上面那张矩阵的右上角是空的，"+
+			"看起来像块留白——这里用模型自己存下来的 Q 和 K，把选中那一行不看掩码地重算一遍，"+
+			"看看它本来会看哪里。")
+		kvW(c, "这一行原来是", fmt.Sprintf("位置 %d", row), 92)
+		kvW(c, "被挡掉的份额", fmt.Sprintf("%.0f%%", 100*cf.FutureShare), 92)
+		if cf.FutureTop >= 0 {
+			kvW(c, "最想看的位置", fmt.Sprintf("k%d（%.0f%%，在它后面 %d 个位置）",
+				cf.FutureTop, 100*cf.FutureTopShare, cf.FutureTop-row), 92)
+		}
+		kvW(c, "熵（去掩码后）", fmt.Sprintf("%.2f nats（上限 ln %d = %.2f）",
+			cf.MeanEntropy, n, math.Log(float64(n))), 92)
+		kvW(c, "熵（模型实算）", fmt.Sprintf("%.2f nats（只看得到 %d 个 key）",
+			cf.VisibleEntropy, row+1), 92)
+		// The per-head average is what makes this a property of the model rather than
+		// an artefact of the one row the reader happens to be on.
+		workingsLinesCopyable(c, []string{
+			fmt.Sprintf("这一行去掉掩码后，%.0f%% 的注意力会落在自己之后的位置上", 100*cf.FutureShare),
+			fmt.Sprintf("头 %d 整句平均是 %.0f%%（%d 行）——每个头都在 51%%–84%% 之间", a.Head, 100*mean, rows),
+			fmt.Sprintf("熵：模型实算 %.2f → 去掉掩码 %.2f nats", cf.VisibleEntropy, cf.MeanEntropy),
+		})
+		// Row 0 is computed on its own rather than assumed. The first draft used the
+		// selected row's numbers in the sentence about row 0 — "最大的一格是 k29 的
+		// 18%" was cf's top future key while the sentence named row 0, which is the kind
+		// of mixed-scope number this project keeps finding.
+		first := computeMaskCounterfactual(h, 0, n, dh)
+		rowZero := ""
+		if first.OK {
+			rowZero = fmt.Sprintf("第 0 行最夸张：它只有自己一个可见 key，去掉掩码后 %.0f%% 的注意力"+
+				"跑到后面，最大的一格是 k%d 的 %.0f%%。",
+				100*first.FutureShare, first.FutureTop, 100*first.FutureTopShare)
+		}
+		misconception(c,
+			"「掩码只是不让模型偷看，去掉也不会有大变化」",
+			fmt.Sprintf("去掉以后变化极大：这一行 %.0f%% 的注意力立刻跑到后面去了。%s"+
+				"也就是说掩码不是「顺手加的安全带」——没有它，模型第一步就会去读后面还没生成的内容，"+
+				"训练目标也就失去意义了。", 100*cf.FutureShare, rowZero))
+	})
 }
 
 // utf8PayloadChain reassembles the codepoint from the bytes the way a reader

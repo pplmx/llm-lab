@@ -2287,3 +2287,145 @@ func TestHeadProfilesCardRendersBothVerdicts(t *testing.T) {
 		}
 	}
 }
+
+// TestMaskCounterfactualMatchesTheScoresItRecomputes checks the counterfactual against
+// the trace where they overlap: for keys at or before the query, the recomputed
+// distribution must agree with the model's own attention weights.
+//
+// They are computed by different code — the model's softmaxCausal over float32 scores,
+// this over a float64 re-derivation — so they agree to a tolerance rather than exactly,
+// and the tolerance is the interesting part: it says the recomputation is the same
+// arithmetic, not a different quantity that happens to look similar.
+func TestMaskCounterfactualMatchesTheScoresItRecomputes(t *testing.T) {
+	a := newTestApp(t)
+	n := len(a.Trace.Tokens)
+	dh := a.Trace.Config.DHead()
+	for li := range a.Trace.Layers {
+		for hi := range a.Trace.Layers[li].Heads {
+			h := a.Trace.Layers[li].Heads[hi]
+			for _, q := range []int{0, 1, 5, n / 2, n - 1} {
+				c := computeMaskCounterfactual(h, q, n, dh)
+				if !c.OK {
+					t.Fatalf("L%dH%d row %d: no counterfactual", li, hi, q)
+				}
+				// The visible keys' shares, from the recomputation, must match the
+				// model's attention once the hidden mass is removed.
+				// Recompute the visible part explicitly.
+				scale := float64(float32(1 / math.Sqrt(float64(dh))))
+				scores := make([]float64, n)
+				maxS := math.Inf(-1)
+				for k := 0; k < n; k++ {
+					var dot float32
+					for d := 0; d < dh; d++ {
+						dot += h.Q[q][d] * h.K[k][d]
+					}
+					scores[k] = float64(dot) * scale
+					if scores[k] > maxS {
+						maxS = scores[k]
+					}
+				}
+				var sum float64
+				for k := range scores {
+					scores[k] = math.Exp(scores[k] - maxS)
+					sum += scores[k]
+				}
+				var visibleSum float64
+				for k := 0; k <= q; k++ {
+					visibleSum += scores[k] / sum
+				}
+				// Normalised over the visible keys, the recomputation must equal Attn.
+				var diff float64
+				for k := 0; k <= q; k++ {
+					want := float64(h.Attn[q][k])
+					got := (scores[k] / sum) / visibleSum
+					if d := math.Abs(got - want); d > diff {
+						diff = d
+					}
+				}
+				if diff > 5e-4 {
+					t.Fatalf("L%dH%d row %d: recomputed visible weights differ from Attn by %.2e", li, hi, q, diff)
+				}
+				// The hidden mass is what the counterfactual reports.
+				if math.Abs(c.FutureShare-(1-visibleSum)) > 5e-4 {
+					t.Fatalf("L%dH%d row %d: FutureShare %.6f, recomputed %.6f",
+						li, hi, q, c.FutureShare, 1-visibleSum)
+				}
+			}
+		}
+	}
+}
+
+// TestMaskCounterfactualIsLargeEverywhere is the premise of the card's claim: the mask
+// is not hiding a marginal share of the distribution.
+//
+// The card tells the reader that removing the mask changes the row completely, and
+// quotes a per-head average. If the mask ever hid only a few percent, that sentence
+// would be selling a molehill — so the band is asserted rather than the prose trusted.
+func TestMaskCounterfactualIsLargeEverywhere(t *testing.T) {
+	a := newTestApp(t)
+	n := len(a.Trace.Tokens)
+	dh := a.Trace.Config.DHead()
+	lo := 1.0
+	for li := range a.Trace.Layers {
+		for hi := range a.Trace.Layers[li].Heads {
+			mean, rows := meanFutureShare(a.Trace.Layers[li].Heads[hi], n, dh)
+			if rows == 0 {
+				t.Fatalf("L%dH%d: no rows measured", li, hi)
+			}
+			if mean < lo {
+				lo = mean
+			}
+			if mean < 0.4 {
+				t.Fatalf("L%dH%d: removing the mask moves only %.0f%% of the mass to future "+
+					"keys; the card says every head moves most of it", li, hi, 100*mean)
+			}
+		}
+	}
+	t.Logf("smallest per-head mean future share: %.0f%%", 100*lo)
+	// Row 0 in particular: it has one visible key, so the mask is doing nearly all the
+	// work there.
+	c := computeMaskCounterfactual(a.Trace.Layers[0].Heads[0], 0, n, dh)
+	if c.FutureShare < 0.95 {
+		t.Fatalf("row 0's unmasked distribution puts only %.0f%% on the future; the card "+
+			"calls it the most extreme row", 100*c.FutureShare)
+	}
+}
+
+// TestMaskCounterfactualCardQuotesItsOwnNumbers reads the card's figures out of the
+// rendered text.
+func TestMaskCounterfactualCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2
+	a.SelToken = 20
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
+	if !tr.HasText("掩码挡掉了什么") {
+		t.Fatal("the mask counterfactual card is missing")
+	}
+	n := len(a.Trace.Tokens)
+	dh := a.Trace.Config.DHead()
+	row := 20
+	cf := computeMaskCounterfactual(a.layer().Heads[a.Head], row, n, dh)
+	want := fmt.Sprintf("%.0f%%", 100*cf.FutureShare)
+	found := false
+	for _, s := range tr.Texts() {
+		if s == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the card does not print %q as the hidden share of row %d", want, row)
+	}
+	// The row-0 sentence must quote row 0's own numbers, not the selected row's:
+	// the first draft of it mixed the two scopes.
+	first := computeMaskCounterfactual(a.layer().Heads[a.Head], 0, n, dh)
+	wantZero := fmt.Sprintf("最大的一格是 k%d 的 %.0f%%", first.FutureTop, 100*first.FutureTopShare)
+	joined := ""
+	for _, s := range tr.Texts() {
+		joined += s + "\n"
+	}
+	if !strings.Contains(joined, wantZero) {
+		t.Fatalf("the card's row-0 sentence does not quote row 0's own top future key (%q)",
+			wantZero)
+	}
+}

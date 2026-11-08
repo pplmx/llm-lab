@@ -8482,7 +8482,13 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 	num := regexp.MustCompile(`[-+]?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?%?`)
 	// allowed lists, per stage, the fragments a designed difference is expected to contain.
 	allowed := map[int][]string{
-		2: {"所有分数都是负的"}, // the all-negative legend note
+		// the all-negative legend note, plus every line of the mask counterfactual card:
+		// it needs a second token before there is any future position to hide, so a
+		// one-token prompt renders none of it
+		// (Fragments have to come from strings longer than 40 runes: collect() only keeps
+		// those, since short labels are numbers and tokens rather than prose.)
+		// (Fragments must come from strings over 40 runes; collect() drops shorter ones.)
+		2: {"所有分数都是负的", "去掉以后变化极大", "因果掩码不是提醒"},
 		// the short-sample branch, then the long one, then the four-head comparison,
 		// whose verdict depends on how many rows there are to average over
 		// ..., plus every line of the four-head comparison card: it needs at least two
