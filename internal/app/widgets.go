@@ -430,18 +430,21 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 	// thing on the stage.
 	var gutter ui.Rect
 	if axes {
-		gutter = ui.Rect{X: 20, Y: 9}
+		gutter = heatmapGutter
 	}
 	size := cell * float32(T)
 	q, k := -1, -1
 	el := ui.Box(c).Size(size+gutter.X, size+gutter.Y).Radius(4).Shrink(0).
 		Draw(func(p *ui.Painter, r ui.Rect) {
+			// Keep the rect the painter was handed: the hit test below must map the
+			// pointer through the same grid, and a test can only check that they
+			// agree if it knows where the cells were actually drawn.
+			a.lastHeatmapRect = r
 			// Derive the cell from the rect we were actually given, not from the
 			// requested size: a long prompt makes the box wider than the card,
 			// and the layout shrinks it. Drawing with the requested cell then
 			// silently cut the right-hand columns off the matrix.
-			grid := ui.Rect{X: r.X + gutter.X, Y: r.Y + gutter.Y,
-				W: r.W - gutter.X, H: r.H - gutter.Y}
+			grid := heatmapGrid(r, gutter, T)
 			cw, ch := grid.W/float32(T), grid.H/float32(T)
 			// The masked cells are colPanel at 45% over the card's colPanel,
 			// which is colPanel again, so they paint nothing the card does not
@@ -515,8 +518,22 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 			}
 		})
 	if b := el.Bounds(); b.W > 0 && b.H > 0 {
-		cw, ch := b.W/float32(T), b.H/float32(T)
+		// Hit-test against the grid the painter drew, not the box around it.
+		//
+		// This used the whole box: the cell width was b.W/T instead of
+		// (b.W-gutter.X)/T, and the origin was the box's corner instead of the
+		// grid's, which sits 20 DIP right and 9 DIP down to leave room for the
+		// axis labels. Measured at 1500×940 with T=36: pointing at the drawn
+		// centre of cell (6,0) reported (8,2), and one drawn cell reported no
+		// cell at all. Every hover and every click-to-pin was off by up to two
+		// cells in both axes, while the inspector printed a plausible-looking
+		// score for whatever cell the pointer "was" on.
+		grid := heatmapGrid(b, gutter, T)
+		cw, ch := grid.W/float32(T), grid.H/float32(T)
 		if x, y, ok := el.PointerPosition(); ok {
+			// Relative to the grid, so the label gutter is not a cell.
+			x -= grid.X - b.X
+			y -= grid.Y - b.Y
 			q = int(y / ch)
 			k = int(x / cw)
 			if q >= T {
@@ -554,6 +571,26 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 			a.KeyQ, a.KeyK = q, k
 		}
 	}
+}
+
+// heatmapGutter is the space the axis labels need inside the heatmap's box: the
+// numbers along the top edge fit in 9 DIP and the ones down the left edge in 20.
+//
+// It is a package constant rather than a literal in heatmapAxed because two
+// separate pieces of arithmetic depend on it — the painter offsets the grid by it,
+// and the hit test has to un-offset the pointer by the same amount to find which
+// cell a click landed on. When those two disagreed the reader's pointer was mapped
+// to a neighbouring cell, which no test noticed because the existing ones only
+// checked that *a* cell was reported.
+var heatmapGutter = ui.Rect{X: 20, Y: 9}
+
+// heatmapGrid is the rectangle the cells are drawn in: the element's box, less the
+// label gutter. Both the painter and the pointer hit test go through this so they
+// cannot describe different grids.
+func heatmapGrid(box, gutter ui.Rect, cells int) ui.Rect {
+	_ = cells
+	return ui.Rect{X: box.X + gutter.X, Y: box.Y + gutter.Y,
+		W: box.W - gutter.X, H: box.H - gutter.Y}
 }
 
 // bars draws a horizontal bar list, used for attention rows and probabilities.

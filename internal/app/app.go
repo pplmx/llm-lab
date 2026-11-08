@@ -95,13 +95,29 @@ type App struct {
 	// the strip never steals the scroll back from a reader browsing it.
 	RevealRail bool
 
+	// lastHeatmapRect is the rectangle the heatmap painter was handed on the last
+	// frame, recorded so a test can compare the drawn grid against the cell the
+	// pointer resolves to. It is not read by the view.
+	lastHeatmapRect ui.Rect
+
 	// heatmapAxesForTest lets a test render the matrices with the edge labels
 	// forced on or off, so the difference between the two can be measured. Nil
 	// means "use the call site's choice".
 	heatmapAxesForTest *bool
 
 	LastSample string
-	Status     string
+	// undo is what sampleNext replaced: the prompt and the token selection that
+	// were in effect before the byte was appended, and the record of the draw it
+	// created. Sampling is the only action that writes into the prompt the reader
+	// did not type, and it has no counter-action of its own — a reader who tries it
+	// on the default prompt is otherwise stuck with a byte they cannot remove
+	// without clearing the field and retyping the sentence.
+	//
+	// It holds one step, not a stack. The app is a lesson, not an editor, and the
+	// action it undoes is a single demonstration; keeping history would invite a
+	// reader to treat the prompt as a document.
+	undo   *sampleUndo
+	Status string
 
 	// cancelStats is the per-trace cancellation summary the attention stage
 	// quotes. It depends only on the trace, so it is computed when the trace is
@@ -171,6 +187,9 @@ func (a *App) applyPrompt(p string) {
 // which is why the assignment stays in applyPrompt rather than moving in here.
 func (a *App) promptChanged() {
 	a.LastSample = ""
+	// An edit on top of a sample makes "undo the sample" ambiguous, so the point
+	// is dropped rather than redefined.
+	a.undo = nil
 	a.stopPlayback()
 	a.recompute()
 }
@@ -581,6 +600,12 @@ func (a *App) handleKeys(c *ui.Context) {
 		// never samples — measured, and the same mechanism that keeps Space out of the
 		// lesson while the field has focus.
 		a.sampleNext()
+	case c.Shortcut(ui.Ctrl, ui.KeyZ):
+		// Ctrl+Z takes back the last sample. It sits here with the global shortcuts
+		// rather than on the sampling card because a reader who has just sampled
+		// from the top bar's button expects the undo key to work without hunting for
+		// which card they sampled from; the card carries the mouse's button.
+		a.undoLastSample()
 	case c.Shortcut(0, ui.KeyEscape):
 		// Esc is the one "let go of everything" key: it stops playback and
 		// releases a pinned cell, so a reader who clicked the matrix can get
@@ -1172,6 +1197,14 @@ func (a *App) inspectorHoverCell(c *ui.Context) {
 	})
 }
 
+// sampleUndo is the state sampleNext replaced, kept so the reader can take a
+// demonstration back without retyping the prompt.
+type sampleUndo struct {
+	prompt  string
+	sel     int
+	lastSam string
+}
+
 // draw describes one deterministic sampling step: the seed the prompt hashed
 // to, the position in the cumulative distribution it selected, and the interval
 // that position fell in.
@@ -1243,6 +1276,10 @@ func (a *App) sampleNext() {
 		return
 	}
 	pick := d.pick
+	// Remember what this is about to replace. Captured before any mutation, because
+	// the undo point is the state the reader was looking at when they pressed the
+	// button — prompt, selection and the record all change below.
+	a.undo = &sampleUndo{prompt: a.Prompt, sel: a.SelToken, lastSam: a.LastSample}
 	a.LastSample = fmt.Sprintf("%q (id %d, p=%.3f)", byteText(pick), pick, probs[pick])
 	// A byte-level model predicts bytes, not runes: append exactly one byte.
 	a.Prompt += string([]byte{byte(pick)})
@@ -1262,6 +1299,40 @@ func (a *App) sampleNext() {
 	if n := len(a.Trace.Tokens); n > 0 {
 		a.selectToken(n-1, true)
 	}
+}
+
+// undoLastSample puts the prompt back the way it was before the last sample, and
+// returns false when there is nothing to take back.
+//
+// Every other way of changing the prompt clears the undo point, so what this
+// restores is always the state the sample itself replaced: the reader can never
+// land on a prompt they never had. That is why promptChanged and the preset chips
+// both drop it — typing on top of a sample makes the undo ambiguous (take back the
+// byte, or the byte and the keystrokes?), and the honest answer is to offer
+// neither rather than guess.
+func (a *App) undoLastSample() bool {
+	u := a.undo
+	if u == nil {
+		return false
+	}
+	a.undo = nil
+	a.Prompt = u.prompt
+	a.LastSample = u.lastSam
+	a.stopPlayback()
+	a.recompute()
+	// recompute preserves a selection that still exists, which is the typing rule.
+	// Undo has to restore the selection the sample found, not leave the reader on
+	// the token the sample selected: that token no longer exists.
+	if n := len(a.Trace.Tokens); n > 0 {
+		sel := u.sel
+		if sel < 0 || sel >= n {
+			sel = n - 1
+		}
+		a.selectToken(sel, true)
+	} else {
+		a.SelToken = -1
+	}
+	return true
 }
 
 // topBars keeps the n largest rows, then restores their original order so the
