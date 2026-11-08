@@ -6,6 +6,12 @@
 
 ### Added
 
+- **算式可以复制了。** 每段 workings 块的末行右侧多一个「复制」：点一下把这几行原样（逐行、保留正负号与括号）写进剪贴板
+  - 补的是这个项目**此前完全没有的一项能力**：界面上的文字是用 `Painter` 画的，全项目 0 处 `Selectable()`、没有文本选中 API，所以想把 `0.932751` 移到笔记里，唯一的方式是用眼睛读出来再手打——而这些算式的**全部意义**就是「照着手算并得到卡片上那个值」（每段自己都这么写）
+  - 控制做成末行里的一个 Text + tooltip，**不占新行、不占 Tab 停点**：中栏在 1180×720 下本来就有 184–870 DIP 溢出，十一行新控件会把教学内容顶得更远；做成 Button 则会往 CONTRIBUTING 记录为「六个」的 Tab 循环里加十一个停点。实测每个阶段只增高 **2–4 DIP**
+  - `workingsLines` 是全部 11 处算式的唯一出口，改成 `workingsLinesCopyable` 一处即可覆盖；旧的 `workingsLines` 随之删除（`TestNoUnusedFunctionsInApp` 抓到它变成死代码）
+  - `TestWorkingsBlocksCanBeCopied` 同时断言剪贴板内容与**渲染出来的文字**逐行一致——只比剪贴板的话，复制一个和屏幕上不同的字符串也会通过。已验证改坏会报 `the clipboard holds a line the screen does not render`
+  - `TestCopyControlExistsOnEveryStageWithAWorkingsBlock` 按阶段数控制出现次数，抓「某个调用点漏改」这类只在视觉上少一个按钮的错误。写这条测试时**它先抓到了我的错误前提**：第 3 步的算式只在选中格子后才出现，无选中时显示的是一句提示
 - **键盘可以滚动中栏了**（`PageUp` / `PageDown` / `Home` / `End`）。中栏装着 lesson 正文和算式块，1180×720 下最多有 **870 DIP 的内容在视口外，比一整屏还多**；mygo 默认只把滚动键交给「指针下方或焦点链里」的滚动容器
   - 实测纯键盘读者（指针停在 0,0）此前**完全够不到**这些内容：`PageDown`、`Down`、`End`、`Space` 和滚轮**全部**让 `Scroll.Y` 停在 0
   - 翻一屏用 **0.9 个视口高**，不是整屏：留一点重叠，读者不会刚好翻过一段的开头。视口高度从滚动元素自己的 `LayoutBounds()` 量（`StageViewportH`）——mygo 的 `ScrollState` 只记 `MaxY` 不记视口，用窗口高度减侧栏/顶栏/步进条去估是错的

@@ -300,12 +300,12 @@ func (a *App) stageTokens(c *ui.Context) {
 					// U+FFFD" would describe the display, not the input: the
 					// byte is what the model sees, and the tokenizer accepted it
 					// while the text view had to replace it to stay printable.
-					workingsLines(c, []string{
+					workingsLinesCopyable(c, []string{
 						fmt.Sprintf("0x%02X %08b：不是合法的 UTF-8 字节，单独作为一个 token", rb.Bytes[0], rb.Bytes[0]),
 						fmt.Sprintf("文本视图里显示为 �，但模型看到的 id 就是 %d", rb.Bytes[0]),
 					})
 				} else {
-					workingsLines(c, []string{
+					workingsLinesCopyable(c, []string{
 						fmt.Sprintf("%q = U+%04X，占 %d 个字节：%s",
 							rb.Rune, rb.Codepoint, len(rb.Bytes), strings.Join(parts, "  ")),
 						fmt.Sprintf("还原码点：%s → U+%04X", utf8PayloadChain(rb.Bytes), rb.Codepoint),
@@ -393,7 +393,7 @@ func (a *App) stageEmbed(c *ui.Context) {
 		// both bracketed the two lines share one shape:
 		//   (+0.1247) + (+0.4062) = +0.5309
 		//   (+0.5674) + (-0.6724) = -0.1050
-		workingsLines(c, []string{
+		workingsLinesCopyable(c, []string{
 			fmt.Sprintf("d%d：E[%d][%d] = %+.4f · P[%d] = %+.4f",
 				dim, tr.Tokens[i].ID, dim, e, i, pos),
 			fmt.Sprintf("%s + %s = %+.4f", signed(float64(e)), signed(float64(pos)), x),
@@ -632,7 +632,7 @@ func scoreWorkings(c *ui.Context, q, k, dHead int, p scoreParts) {
 	// it gives 0.932751018 while the printed score is 0.932751060 — a reader
 	// checking the line by hand would find the last digits do not close.
 	scale := float64(float32(1 / math.Sqrt(float64(dHead))))
-	workingsLines(c, []string{
+	workingsLinesCopyable(c, []string{
 		fmt.Sprintf("q%d · k%d 的三项最大贡献：%s", q, k, strings.Join(terms, "  ")),
 		fmt.Sprintf("+ 其余 %d 维 %+.4f = 点积 %.4f", dHead-len(p.Top), p.Rest, p.Dot),
 		fmt.Sprintf("score = 点积 / √%d = %.4f × %.4f = %+.4f", dHead, p.Dot, scale, p.Score),
@@ -921,7 +921,7 @@ func residualWorkings(c *ui.Context, dim int, steps []residualStep, isLast bool,
 		next = "送入最终 LayerNorm"
 	}
 	lines = append(lines, fmt.Sprintf("每一次加法都不覆盖原值，所以层 %d 的输出完整%s", layer, next))
-	workingsLines(c, lines)
+	workingsLinesCopyable(c, lines)
 }
 
 // residualNormMeans returns the mean L2 norm of the residual stream at the block
@@ -958,7 +958,7 @@ func lnWorkings(c *ui.Context, dim int, p lnParts) {
 	if p.mean < 0 {
 		mu = "(" + mu + ")"
 	}
-	workingsLines(c, []string{
+	workingsLinesCopyable(c, []string{
 		// The line travels with its own subject. By the time a reader scrolls a tall card down
 		// to the arithmetic, the card's title is off screen — measured at 1180×720, the
 		// LayerNorm line sits 700 DIP below its heading. The residual chain's first line
@@ -1182,7 +1182,7 @@ func ffnWorkings(c *ui.Context, dim, dff int, p ffnParts) {
 	for _, t := range p.Top {
 		terms = append(terms, fmt.Sprintf("k%d %+.4f", t.K, t.V))
 	}
-	workingsLines(c, []string{
+	workingsLinesCopyable(c, []string{
 		fmt.Sprintf("out[%d] 的三项最大贡献：%s", dim, strings.Join(terms, "  ")),
 		fmt.Sprintf("+ 其余 %d 项 %+.4f ≈ %+.4f", dff-len(p.Top), p.Rest, p.Out),
 	})
@@ -1362,7 +1362,7 @@ func (a *App) stageOutput(c *ui.Context) {
 		// the interval it falls in is exactly as wide as the drawn token's
 		// probability.
 		if d, ok := a.sampleDraw(probs); ok {
-			workingsLines(c, []string{
+			workingsLinesCopyable(c, []string{
 				fmt.Sprintf("种子 = FNV-1a(提示词) = 0x%016X", d.seed),
 				fmt.Sprintf("x = (种子 mod 1000003) ÷ 1000003 = %d ÷ 1000003 = %.6f",
 					d.seed%1000003, d.x),
@@ -1857,7 +1857,7 @@ func (a *App) nextByteSkillSummary(c *ui.Context, tr *model.Trace, skill nextByt
 	// present — the total, the mean and the reference it beats — it just reads as
 	// a sentence rather than a derivation, because the derivation is visible in
 	// the individual positions the inspector shows.
-	workingsLines(c, []string{
+	workingsLinesCopyable(c, []string{
 		fmt.Sprintf("猜对 %d / %d（%.0f%%）· 平均损失 %.3f nats · 均匀猜测 ln(%d) = %.3f → 降低了 %.0f%%",
 			skill.Hits, skill.Scored, pct, skill.MeanLoss,
 			int(math.Round(math.Exp(skill.UniformReference))), skill.UniformReference, saved),

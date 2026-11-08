@@ -1170,7 +1170,7 @@ func weightedWorkings(c *ui.Context, q, dim int, p weightedParts) {
 	} else {
 		lines = append(lines, fmt.Sprintf("≈ %+.4f", p.Out))
 	}
-	workingsLines(c, lines)
+	workingsLinesCopyable(c, lines)
 	mutedText(c, "各项按模型的 float32 精度算，这里四舍五入到四位小数，所以自己相加时末位可能差一两个单位。")
 	share := 0.0
 	if p.AbsTotal > 0 {
@@ -1207,7 +1207,7 @@ func (a *App) softmaxWorkings(c *ui.Context, h model.HeadTrace, q, k int) {
 	if rowMax < 0 {
 		sub = fmt.Sprintf("(%+.4f)", rowMax)
 	}
-	workingsLines(c, []string{
+	workingsLinesCopyable(c, []string{
 		fmt.Sprintf("分母 = Σ exp(score − %s) = %.4f", sub, denom),
 		fmt.Sprintf("α = exp(%+.4f − %s) ÷ %.4f = %.4f",
 			h.Scores[q][k], sub, denom, num/denom),

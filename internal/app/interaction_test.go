@@ -1383,3 +1383,115 @@ func TestScrollKeysReachTheAppFromThePromptField(t *testing.T) {
 			"typed cannot reach the rest of the stage without moving the pointer")
 	}
 }
+
+// TestWorkingsBlocksCanBeCopied covers the one capability the app had none of: the
+// numbers on screen could not be got off the screen.
+//
+// Every workings block exists to be re-added by hand — each says so about itself
+// ("照着手算并得到卡片上那个值") — so a reader doing that needs the figures somewhere
+// they can work with. The text is painted rather than selectable (no Selectable or
+// text-selection API anywhere in this app), so before this the only way to move
+// "0.932751" into a note was to read it off the screen and retype it.
+//
+// The assertion is deliberately against the clipboard *and* the rendered text: the
+// clipboard has to hold exactly the lines the reader can see, or the button copies
+// something other than what it sits under.
+func TestWorkingsBlocksCanBeCopied(t *testing.T) {
+	// The embed stage is the simplest block: two lines, and both are on screen at
+	// the default window.
+	a := newTestApp(t)
+	a.Step = 1
+	tr := ui.NewTester(a.View, 1500, 2200)
+	tr.Frame()
+
+	r, ok := tr.Find("复制算式 2 行")
+	if !ok {
+		t.Fatal("the embed stage's workings block has no copy control")
+	}
+	tr.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	tr.Frame()
+	got := tr.Clipboard()
+	if got == "" {
+		t.Fatal("clicking 复制 left the clipboard empty")
+	}
+	lines := strings.Split(got, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("the block says 2 行 but the clipboard holds %d line(s): %q", len(lines), got)
+	}
+	// Each copied line must be one the tester renders, so the button cannot copy a
+	// stale or differently-formatted string.
+	for _, line := range lines {
+		if !tr.HasText(line) {
+			t.Fatalf("the clipboard holds a line the screen does not render: %q", line)
+		}
+	}
+	// And the copy is the derivation, not a summary: the second line is the one
+	// that lands on the answer, which is what a reader checks by hand.
+	if !strings.Contains(lines[1], "=") {
+		t.Fatalf("the copied block's last line is not an equation: %q", lines[1])
+	}
+}
+
+// TestCopyControlExistsOnEveryStageWithAWorkingsBlock: eleven blocks across the
+// seven stages, and a reader should find 复制 on each of them rather than on some.
+//
+// This counts the control per stage instead of spot-checking one, because the
+// failure mode is a call site left on the old helper — which renders fine and
+// simply has no way to copy.
+func TestCopyControlExistsOnEveryStageWithAWorkingsBlock(t *testing.T) {
+	// Every stage renders at least one workings block, but not unconditionally: the
+	// score stage's block only exists once a cell is selected, and says so in its
+	// otherwise-visible place ("把指针移到矩阵的某个格子上…"). So the cell is pinned
+	// here — the block and its copy control appear together, which is the property
+	// worth recording.
+	want := map[int]bool{0: true, 1: true, 2: true, 3: true, 4: true, 5: true, 6: true}
+	for step := range lessons {
+		a := newTestApp(t)
+		a.Step = step
+		a.KeyQ, a.KeyK = 20, 5 // pin a cell so the score stage's block is conditional-true
+		// A tall window so every block is laid out: the control is inside the
+		// scroll view and Find reports scrolled coordinates.
+		tr := ui.NewTester(a.View, 1500, 3000)
+		tr.Frame()
+		found := 0
+		for _, s := range tr.Texts() {
+			if strings.HasPrefix(s, "复制算式 ") {
+				found++
+			}
+		}
+		if found > 0 != want[step] {
+			t.Fatalf("stage %d renders %d copy controls; this test records that it should %v",
+				step+1, found, want[step])
+		}
+	}
+}
+
+// TestCopiedWorkingsMatchThePinnedCell ties the copied arithmetic to the cell the
+// reader pinned, which is the case the block exists for: pin a cell, copy its
+// derivation, check it on paper.
+func TestCopiedWorkingsMatchThePinnedCell(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 2 // score matrix
+	a.SelToken = 20
+	a.KeyQ, a.KeyK = 20, 5
+	tr := ui.NewTester(a.View, 1500, 2600)
+	tr.Frame()
+
+	// Find the copy control whose block belongs to the pinned cell: the score
+	// workings is three lines.
+	r, ok := tr.Find("复制算式 3 行")
+	if !ok {
+		t.Fatal("the pinned cell's workings block has no copy control")
+	}
+	tr.ClickAt(r.X+r.W/2, r.Y+r.H/2)
+	tr.Frame()
+	got := tr.Clipboard()
+	// The cell's own numbers have to be in it, read from the trace rather than
+	// hard-coded, so the check follows the weights and the prompt.
+	h := a.layer().Heads[a.Head]
+	want := fmt.Sprintf("%+.4f", h.Scores[a.KeyQ][a.KeyK])
+	if !strings.Contains(got, want) {
+		t.Fatalf("the copied derivation for the pinned cell does not contain its score %s:\n%s",
+			want, got)
+	}
+}

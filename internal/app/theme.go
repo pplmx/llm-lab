@@ -2,6 +2,8 @@ package app
 
 import (
 	"math"
+	"strconv"
+	"strings"
 
 	"github.com/egoist/mygo/ui"
 )
@@ -170,37 +172,6 @@ const (
 	workingsGapWide = 10
 )
 
-// workingsLines renders a multi-line "how this number was computed" block: the
-// working lines first, and the line that lands on the result last in the accent
-// colour.
-//
-// Six stages grew one of these by hand — the embedding sum, the score's dot
-// product, the softmax weights, LayerNorm, the FFN sum, and sampling — and they
-// had drifted: some showed two lines, some three, and the accent rule (last
-// line is the answer) was only followed by accident. One function keeps them
-// the same shape without changing what any of them says.
-//
-// The block is one child of its card, so the card's own gap applies around it
-// rather than between its lines. That matters for heights: before this helper,
-// the sampling block's three lines were three children and picked up the
-// card's gap; wrapping them without accounting for that shortened the page by
-// 16px and moved the scrollbar.
-func workingsLines(c *ui.Context, lines []string, gap ...float32) {
-	g := float32(workingsGap)
-	if len(gap) > 0 {
-		g = gap[0]
-	}
-	ui.Column(c).Gap(g).Children(func() {
-		for i, line := range lines {
-			colour := colFaint
-			if i == len(lines)-1 {
-				colour = colAccent2
-			}
-			ui.Text(c, line).FontSize(fontMicro).TextColor(colour)
-		}
-	})
-}
-
 // misconception is the callout for a reading that the picture invites but that
 // is wrong. Each one quotes the belief a reader is likely to form from what is
 // on screen, then corrects it with a number this model actually produces, so
@@ -233,5 +204,52 @@ func kvW(c *ui.Context, k, v string, width float32) {
 	ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
 		ui.Text(c, k).FontSize(fontSmall).TextColor(colFaint).Width(width).NoWrap()
 		ui.Text(c, v).FontSize(fontBody).TextColor(colText).Grow(1)
+	})
+}
+
+// workingRow draws one workings block and, on the block's last line, a small
+// "复制" control that puts the whole derivation on the clipboard.
+//
+// Why copy at all: every workings block exists to be re-added by hand — each one
+// says so about itself ("照着手算并得到卡片上那个值"). A reader doing that needs the
+// numbers somewhere they can use, and the app's text is painted rather than
+// selectable, so before this there was no way to get "0.932751" out of it except by
+// reading it off the screen and retyping it.
+//
+// The control shares the last line's row instead of taking a row of its own. That
+// is not cosmetic: every stage's column already overflows the window (measured
+// MaxY 184–870 DIP at 1180×720), so eleven new rows would push real teaching
+// content further out of reach to make room for a convenience.
+//
+// It is a Text with a tooltip rather than a Button because Buttons are focusable,
+//
+//	adding eleven Tab stops to a cycle that CONTRIBUTING documents as six.
+func workingsLinesCopyable(c *ui.Context, lines []string, gap ...float32) {
+	g := float32(workingsGap)
+	if len(gap) > 0 {
+		g = gap[0]
+	}
+	last := len(lines) - 1
+	ui.Column(c).Gap(g).Children(func() {
+		for i, line := range lines {
+			if i != last {
+				ui.Text(c, line).FontSize(fontMicro).TextColor(colFaint)
+				continue
+			}
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, line).FontSize(fontMicro).TextColor(colAccent2)
+				ui.Spacer(c).Grow(1)
+				copy := ui.Text(c, "复制").FontSize(fontMicro).TextColor(colFaint).
+					Padding(1, 6).Radius(4).Background(colPanel2).
+					Label("复制算式 " + strconv.Itoa(len(lines)) + " 行")
+				if copy.Hovered() {
+					copy = copy.TextColor(colText)
+				}
+				if copy.Clicked() {
+					c.WriteClipboard(strings.Join(lines, "\n"))
+				}
+				copy.Tooltip("把这段算式复制到剪贴板")
+			})
+		}
 	})
 }
