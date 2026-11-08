@@ -2033,10 +2033,20 @@ func TestLogitLensAgreesWithThePerPositionCard(t *testing.T) {
 	}
 }
 
-// TestLogitLensCalloutNumbersAreMeasured is the guard on the card's whole-prompt
-// claim: 153 of 180 intermediate rungs disagree with the final answer, 105 of those
-// confidently. Those are the numbers the sentence quotes, so they are what the model
-// must still produce.
+// TestLogitLensCalloutNumbersAreMeasured checks that the whole-prompt figures are
+// plausible for the default prompt: most rungs disagree, most of those confidently, and
+// nearly every position has one.
+//
+// It is a band check, and that is its limitation. It recomputes the figures and compares
+// them to thresholds, but it never reads the sentence — so when the sentence's numbers
+// were hardcoded it kept passing, because the hardcoded figures happened to be the ones
+// it recomputed for the one prompt it tested. The card then claimed "180 个中间层…36 个
+// 位置" for a two-token prompt whose ladder holds 10 rungs over 2 positions.
+//
+// TestLogitLensCalloutFollowsThePrompt is the other half: it reads the rendered prose and
+// requires its numbers to match a fresh computation, for four prompts. Keep both — this
+// one catches a model that stopped mispredicting, that one catches prose that stopped
+// tracking the model.
 func TestLogitLensCalloutNumbersAreMeasured(t *testing.T) {
 	a := newTestApp(t)
 	n := len(a.Trace.Tokens)
@@ -2874,5 +2884,103 @@ func TestFFNConcentrationCardQuotesItsOwnNumbers(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("the card does not print %q", want)
 		}
+	}
+}
+
+// TestLogitLensCalloutFollowsThePrompt is the guard that was missing when the callout's
+// numbers were hardcoded.
+//
+// The sentence said "180 个中间层里有 92 个…，36 个位置" for every prompt. Those figures
+// are right only for the default one: with "hi" the ladder has 10 intermediate rungs over
+// 2 positions, so a reader who shortened the prompt was told about a ladder that was not
+// the one drawn above the sentence. The previous test recomputed the figures inline and
+// compared them to a band, which could not notice that the *rendered* sentence had stopped
+// agreeing with either — it never read the prose.
+//
+// This reads the rendered text and requires the numbers in it to match a fresh
+// computation, for several prompts of very different lengths.
+func TestLogitLensCalloutFollowsThePrompt(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+		"hi",
+		"中文提示词",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 4
+		tr := ui.NewTester(a.View, 1500, 3200)
+		tr.Frame()
+		summary := computePromptLensSummary(a.W, a.Trace, 1.0)
+		if !summary.OK || summary.Rungs == 0 {
+			continue
+		}
+		var callout string
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "中间层") && strings.Contains(s, "最终答案不同") {
+				callout = s
+			}
+		}
+		if callout == "" {
+			t.Fatalf("prompt %q: the logit lens callout is missing", prompt)
+		}
+		wants := []string{
+			fmt.Sprintf("%d 个位置一共有 %d 个中间层", summary.Positions, summary.Rungs),
+			fmt.Sprintf("其中 %d 个的答案与最终答案不同", summary.Disagree),
+			fmt.Sprintf("有 %d 个对自己的错误答案", summary.ConfidentWrong),
+			fmt.Sprintf("%d 个位置里有 %d 个至少有一层如此",
+				summary.Positions, summary.PositionsWithConfidentWrong),
+		}
+		for _, want := range wants {
+			if !strings.Contains(callout, want) {
+				t.Fatalf("prompt %q: the callout does not contain %q\ncallout: %s", prompt, want, callout)
+			}
+		}
+	}
+}
+
+// TestPromptLensSummaryCountsEveryRung checks the aggregator against a direct walk.
+func TestPromptLensSummaryCountsEveryRung(t *testing.T) {
+	a := newTestApp(t)
+	s := computePromptLensSummary(a.W, a.Trace, 1.0)
+	if !s.OK {
+		t.Fatal("no summary computed")
+	}
+	// Five intermediate rungs per position, by construction of the ladder.
+	if s.Rungs != 5*s.Positions {
+		t.Fatalf("%d rungs over %d positions; the ladder builds five per position",
+			s.Rungs, s.Positions)
+	}
+	if s.Positions != len(a.Trace.Tokens) {
+		t.Fatalf("%d positions, the prompt has %d tokens", s.Positions, len(a.Trace.Tokens))
+	}
+	// Recompute independently.
+	rungs, disagree, confident, posCW := 0, 0, 0, 0
+	for pos := 0; pos < len(a.Trace.Tokens); pos++ {
+		lens := computeLogitLens(a.W, a.Trace, pos, 1.0)
+		has := false
+		for _, rung := range lens.Rungs {
+			if rung.IsFinal {
+				continue
+			}
+			rungs++
+			if rung.AgreesWithFinal {
+				continue
+			}
+			disagree++
+			if float64(rung.Probs[rung.Top]) > lensConfident {
+				confident++
+				has = true
+			}
+		}
+		if has {
+			posCW++
+		}
+	}
+	if s.Rungs != rungs || s.Disagree != disagree || s.ConfidentWrong != confident ||
+		s.PositionsWithConfidentWrong != posCW {
+		t.Fatalf("summary %+v disagrees with a direct walk (%d/%d/%d/%d)",
+			s, rungs, disagree, confident, posCW)
 	}
 }

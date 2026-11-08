@@ -1447,3 +1447,66 @@ func computeAllFFNConcentration(tr *model.Trace) (out []ffnConcentration) {
 	}
 	return out
 }
+
+// promptLensSummary aggregates the logit lens over every position of the prompt, which
+// is the figure the residual stage's callout quotes.
+//
+// It exists because the sentence it backs was hardcoded. The card said "180 个中间层里有
+// 92 个…，36 个位置里每一个都至少有一层如此" for every prompt, and those numbers are
+// right only for the default one: with "hi" the ladder has 10 intermediate rungs across
+// 2 positions, and the card still claimed 180 and 36. A reader who typed a short prompt
+// then read a sentence contradicting the ladder directly above it.
+//
+// The test that guarded the sentence recomputed the figures inline, so the prose could
+// drift from both the test and the card without anything noticing. This is the single
+// definition now: the card prints it and the test checks it.
+type promptLensSummary struct {
+	// Positions is how many rows the ladder was built for, and Rungs is how many
+	// intermediate rungs they hold altogether (five per position: the input vector and
+	// the four sublayer outputs, with the final projection counted separately).
+	Positions int
+	Rungs     int
+	// Disagree is how many rungs name a different byte from the final answer.
+	Disagree int
+	// ConfidentWrong is how many of those disagreeing rungs are more than confidentCut
+	// sure of themselves.
+	ConfidentWrong int
+	// PositionsWithConfidentWrong is how many positions have at least one such rung.
+	PositionsWithConfidentWrong int
+	OK                          bool
+}
+
+// computePromptLensSummary measures the ladder across the whole prompt.
+func computePromptLensSummary(w *model.Weights, tr *model.Trace, temp float64) promptLensSummary {
+	var s promptLensSummary
+	if w == nil || tr == nil {
+		return s
+	}
+	for pos := 0; pos < len(tr.Tokens); pos++ {
+		lens := computeLogitLens(w, tr, pos, temp)
+		if !lens.OK {
+			continue
+		}
+		s.Positions++
+		has := false
+		for _, rung := range lens.Rungs {
+			if rung.IsFinal {
+				continue
+			}
+			s.Rungs++
+			if rung.AgreesWithFinal {
+				continue
+			}
+			s.Disagree++
+			if float64(rung.Probs[rung.Top]) > lensConfident {
+				s.ConfidentWrong++
+				has = true
+			}
+		}
+		if has {
+			s.PositionsWithConfidentWrong++
+		}
+	}
+	s.OK = s.Positions > 0
+	return s
+}

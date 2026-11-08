@@ -1123,15 +1123,29 @@ func (a *App) stageLogitLens(c *ui.Context) {
 			agreement,
 		})
 		// The whole-prompt figure, which is what makes this more than one position's
-		// anecdote. Measured on the bundled weights and the default prompt: 92 of 180
-		// intermediate rungs disagree, 76 of those confidently, and every one of the 36
-		// positions has at least one such rung.
-		misconception(c,
-			"「logit lens 能说明模型是一层一层把答案想清楚的」",
-			"它不能。把整句提示词的每一层都读一遍：180 个中间层里有 92 个的答案与最终答案不同，"+
-				"其中 76 个对自己的错误答案有 90% 以上的把握，36 个位置里每一个都至少有一层如此。"+
-				"所以中间层「很确定」不说明它和最终答案一致——这和输出阶段那条「97% 不等于正确」"+
-				"是同一件事的两个方向。lens 可以用来看某一层「偏向什么」，不能用来看它「知道什么」。")
+		// anecdote. Computed, not quoted: this sentence used to hardcode the default
+		// prompt's numbers (92 of 180 rungs, all 36 positions), so a reader who shortened
+		// the prompt was told about a ladder that was not the one drawn above it.
+		summary := computePromptLensSummary(a.W, tr, 1.0)
+		scope := fmt.Sprintf("整句 %d 个位置一共有 %d 个中间层", summary.Positions, summary.Rungs)
+		if summary.OK && summary.Rungs > 0 {
+			if summary.Disagree == 0 {
+				misconception(c,
+					"「logit lens 能说明模型是一层一层把答案想清楚的」",
+					fmt.Sprintf("这句提示词的每一层都给了同一个答案：%s，没有一个与最终答案不同。"+
+						"这不说明 lens 可靠——换一句提示词再看，中间层就会开始给出不同的答案。"+
+						"结论要跟着数据走，而不是事先认定。", scope))
+			} else {
+				misconception(c,
+					"「logit lens 能说明模型是一层一层把答案想清楚的」",
+					fmt.Sprintf("它不能。把整句提示词的每一层都读一遍：%s，其中 %d 个的答案与最终答案不同，"+
+						"有 %d 个对自己的错误答案有 90%% 以上的把握，%d 个位置里有 %d 个至少有一层如此。"+
+						"所以中间层「很确定」不说明它和最终答案一致——这和输出阶段那条「97%% 不等于正确」"+
+						"是同一件事的两个方向。lens 可以用来看某一层「偏向什么」，不能用来看它「知道什么」。",
+						scope, summary.Disagree, summary.ConfidentWrong,
+						summary.Positions, summary.PositionsWithConfidentWrong))
+			}
+		}
 	})
 }
 
