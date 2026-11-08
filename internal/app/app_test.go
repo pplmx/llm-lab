@@ -8313,8 +8313,11 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 		// its sentences moves with them — which rungs agree with the final answer,
 		// how many are confidently wrong, and the rung names in the sentence.
 		4: {"训练出来的", "这份权重没有训练过", "只看这个位置", "最后一个中间层"},
-		5: {"只剩一根柱子", "还能看出分布的形状"},  // the GELU squeeze note
-		6: {"这么高的把握", "根本没有那么大的把握"}, // the confidence note
+		5: {"只剩一根柱子", "还能看出分布的形状"}, // the GELU squeeze note
+		// the confidence note, plus the word-boundary sentence: whether the gap it
+		// describes exists is a property of the weights, so with random ones it is
+		// absent rather than false
+		6: {"这么高的把握", "根本没有那么大的把握", "错得最多的地方是词边界"},
 	}
 
 	collect := func(w *model.Weights) []map[string]bool {
@@ -8503,7 +8506,11 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 			"这个提示词只有一个位置",
 			// The per-position card's body exists only when there is a position to score, so
 			// every fixed line of it is absent for a one-token prompt by design.
-			"当前损失 #", "均匀猜测", "与它比对"},
+			"当前损失 #", "均匀猜测", "与它比对",
+			// The word-boundary sentence: a one-token prompt has no position whose
+			// predecessor is a space. (Only fragments from strings over 40 runes count —
+			// collect() drops shorter ones as labels rather than prose.)
+			"错得最多的地方是词边界"},
 	}
 
 	collect := func(prompt string) []map[string]bool {

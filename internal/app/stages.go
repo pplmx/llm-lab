@@ -2046,6 +2046,7 @@ func (a *App) stageNextByteSkill(c *ui.Context) {
 		mutedText(c, nextByteSkillIntro)
 		a.predictionStrip(c, skill)
 		a.nextByteSkillSummary(c, tr, skill)
+		a.skillBreakdownLine(c, tr, skill)
 		// One legend line, not four: the counts it would carry are already in the
 		// summary above, and on this stage every row of chrome pushes the sampling
 		// card's own button out of the window. What the strip's colours and its
@@ -2252,4 +2253,43 @@ func (a *App) stageHeadProfiles(c *ui.Context) {
 			verdict,
 		})
 	})
+}
+
+// skillBreakdownLine puts the per-position accuracy beside the breakdown that explains
+// it, because the overall figure flatters this model.
+//
+// Measured across three prompts: positions whose predecessor is a space are right 4
+// times in 18, while everything else is right 73 in 96. On the default prompt the mean
+// loss is 2.87 nats after a space against 0.83 elsewhere. The cause is structural — a
+// space is a word boundary, so the next byte starts a new word, and 61 training
+// sentences do not teach which word comes next. It does know how to continue a word it
+// is already inside.
+func (a *App) skillBreakdownLine(c *ui.Context, tr *model.Trace, skill nextByteSkill) {
+	b := computeSkillBreakdown(tr, skill)
+	if !b.OK {
+		return
+	}
+	pct := func(hits, rows int) string {
+		if rows == 0 {
+			return "—"
+		}
+		return fmt.Sprintf("%d/%d（%.0f%%）", hits, rows, 100*float64(hits)/float64(rows))
+	}
+	// Text colours, not data colours. colGreen means "a value in a chart" everywhere
+	// else in this app, and a prose label wearing it reads as a plotted value;
+	// TestDataColoursStayOutOfText enforces that, and it caught this.
+	ui.Row(c).Gap(16).Wrap().AlignItems(ui.Center).Children(func() {
+		ui.Text(c, "前一个是空格（词边界）"+pct(b.AfterSpaceHits, b.AfterSpaceRows)).
+			FontSize(fontMicro).TextColor(colMuted)
+		ui.Text(c, "其余位置 "+pct(b.OtherHits, b.OtherRows)).
+			FontSize(fontMicro).TextColor(colMuted)
+		ui.Text(c, fmt.Sprintf("平均损失 %.2f / %.2f nats", b.AfterSpaceLoss, b.OtherLoss)).
+			FontSize(fontMicro).TextColor(colFaint)
+	})
+	// Only worth the sentence when the gap is actually there; a prompt planted with
+	// spaces in unusual places could invert it, and the claim has to follow.
+	if b.AfterSpaceLoss > 1.5*b.OtherLoss {
+		mutedText(c, "错得最多的地方是词边界：空格之后是一个新词的开头，而这个模型只读过 61 句关于 "+
+			"transformer 的英文，它知道一个词内部字母怎么接下去，不知道下一个词是什么。")
+	}
 }

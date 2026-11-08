@@ -2429,3 +2429,108 @@ func TestMaskCounterfactualCardQuotesItsOwnNumbers(t *testing.T) {
 			wantZero)
 	}
 }
+
+// TestSkillBreakdownMatchesTheRows checks the word-boundary split against the rows it
+// divides: every row must be counted exactly once, and the two halves must add up.
+func TestSkillBreakdownMatchesTheRows(t *testing.T) {
+	a := newTestApp(t)
+	skill := computeNextByteSkill(a.W, a.Trace, 1.0)
+	b := computeSkillBreakdown(a.Trace, skill)
+	if !b.OK {
+		t.Fatal("the breakdown found no space-separated positions in the default prompt")
+	}
+	if b.AfterSpaceRows+b.OtherRows != skill.Scored {
+		t.Fatalf("breakdown covers %d + %d rows, the skill has %d",
+			b.AfterSpaceRows, b.OtherRows, skill.Scored)
+	}
+	if b.AfterSpaceHits > b.AfterSpaceRows || b.OtherHits > b.OtherRows {
+		t.Fatalf("more hits than rows: %+v", b)
+	}
+	if b.AfterSpaceHits+b.OtherHits != skill.Hits {
+		t.Fatalf("breakdown hits %d + %d, skill says %d",
+			b.AfterSpaceHits, b.OtherHits, skill.Hits)
+	}
+	// And each row really is on the side its predecessor implies.
+	spaceRows, otherRows := 0, 0
+	for _, row := range skill.Rows {
+		if a.Trace.Tokens[row.Pos].Byte == ' ' {
+			spaceRows++
+		} else {
+			otherRows++
+		}
+	}
+	if spaceRows != b.AfterSpaceRows || otherRows != b.OtherRows {
+		t.Fatalf("counted %d/%d rows, recomputed %d/%d", b.AfterSpaceRows, b.OtherRows, spaceRows, otherRows)
+	}
+}
+
+// TestSkillBreakdownShowsTheWordBoundaryGap is the premise of the sentence: this model
+// is much worse at the byte after a space than anywhere else.
+//
+// The card only prints that explanation when the gap is at least 1.5x, so if the model
+// ever became good at word starts the sentence would stop appearing rather than become a
+// lie. This checks the gap is there for the bundled weights across several prompts, so
+// the card's default state is the one with the explanation.
+func TestSkillBreakdownShowsTheWordBoundaryGap(t *testing.T) {
+	totalSpace, totalSpaceHits := 0, 0
+	totalOther, totalOtherHits := 0, 0
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+		"Attention lets every token look at the tokens before it.",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		b := computeSkillBreakdown(a.Trace, computeNextByteSkill(a.W, a.Trace, 1.0))
+		if !b.OK {
+			continue
+		}
+		totalSpace += b.AfterSpaceRows
+		totalSpaceHits += b.AfterSpaceHits
+		totalOther += b.OtherRows
+		totalOtherHits += b.OtherHits
+	}
+	if totalSpace == 0 || totalOther == 0 {
+		t.Fatal("no rows measured")
+	}
+	spaceRate := float64(totalSpaceHits) / float64(totalSpace)
+	otherRate := float64(totalOtherHits) / float64(totalOther)
+	if otherRate < 1.5*spaceRate {
+		t.Fatalf("after a space: %d/%d (%.0f%%); elsewhere %d/%d (%.0f%%). The card says the "+
+			"word boundary is where the errors are, which needs a clear gap",
+			totalSpaceHits, totalSpace, 100*spaceRate, totalOtherHits, totalOther, 100*otherRate)
+	}
+	t.Logf("word boundary %d/%d (%.0f%%), elsewhere %d/%d (%.0f%%)",
+		totalSpaceHits, totalSpace, 100*spaceRate, totalOtherHits, totalOther, 100*otherRate)
+}
+
+// TestSkillBreakdownLineRendersItsOwnNumbers reads the breakdown out of the rendered
+// text on the output stage.
+func TestSkillBreakdownLineRendersItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 2600)
+	tr.Frame()
+	b := computeSkillBreakdown(a.Trace, computeNextByteSkill(a.W, a.Trace, 1.0))
+	if !b.OK {
+		t.Fatal("no breakdown")
+	}
+	wantSpace := fmt.Sprintf("%d/%d（%.0f%%）", b.AfterSpaceHits, b.AfterSpaceRows,
+		100*float64(b.AfterSpaceHits)/float64(b.AfterSpaceRows))
+	wantOther := fmt.Sprintf("%d/%d（%.0f%%）", b.OtherHits, b.OtherRows,
+		100*float64(b.OtherHits)/float64(b.OtherRows))
+	joined := ""
+	for _, s := range tr.Texts() {
+		joined += s + "\n"
+	}
+	if !strings.Contains(joined, wantSpace) {
+		t.Fatalf("the card does not print the word-boundary rate %q", wantSpace)
+	}
+	if !strings.Contains(joined, wantOther) {
+		t.Fatalf("the card does not print the elsewhere rate %q", wantOther)
+	}
+	if !strings.Contains(joined, "词边界") {
+		t.Fatal("the card does not name the word boundary")
+	}
+}

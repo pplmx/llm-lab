@@ -193,6 +193,7 @@ go run . -weights /path/to/other.json  # 换一份权重（需为 vocab 256 的 
 - **逐张量与 PyTorch 对齐**：`tools/parity.py` 把同一份 `weights.json` 在 PyTorch 里跑一遍，导出 46 token 提示词的全部中间结果（embedding、每层 Norm1、每个头的 Q/K/V、score、attn、头输出、AttnProj、Norm2、GELU 前后、FFN 输出、最终 Norm、logits），Go 侧 `TestParityEveryTensor` 逐项比对，中间张量最大误差 3e-6，logits 1.6e-5——logit 是 256 项点积的和，误差在最后一步被放大。GELU 与 softmax 的 exp 都用查表近似，误差分别 ≤ 4e-7、2.4e-6，由 `TestGeluMatchesErf`、`TestExpNegMatchesExp` 锁定；标量与 SIMD 构建结果一致。这比只比最终 logits 严格得多：头切片顺序、拼接布局、GELU 变体、LayerNorm 的 eps 出错都会被抓到
 - 单头贡献之和严格等于该层的注意力输出（`TestHeadProjSumsToAttnProj`），界面上「本头贡献 Δ_h」不是拿总和冒充的
 - **逐位置预测与记录下来的 logits 逐位一致**：第 7 步的逐位置卡片用 `Weights.Unembed` 重新投影每一行，`TestUnembedReproducesTheRecordedLogits` 要求它对最后一行的结果与 `Forward` 存进 `Trace.Logits` 的值**每个 bit 都相同**——否则同一张卡片上两个数会不一致
+- **误差集中在词边界，而且这一点有分解依据**：输出阶段把逐位置的成绩按「前一个字节是不是空格」拆开。实测三个提示词合起来，空格之后猜对 **4/18（22%）**，其余位置 **73/96（76%）**；默认提示词上平均损失 **2.87 vs 0.83 nats**。原因是结构性的：空格之后是新词的开头，而这个模型只读过 61 句关于 transformer 的英文——它知道词内部字母怎么接下去，不知道下一个词是什么。`TestSkillBreakdownMatchesTheRows` 校验两半相加等于总数，`TestSkillBreakdownShowsTheWordBoundaryGap` 钉住这个差距确实存在（否则卡片上那句话按条件不显示，而不是说谎）
 - **逐位置卡片报的损失不是编的**：`TestNextByteSkillMatchesTheModel` 逐位置核对「猜的是自己那一行的 argmax」「比对的是提示词的下一个字节」「损失就是 −ln p(正确字节)」；`TestNextByteSkillLossIsReal` 要求平均损失确实低于均匀猜测的 ln 256，且既不是全对也不是全错（否则色带只有一个颜色）。`TestNextByteSkillIsCalibratedAtTOne` 钉住一个反直觉的实测结果：平均损失对温度是 **U 形**的，最低点在 T = 1，往两端都变大——所以卡片必须说明这个数字随滑块移动，而不是模型变差了
 - 用 `ui.Tester` 模拟真实点击，验证阶段切换
 
