@@ -1740,3 +1740,138 @@ func TestEscReleasesEverythingItClaims(t *testing.T) {
 		}
 	}
 }
+
+// TestUndoButtonSurvivesItsOwnClick pins a crash that shipped for several rounds: the
+// 撤销 button dereferenced its own undo record after the click had cleared it.
+//
+// The top bar built the button, handled the click, and then read a.undo.what to build the
+// tooltip. undoPrompt() sets a.undo = nil, but the closure keeps running, so the tooltip
+// line dereferenced a nil pointer and the whole window panicked. Measured: clicking 撤销
+// after sampling took the app down at app.go:883.
+//
+// Why nothing caught it: TestEveryAdvertisedKeyHasAClickablePathOnEveryStage checks that
+// the button is *on screen* and never clicks it, and the Ctrl+Z tests go through
+// undoPrompt() directly, which never reaches the tooltip line. A control can be visible,
+// correctly labelled, and still fatal, so the click has to be exercised.
+func TestUndoButtonSurvivesItsOwnClick(t *testing.T) {
+	// Each of the three actions that create an undo point, undone through the button.
+	cases := []struct {
+		name  string
+		setup func(*ui.Tester, *App)
+	}{
+		{"after sampling", func(tr *ui.Tester, _ *App) { tr.Click("采样下一个 token") }},
+		{"after a preset", func(tr *ui.Tester, _ *App) { tr.Click("中文") }},
+		{"after reset", func(tr *ui.Tester, _ *App) {
+			// 重置 only records an undo point when the prompt is not already the
+			// default, so a preset has to come first.
+			tr.Click("中文")
+			tr.Frame()
+			tr.Click("重置")
+		}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			a := newTestApp(t)
+			tr := ui.NewTester(a.View, 1180, 720)
+			tr.Frame()
+			tc.setup(tr, a)
+			tr.Frame()
+			if a.undo == nil {
+				t.Fatalf("%s: no undo point was recorded, so this case tests nothing", tc.name)
+			}
+			before := a.Prompt
+			// The click must not panic. A panic here fails the test rather than the process.
+			tr.Click("撤销")
+			tr.Frame()
+			if a.undo != nil {
+				t.Fatalf("%s: the undo point survived its own undo", tc.name)
+			}
+			if a.Prompt == before {
+				t.Logf("%s: the prompt was already the value being restored", tc.name)
+			}
+			// And the button is gone, not left behind pointing at nothing.
+			if tr.HasText("撤销") {
+				t.Fatalf("%s: the 撤销 button is still drawn with no undo point left", tc.name)
+			}
+		})
+	}
+}
+
+// TestUndoTooltipNamesTheActionBeforeTheClick is the narrower assertion behind the crash:
+// the tooltip text has to be computed from the record while the record still exists.
+func TestUndoTooltipNamesTheActionBeforeTheClick(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	tr.Click("中文")
+	tr.Frame()
+	if a.undo == nil {
+		t.Fatal("the preset recorded no undo point")
+	}
+	what := a.undo.what
+	// Park the pointer away, then hover the button so its tooltip has to render.
+	tr.Move(600, 400)
+	tr.Advance(2 * time.Second)
+	r, ok := tr.Find("撤销")
+	if !ok {
+		t.Fatal("the 撤销 button is missing")
+	}
+	tr.Move(r.X+r.W/2, r.Y+r.H/2)
+	var found bool
+	for i := 0; i < 40; i++ {
+		tr.Advance(50 * time.Millisecond)
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "撤销「"+what+"」") {
+				found = true
+			}
+		}
+		if found {
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("hovering 撤销 does not show the action it would take back (%q)", what)
+	}
+}
+
+// TestUndoLabelNamesTheActionThatJustHappened checks the label against the action, not
+// just against the record existing.
+//
+// The README promises the button "会写明撤销的是哪一次（例如「撤销『换成预设提示词』」）".
+// 重置 went through the same code path as a preset chip, so after clicking 重置 the button
+// offered to undo "换成预设提示词" — an action the reader had not taken. The undo record
+// was right and the label was wrong, which is the kind of wrong a test that only checks
+// "the button appears" cannot see.
+func TestUndoLabelNamesTheActionThatJustHappened(t *testing.T) {
+	cases := []struct {
+		name string
+		do   func(tr *ui.Tester)
+		want string
+	}{
+		{"preset", func(tr *ui.Tester) { tr.Click("中文") }, "换成预设提示词"},
+		{"reset", func(tr *ui.Tester) {
+			tr.Click("中文")
+			tr.Frame()
+			tr.Click("重置")
+		}, "重置"},
+		{"sampling", func(tr *ui.Tester) { tr.Click("采样下一个 token") }, "采样续写"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			a := newTestApp(t)
+			tr := ui.NewTester(a.View, 1180, 720)
+			tr.Frame()
+			tc.do(tr)
+			tr.Frame()
+			if a.undo == nil {
+				t.Fatalf("%s: no undo point recorded", tc.name)
+			}
+			if a.undo.what != tc.want {
+				t.Fatalf("%s: the undo label says %q; the action taken was %q",
+					tc.name, a.undo.what, tc.want)
+			}
+		})
+	}
+}

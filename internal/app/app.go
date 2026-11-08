@@ -195,8 +195,19 @@ func New(w *model.Weights) *App {
 // preset click that re-selects the prompt already in the field destroys nothing, and
 // offering to "undo" it would put a no-op button on screen.
 func (a *App) applyPrompt(p string) {
+	a.applyPromptAs(p, "换成预设提示词")
+}
+
+// applyPromptAs replaces the prompt and names the action for the undo label.
+//
+// The label is what the reader is told the button would take back, so it has to name the
+// action that actually happened. 重置 used to go through applyPrompt like a preset chip,
+// which meant that after clicking 重置 the button offered to undo "换成预设提示词" — an
+// action the reader had not just taken. Measured: preset 中文, then 重置, and the tooltip
+// read 撤销「换成预设提示词」 while the record would in fact restore the Chinese preset.
+func (a *App) applyPromptAs(p, what string) {
 	if p != a.Prompt {
-		a.recordUndo("换成预设提示词")
+		a.recordUndo(what)
 	}
 	a.Prompt = p
 	a.promptChanged()
@@ -860,7 +871,7 @@ func (a *App) topbar(c *ui.Context) {
 				a.promptChanged()
 			}
 			if ui.Button(c, "重置").Clicked() {
-				a.applyPrompt(defaultPrompt)
+				a.applyPromptAs(defaultPrompt, "重置")
 			}
 			// The undo lives here, beside 重置, because this bar is the one thing on
 			// screen at every stage. It used to exist only on the output stage's
@@ -875,12 +886,18 @@ func (a *App) topbar(c *ui.Context) {
 			// column's edge, so a long label would shrink the prompt field badly. The
 			// tooltip names the action being taken back.
 			if a.undo != nil {
-				label := "撤销"
-				undoBtn := ui.Button(c, label)
+				// The tooltip is built from the undo record BEFORE the click is handled.
+				// undoPrompt() clears a.undo, and this closure keeps running after it, so
+				// reading a.undo.what afterwards dereferenced a nil pointer and clicking
+				// 撤销 crashed the window. Measured: the button was rendered, the click
+				// panicked in topbar at app.go:883, and the whole app went down — from the
+				// control the README advertises on every stage.
+				what := a.undo.what
+				undoBtn := ui.Button(c, "撤销")
 				if undoBtn.Clicked() {
 					a.undoPrompt()
 				}
-				undoBtn.Tooltip("撤销「" + a.undo.what + "」（Ctrl+Z）")
+				undoBtn.Tooltip("撤销「" + what + "」（Ctrl+Z）")
 			}
 			if ui.PrimaryButton(c, "采样下一个 token").Clicked() {
 				a.sampleNext()
