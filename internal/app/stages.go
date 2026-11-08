@@ -410,6 +410,8 @@ func (a *App) stageEmbed(c *ui.Context) {
 		}
 	})
 
+	a.stageEmbeddingStructure(c)
+
 	a.cardNamed(c, "位置向量", func() {
 		// The heading and the note both described four rows whatever the prompt was. With a
 		// single-token prompt the card showed one row under "随位置变化" and a note promising
@@ -2478,7 +2480,7 @@ func (a *App) stageLayerRewrite(c *ui.Context) {
 // and a chip for it would be a chip for "the rest of the page".
 var stageCards = [][]string{
 	{"token 序列", "字符 → 字节", "数据流与形状"},
-	{"嵌入向量", "位置向量", "位置编码的形状"},
+	{"嵌入向量", "嵌入有含义吗", "位置向量", "位置编码的形状"},
 	// The mask counterfactual is drawn after the score matrix (measured: matrix 400,
 	// counterfactual 930), so the row lists them in that order.
 	{"Q / K / V", "分数矩阵", "掩码反事实"},
@@ -2809,4 +2811,107 @@ func (a *App) stageFFNAnswerDirection(c *ui.Context) {
 					first.Positions, first.OutputTop10))
 		}
 	})
+}
+
+// stageEmbeddingStructure answers whether the embedding table encodes anything, which is
+// the question the coloured strips raise and never answer.
+//
+// Every strip in this app exists to show a value, and a 96-wide coloured row per token
+// invites the reading that bytes with similar meanings sit in similar places. On these
+// weights that reading is false at every scale measured: pairs that follow each other in
+// the prompt average 0.021 cosine against a random-pair mean of 0.003 with a spread of 0.10,
+// vowels are 0.03 closer to each other than to consonants, and only one of the twenty most
+// similar byte pairs is printable ASCII on both sides — the top pair is "I" and a control
+// byte.
+//
+// The card exists because the plausible inference is the wrong one. A 96-dimension lookup
+// trained on 61 sentences is not a geometry, and a reader who took the picture as evidence
+// of semantic structure would learn something false about the model.
+func (a *App) stageEmbeddingStructure(c *ui.Context) {
+	e := computeEmbeddingStructure(a.W, a.Prompt)
+	// The card's whole point is comparing text-adjacent pairs against unrelated ones, so it
+	// needs adjacent pairs to compare. A one-token prompt has none, and the first version
+	// rendered the comparison anyway with a mean of "+0.0000" — a number with an empty
+	// denominator, which is what TestNoMalformedTextAcrossTheSweep exists to catch.
+	if !e.OK || e.AdjacentPairs < 3 {
+		return
+	}
+	a.cardNamed(c, "嵌入有含义吗", func() {
+		sectionTitle(c, "这 96 个维度里有「意思」吗", fmt.Sprintf("%d 个字节两两比较", e.Vocab))
+		mutedText(c, "右边那条色带每一格是一个维度。很自然会想：意思相近的字节，向量是不是也靠得近？"+
+			"这个问题可以量——把 256 个字节的嵌入两两算余弦，看「文本里挨着出现的字节」是不是比随便两个更像。")
+		// The comparison the reader needs: adjacent pairs against the random reference,
+		// on one axis so the near-equality is a shape rather than two numbers.
+		out := []barRow{
+			{Label: "文本里相邻", Value: float32(math.Abs(e.AdjacentCos)),
+				ValueText: fmt.Sprintf("%+.4f", e.AdjacentCos),
+				Color:     colAccent2, LabelWidth: 100, ValueWidth: 64,
+				Tip: fmt.Sprintf("提示词里紧挨着的 %d 对字节，平均余弦", e.AdjacentPairs)},
+			{Label: "随便两个", Value: float32(math.Abs(e.RandomCos)),
+				ValueText: fmt.Sprintf("%+.4f", e.RandomCos),
+				Color:     colGreen, LabelWidth: 100, ValueWidth: 64,
+				Tip: fmt.Sprintf("全部 %d 对的平均余弦", e.RandomPairs)},
+		}
+		maxAbs := math.Abs(e.AdjacentCos)
+		if v := math.Abs(e.RandomCos); v > maxAbs {
+			maxAbs = v
+		}
+		if maxAbs < 0.05 {
+			maxAbs = 0.05 // a flat bar chart at this scale is the finding; give it room
+		}
+		ui.Text(c, "平均余弦（文本里相邻 vs 随便两个）").
+			FontSize(fontMicro).TextColor(colFaint)
+		bars(c, out, float32(maxAbs), colGreen)
+		// Name the excluded pairs rather than quietly dropping them: a repeated byte has
+		// cosine 1.0 with itself, and leaving those in would make the comparison look like
+		// evidence of structure.
+		adjacent := fmt.Sprintf("文本里相邻的 %d 对：平均余弦 %s", e.AdjacentPairs, cosText(e.AdjacentCos))
+		if e.SkippedSelfPairs > 0 {
+			adjacent = fmt.Sprintf("文本里相邻的 %d 对（另有 %d 对是同一个字节重复，余弦恒为 1，不计入）：平均余弦 %s",
+				e.AdjacentPairs, e.SkippedSelfPairs, cosText(e.AdjacentCos))
+		}
+		workingsLinesCopyable(c, []string{
+			adjacent,
+			fmt.Sprintf("随便两对 %d 组：平均余弦 %+.4f，标准差 %.4f", e.RandomPairs, e.RandomCos, e.SDRandom),
+			fmt.Sprintf("元音之间的平均余弦 %s，元音与辅音之间 %s", cosText(e.VowelCos), cosText(e.ConsonantCos)),
+			fmt.Sprintf("最像的 20 对里，只有 %d 对两边都是可打印 ASCII", e.SimilarPrintableOf20),
+		})
+		// Name the top pairs: one glance at control bytes settles whether the similarity
+		// means anything, in a way a summary statistic does not.
+		if len(e.TopPairs) > 0 {
+			var parts []string
+			for i := 0; i < 4 && i < len(e.TopPairs); i++ {
+				p := e.TopPairs[i]
+				// byteText is the app's one way of writing a byte: space as ␣, control
+				// bytes as \xNN, printable ASCII as itself. Using %q here printed Go's own
+				// escaping ('\u009a'), which is a detail of this program's language rather
+				// than of the model.
+				parts = append(parts, fmt.Sprintf("%s-%s %.2f", byteText(p.A), byteText(p.B), p.Cos))
+			}
+			kvW(c, "最像的四对", strings.Join(parts, " · "), 96)
+		}
+		misconception(c,
+			"「嵌入向量越像，两个 token 的意思就越接近」",
+			fmt.Sprintf("这张表里没有这回事。文本里挨着出现的字节对，平均余弦 %+.4f，而随便挑两对是 %+.4f（标准差 %.2f）——"+
+				"两者差别落在噪声里。元音之间只比元音与辅音近 %.2f。最像的 20 对里只有 %d 对两边都是可读字符，排第一的是「I」和一个控制字节。"+
+				"原因不神秘：这个模型的位置表与嵌入表是在 61 句话上训练的，96 个维度够它记住「哪些字节常见」，不够长出语义几何。"+
+				"真实的大模型里这种结构确实存在——但那是几十亿 token 训出来的，不是「嵌入」这个结构本身自带的。",
+				e.AdjacentCos, e.RandomCos, e.SDRandom,
+				math.Abs(e.VowelCos-e.ConsonantCos), e.SimilarPrintableOf20))
+	})
+}
+
+// cosText formats a cosine for prose, dropping the sign when the value is too small to
+// carry one.
+//
+// "+0.0000" and "-0.0000" are what %+.4f produces for numbers indistinguishable from zero,
+// and both read as a formatting fault rather than as a measurement. The app already refuses
+// them in TestNoMalformedTextAcrossTheSweep; this is the formatter that makes the refusal
+// easy to honour. Nearest-zero cosines show as "0.0000" with no sign, which is the true
+// statement — a cosine that small does not tell you a direction.
+func cosText(v float64) string {
+	if math.Abs(v) < 0.00005 {
+		return "0.0000"
+	}
+	return fmt.Sprintf("%+.4f", v)
 }

@@ -8339,6 +8339,10 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 	// unexpected difference must match none of them.
 	allowed := map[int][]string{
 		// Matched against the number-stripped text, so digits are already "#".
+		// The embedding card names the most similar byte pairs, which are whatever that
+		// weight set happened to produce — with random weights the top pair is different
+		// bytes, so the whole line moves. The fragment is the byte notation itself.
+		1: {"I-", "H-", "-\\x", "右边那条色带每一格是一个维度", "这张表里没有这回事"},
 		// the per-weights attention description, and the four-head comparison verdict,
 		// which reads "差别明显" for one weight set and "很接近" for another
 		3: {"第 # 层的头 #", "四个头差别明显", "四个头在这一层上很接近", "这里换两个能区分行为的量"},
@@ -8531,6 +8535,9 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 		// (Fragments have to come from strings longer than 40 runes: collect() only keeps
 		// those, since short labels are numbers and tokens rather than prose.)
 		// (Fragments must come from strings over 40 runes; collect() drops shorter ones.)
+		// The embedding card names the most similar byte pairs, which need two tokens before
+		// there is an adjacent pair to compare at all; a one-token prompt renders none of it.
+		1: {"I-", "H-", "-\\x", "右边那条色带每一格是一个维度", "这张表里没有这回事"},
 		2: {"所有分数都是负的", "去掉以后变化极大", "因果掩码不是提醒"},
 		// the short-sample branch, then the long one, then the four-head comparison,
 		// whose verdict depends on how many rows there are to average over

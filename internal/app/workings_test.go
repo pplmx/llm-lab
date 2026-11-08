@@ -3363,3 +3363,163 @@ func TestFFNAnswerDirectionCardQuotesItsOwnNumbers(t *testing.T) {
 		}
 	}
 }
+
+// TestEmbeddingStructureMatchesADirectMeasurement recomputes every figure the card prints.
+//
+// It runs on "attention is all you need" as well as the default prompt because that one has
+// three repeated-byte pairs (tt, ll, ee). Those have cosine exactly 1.0 with themselves and
+// are excluded from the average; the first version of the measurement did not exclude them,
+// which lifted that prompt's adjacent mean to 0.1265 and would have made the card claim
+// structure where there is none. Testing only the default prompt, which has no repeated
+// pairs, could not have caught it.
+func TestEmbeddingStructureMatchesADirectMeasurement(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+	} {
+		testEmbeddingStructureAgainstOnePrompt(t, prompt)
+	}
+}
+
+func testEmbeddingStructureAgainstOnePrompt(t *testing.T, promptText string) {
+	t.Helper()
+	a := newTestApp(t)
+	a.Prompt = promptText
+	a.recompute()
+	e := computeEmbeddingStructure(a.W, a.Prompt)
+	if !e.OK {
+		t.Fatal("no embedding structure measured")
+	}
+	d, vocab := a.W.Config.DModel, a.W.Config.Vocab
+	row := func(id int) []float32 { return a.W.TokEmbed[id*d : (id+1)*d] }
+	// Adjacent pairs in the prompt, skipping the repeated-byte pairs the card excludes.
+	var adj float64
+	pairs, skipped := 0, 0
+	bs := []byte(a.Prompt)
+	for i := 0; i+1 < len(bs); i++ {
+		if bs[i] == bs[i+1] {
+			skipped++
+			continue
+		}
+		adj += cosineF32(row(int(bs[i])), row(int(bs[i+1])))
+		pairs++
+	}
+	if pairs != e.AdjacentPairs || skipped != e.SkippedSelfPairs {
+		t.Fatalf("adjacent pairs: card %d (+%d skipped), prompt has %d (+%d)",
+			e.AdjacentPairs, e.SkippedSelfPairs, pairs, skipped)
+	}
+	if math.Abs(e.AdjacentCos-adj/float64(pairs)) > 1e-9 {
+		t.Fatalf("adjacent cosine: card %v, recomputed %v", e.AdjacentCos, adj/float64(pairs))
+	}
+	// Random reference.
+	var sum, sum2 float64
+	n := 0
+	for i := 0; i < vocab; i++ {
+		for j := i + 1; j < vocab; j++ {
+			c := cosineF32(row(i), row(j))
+			sum += c
+			sum2 += c * c
+			n++
+		}
+	}
+	if n != e.RandomPairs {
+		t.Fatalf("random pairs: card %d, recomputed %d", e.RandomPairs, n)
+	}
+	mean := sum / float64(n)
+	if math.Abs(e.RandomCos-mean) > 1e-9 {
+		t.Fatalf("random mean: card %v, recomputed %v", e.RandomCos, mean)
+	}
+	sd := math.Sqrt(sum2/float64(n) - mean*mean)
+	if math.Abs(e.SDRandom-sd) > 1e-9 {
+		t.Fatalf("random sd: card %v, recomputed %v", e.SDRandom, sd)
+	}
+	if e.Vocab != vocab || e.Dims != d {
+		t.Fatalf("card says %d bytes x %d dims, config %d x %d", e.Vocab, e.Dims, vocab, d)
+	}
+	if len(e.TopPairs) == 0 {
+		t.Fatal("no top pairs recorded")
+	}
+	// The pairs must be ordered descending, and each cosine must be right.
+	for i, p := range e.TopPairs {
+		if got := cosineF32(row(p.A), row(p.B)); math.Abs(p.Cos-got) > 1e-9 {
+			t.Fatalf("top pair %d: card cos %v, recomputed %v", i, p.Cos, got)
+		}
+		if i > 0 && p.Cos > e.TopPairs[i-1].Cos {
+			t.Fatalf("top pairs are not ordered at index %d", i)
+		}
+	}
+}
+
+// TestEmbeddingStructureShowsNoStructure is the premise of the card, and it is a negative
+// one: the embedding table does not encode similarity between bytes.
+//
+// The card tells a reader that the plausible inference — similar vectors mean similar
+// meanings — is false for this model. That needs the adjacent-pair cosine to sit inside the
+// random spread, and the most similar pairs to be unrelated bytes. If a weight set ever had
+// structure, the card would be wrong rather than merely unverified.
+func TestEmbeddingStructureShowsNoStructure(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		e := computeEmbeddingStructure(a.W, prompt)
+		if !e.OK {
+			t.Fatalf("prompt %q: no measurement", prompt)
+		}
+		if e.SDRandom == 0 {
+			t.Fatalf("prompt %q: no spread measured", prompt)
+		}
+		// The adjacent mean must be within a small multiple of the random spread.
+		z := math.Abs(e.AdjacentCos-e.RandomCos) / e.SDRandom
+		if z > 0.5 {
+			t.Fatalf("prompt %q: text-adjacent pairs average %+.4f against a random mean of "+
+				"%+.4f with spread %.4f — the difference is %.1f standard deviations, so the "+
+				"table does have structure and the card's claim is wrong",
+				prompt, e.AdjacentCos, e.RandomCos, e.SDRandom, z)
+		}
+		// Most similar pairs should not be readable text; a table full of structured
+		// relations would put letter pairs at the top.
+		if e.SimilarPrintableOf20 > 8 {
+			t.Fatalf("prompt %q: %d of the 20 most similar byte pairs are printable ASCII; "+
+				"the card says the similarity is noise", prompt, e.SimilarPrintableOf20)
+		}
+	}
+}
+
+// TestEmbeddingStructureCardQuotesItsOwnNumbers reads the figures out of the rendered text
+// and requires the top-pair line to use the app's byte notation rather than Go's escaping.
+func TestEmbeddingStructureCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 1
+	tr := ui.NewTester(a.View, 1500, 3400)
+	tr.Frame()
+	e := computeEmbeddingStructure(a.W, a.Prompt)
+	joined := ""
+	for _, s := range tr.Texts() {
+		joined += s + "\n"
+	}
+	if !strings.Contains(joined, "这 96 个维度里有「意思」吗") {
+		t.Fatal("the embedding structure card is missing")
+	}
+	for _, want := range []string{
+		"文本里相邻的",
+		fmt.Sprintf("随便两对 %d 组：平均余弦 %s，标准差 %.4f", e.RandomPairs, cosText(e.RandomCos), e.SDRandom),
+		fmt.Sprintf("最像的 20 对里，只有 %d 对两边都是可打印 ASCII", e.SimilarPrintableOf20),
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("the card does not print %q", want)
+		}
+	}
+	// The named pairs must be written the way the rest of the app writes bytes.
+	top := e.TopPairs[0]
+	want := fmt.Sprintf("%s-%s %.2f", byteText(top.A), byteText(top.B), top.Cos)
+	if !strings.Contains(joined, want) {
+		t.Fatalf("the card does not print the top pair as %q", want)
+	}
+	if strings.Contains(joined, `\u`) {
+		t.Fatal("a byte is rendered with Go's \\u escaping instead of the app's byte notation")
+	}
+}

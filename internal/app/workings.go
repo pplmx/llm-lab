@@ -1860,3 +1860,142 @@ func computeFFNAnswerDirection(w *model.Weights, tr *model.Trace, layer int) ffn
 	m.OK = true
 	return m
 }
+
+// embeddingStructure tests whether the token embedding table encodes anything a reader
+// might assume it does, and the answer for these weights is that it does not.
+//
+// The Embedding stage draws a 96-wide coloured strip per token. Colour in this app means
+// a value, and the strips invite the reading that similar bytes sit in similar places.
+// Measured on the bundled weights, that reading is wrong at every scale tested: bytes that
+// follow each other in the prompt (t-h, h-e, e-space) have a mean cosine of 0.0007 against
+// a random-pair mean of 0.0033 and standard deviation 0.102, vowels cluster 0.03 above
+// consonants, and only one of the twenty most-similar byte pairs is printable ASCII on both
+// sides.
+//
+// This is worth stating rather than leaving to assumption: a 96-dimension table trained on
+// 61 sentences is a lookup, not a geometry, and a reader who took the picture as evidence of
+// semantic structure would be learning something false about the model.
+type embeddingStructure struct {
+	// Vocab and Dims describe the table measured.
+	Vocab, Dims int
+	// AdjacentCos is the mean cosine of byte pairs that follow each other in the prompt,
+	// and RandomCos/SDRandom are the mean and spread over byte pairs chosen without regard
+	// to text — the reference the adjacent figure has to be judged against.
+	AdjacentCos, RandomCos, SDRandom float64
+	// AdjacentPairs and RandomPairs are how many pairs each figure averages, and
+	// SkippedSelfPairs is how many adjacent pairs were left out because both bytes were
+	// the same — their cosine is 1.0 by definition and would swamp the average.
+	AdjacentPairs, RandomPairs, SkippedSelfPairs int
+	// VowelCos, ConsonantCos are the mean cosines within vowels and between vowels and
+	// consonants; their difference is the largest hint of structure found.
+	VowelCos, ConsonantCos float64
+	// SimilarPrintableOf20 is how many of the twenty most similar byte pairs are both
+	// printable ASCII — a pair of unrelated control bytes at the top would be the clearest
+	// sign that the similarity is noise.
+	SimilarPrintableOf20 int
+	// TopPairs are the most similar byte pairs, for the card to name a few.
+	TopPairs []embeddingPair
+	OK       bool
+}
+
+// embeddingPair is two bytes and the cosine between their embeddings.
+type embeddingPair struct {
+	A, B int
+	Cos  float64
+}
+
+// computeEmbeddingStructure measures whether the embedding table has structure.
+func computeEmbeddingStructure(w *model.Weights, prompt string) embeddingStructure {
+	var e embeddingStructure
+	if w == nil || w.Config.DModel <= 0 || w.Config.Vocab <= 0 {
+		return e
+	}
+	d, vocab := w.Config.DModel, w.Config.Vocab
+	if len(w.TokEmbed) < vocab*d {
+		return e
+	}
+	e.Vocab, e.Dims = vocab, d
+	row := func(id int) []float32 { return w.TokEmbed[id*d : (id+1)*d] }
+	// Adjacent pairs in the prompt, excluding the ones where both bytes are the same.
+	// A repeated byte ("tt" in attention, "ll" in all) has cosine exactly 1.0 with itself,
+	// which says nothing about whether similar-sounding bytes sit near each other and
+	// dominated the average when it was included: measured on "attention is all you need",
+	// three such pairs lifted the mean from 0.02 to 0.13.
+	var adjSum float64
+	bs := []byte(prompt)
+	for i := 0; i+1 < len(bs); i++ {
+		if bs[i] == bs[i+1] {
+			e.SkippedSelfPairs++
+			continue
+		}
+		adjSum += cosineF32(row(int(bs[i])), row(int(bs[i+1])))
+		e.AdjacentPairs++
+	}
+	if e.AdjacentPairs > 0 {
+		e.AdjacentCos = adjSum / float64(e.AdjacentPairs)
+	}
+	// Every pair, for the random reference and the ranking. 256 choose 2 is small enough.
+	var sum, sum2 float64
+	var all []embeddingPair
+	for a := 0; a < vocab; a++ {
+		for b := a + 1; b < vocab; b++ {
+			c := cosineF32(row(a), row(b))
+			all = append(all, embeddingPair{A: a, B: b, Cos: c})
+			sum += c
+			sum2 += c * c
+			e.RandomPairs++
+		}
+	}
+	if e.RandomPairs > 0 {
+		f := float64(e.RandomPairs)
+		e.RandomCos = sum / f
+		variance := sum2/f - e.RandomCos*e.RandomCos
+		if variance > 0 {
+			e.SDRandom = math.Sqrt(variance)
+		}
+	}
+	// Vowel-versus-consonant, the most likely place for structure in English text.
+	isVowel := func(id int) bool {
+		switch byte(id) {
+		case 'a', 'e', 'i', 'o', 'u':
+			return true
+		}
+		return false
+	}
+	var vv, vc float64
+	vvn, vcn := 0, 0
+	for a := int('a'); a <= int('z'); a++ {
+		for b := a + 1; b <= int('z'); b++ {
+			c := cosineF32(row(a), row(b))
+			if isVowel(a) && isVowel(b) {
+				vv += c
+				vvn++
+			} else if isVowel(a) != isVowel(b) {
+				vc += c
+				vcn++
+			}
+		}
+	}
+	if vvn > 0 {
+		e.VowelCos = vv / float64(vvn)
+	}
+	if vcn > 0 {
+		e.ConsonantCos = vc / float64(vcn)
+	}
+	// The most similar pairs, and how many of them are readable text.
+	sort.Slice(all, func(i, j int) bool { return all[i].Cos > all[j].Cos })
+	if len(all) > 0 {
+		n := 20
+		if len(all) < n {
+			n = len(all)
+		}
+		e.TopPairs = all[:n]
+		for _, p := range e.TopPairs {
+			if p.A >= 32 && p.A < 127 && p.B >= 32 && p.B < 127 {
+				e.SimilarPrintableOf20++
+			}
+		}
+	}
+	e.OK = true
+	return e
+}
