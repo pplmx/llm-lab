@@ -164,6 +164,19 @@ func TestContributingFocusTableMatchesTheApp(t *testing.T) {
 	if !strings.Contains(doc, "仅第 7 步") {
 		t.Fatal("the guide no longer says the temperature slider is reachable only on the output stage")
 	}
+	// The section heading has to agree with the table under it. It said "五个" while
+	// the table listed six, because a row was added later and the heading was not —
+	// a count in a heading is a claim like any other, so it is checked rather than
+	// left to the reader to notice.
+	if !strings.Contains(doc, "六个 Tab 停点") {
+		t.Fatalf("the focus section's heading no longer states the six Tab stops its table lists " +
+			"(it said 五个 while the table had six)")
+	}
+	rowsInTable := strings.Count(doc[strings.Index(doc, "| Tab | 控件 |"):strings.Index(doc, "**层和头两个分段控件也在循环里**")], "\n| ")
+	if rowsInTable != 7 { // header, separator, six rows
+		t.Fatalf("the focus table now has %d rows (want 7 including header and separator), "+
+			"so the heading's count needs revisiting", rowsInTable)
+	}
 
 	// Walk the cycle on a stage where every control is live, and count the distinct stops.
 	a := newTestApp(t)

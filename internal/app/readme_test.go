@@ -401,3 +401,53 @@ func TestReadmeImagesExist(t *testing.T) {
 		}
 	}
 }
+
+// TestSamplingHasTwoLabelsAndTheReadmeSaysSo records a deliberate inconsistency
+// that a reader will meet within one screen.
+//
+// The top bar's button says 采样下一个 token and the output stage's card says
+// 采样并续写. Both call sampleNext and both are bound to Enter, so a reader who
+// notices has found a real duplication — but the two labels are doing different
+// jobs: the top bar's is a quick action available on all seven stages, where
+// "next token" is what the model is predicting; the card's sits inside the lesson
+// about sampling and says what the reader is about to do to their prompt.
+//
+// Rather than unify the words and lose the distinction, the README names both. This
+// test keeps that sentence honest: if either label changes, the row has to change
+// with it.
+func TestSamplingHasTwoLabelsAndTheReadmeSaysSo(t *testing.T) {
+	doc := readREADME(t)
+	row := ""
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 采样并续写") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatal("the README no longer has a sampling row")
+	}
+
+	// Both labels are what the app renders, on the stages that render them.
+	a := newTestApp(t)
+	a.Step = 6
+	top := 0
+	tr := ui.NewTester(a.View, 1500, 940)
+	tr.Frame()
+	for _, s := range tr.Texts() {
+		if s == "采样下一个 token" {
+			top++
+		}
+	}
+	if top == 0 {
+		t.Fatal("the top bar no longer renders 采样下一个 token")
+	}
+	if !tr.HasText("采样并续写") {
+		t.Fatal("the output stage's card no longer renders 采样并续写")
+	}
+	for _, label := range []string{"采样下一个 token", "采样并续写"} {
+		if !strings.Contains(row, label) {
+			t.Fatalf("the README's sampling row does not name %q, which the app renders:\n%s",
+				label, row)
+		}
+	}
+}

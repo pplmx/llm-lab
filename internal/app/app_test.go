@@ -9425,3 +9425,56 @@ func TestLabelStrideKeepsLabelsApart(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryPinReleaseTriggerIsInTheReadme closes the gap the previous test left:
+// it checked stage switch, token selection and sampling, which were the three the
+// README listed, so both the document and the test shared the same blind spot.
+//
+// Measured, three more actions clear the pin — switching layer, switching head, and
+// autoplay advancing — and each is a real context change for the same reason: the
+// cell belongs to a (layer, head, stage, row) context, and after any of those the
+// card's heading and its contents would describe different things. The README now
+// lists all six; this test walks them so a seventh cannot appear unannounced.
+func TestEveryPinReleaseTriggerIsInTheReadme(t *testing.T) {
+	doc := readREADME(t)
+	// The row that documents the pinned cell, taken whole so a phrase from a
+	// neighbouring row cannot satisfy the check.
+	var row string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "| 点击热力图单元格 |") {
+			row = line
+		}
+	}
+	if row == "" {
+		t.Fatal("the README no longer documents the pinned cell")
+	}
+
+	pinned := func() *App {
+		a := newTestApp(t)
+		a.Step = 2
+		a.KeyQ, a.KeyK = 20, 5
+		return a
+	}
+	releases := []struct {
+		phrase string // how the README names it
+		act    func(a *App)
+	}{
+		{"切换阶段", func(a *App) { a.selectStep(3) }},
+		{"切换层", func(a *App) { a.Layer = 1; a.clearHover() }},
+		{"切换头", func(a *App) { a.Head = 1; a.clearHover() }},
+		{"自动播放推进", func(a *App) { a.Step++; a.clearHover() }},
+		{"选中另一个 token", func(a *App) { a.selectToken(3, false) }},
+		{"采样续写", func(a *App) { a.sampleNext() }},
+	}
+	for _, r := range releases {
+		a := pinned()
+		r.act(a)
+		if a.KeyQ >= 0 || a.KeyK >= 0 {
+			t.Fatalf("%s did not release the pin (still at (%d,%d))", r.phrase, a.KeyQ, a.KeyK)
+		}
+		if !strings.Contains(row, r.phrase) {
+			t.Fatalf("the README's pinned-cell row does not mention %q, which releases the "+
+				"pin:\n%s", r.phrase, row)
+		}
+	}
+}
