@@ -8976,7 +8976,7 @@ func TestAdvertisedShortcutsDoWhatTheLineSays(t *testing.T) {
 	if plain == "" || matrix == "" {
 		t.Fatal("the shortcut line is missing")
 	}
-	for _, want := range []string{"←", "→", "空格", "Enter", "1–7"} {
+	for _, want := range []string{"←", "→", "空格", "Enter", "1–7", "PgUp/PgDn"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("the shortcut line no longer mentions %q: %q", want, plain)
 		}
@@ -9025,6 +9025,29 @@ func TestAdvertisedShortcutsDoWhatTheLineSays(t *testing.T) {
 		if d, _, _ := press(0, key, 0); d != i {
 			t.Fatalf("digit %d should jump to stage %d, got %+d", i+1, i, d)
 		}
+	}
+
+	// PgUp/PgDn 滚动: pressed on the tallest stage at the smallest window, with the
+	// pointer parked away from the column so only the key can be doing it.
+	scrollPress := func(key ui.Key) (before, after float32) {
+		a := newTestApp(t)
+		a.Step = 4
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		tr.Move(0, 0)
+		tr.Frame()
+		before = a.Scroll.Y
+		tr.Key(0, key)
+		tr.Frame()
+		tr.Frame()
+		return before, a.Scroll.Y
+	}
+	if before, after := scrollPress(ui.KeyPageDown); after <= before {
+		t.Fatalf("the line advertises PgUp/PgDn 滚动, but PageDown moved the column from "+
+			"%.0f to %.0f", before, after)
+	}
+	if before, after := scrollPress(ui.KeyPageUp); after != before {
+		t.Fatalf("PageUp from the top moved the column from %.0f to %.0f", before, after)
 	}
 }
 

@@ -1283,3 +1283,103 @@ func TestHeatmapPointerLandsOnTheDrawnCell(t *testing.T) {
 		}
 	}
 }
+
+// TestKeyboardScrollsTheStageColumn covers the reachability gap this round found:
+// at 1180×720 the stage column holds up to 870 DIP of content below the fold —
+// more than a full viewport — and mygo only routes scroll keys to a scroller that
+// is under the pointer or in the focus chain.
+//
+// Measured before this change: with the pointer parked in a corner, PageDown,
+// Down, End, Space and the wheel all left Scroll.Y at 0, so a keyboard-only reader
+// could not reach the lesson card, the workings blocks or the shortcut line.
+func TestKeyboardScrollsTheStageColumn(t *testing.T) {
+	const w, h = 1180, 720
+	// The residual stage is the tallest at this size (measured MaxY 856).
+	scrollable := func(a *App, tr *ui.Tester) {
+		tr.Move(0, 0) // pointer out of the column, so nothing else can scroll it
+		tr.Frame()
+	}
+	a := newTestApp(t)
+	a.Step = 4
+	tr := ui.NewTester(a.View, w, h)
+	tr.Frame()
+	scrollable(a, tr)
+	if a.Scroll.MaxY <= 0 {
+		t.Fatalf("stage 5 does not scroll at %dx%d, so this test cannot measure anything", w, h)
+	}
+	if a.StageViewportH <= 0 {
+		t.Fatal("the stage column's viewport height was never measured, so a page cannot be sized")
+	}
+
+	// PageDown moves by roughly a page — a fraction of the viewport rather than all
+	// of it, so the next page overlaps and the reader keeps their place.
+	tr.Key(0, ui.KeyPageDown)
+	tr.Frame()
+	tr.Frame()
+	first := a.Scroll.Y
+	if first <= 0 {
+		t.Fatalf("PageDown left the column at Y=0; the keyboard still cannot scroll it")
+	}
+	if want := a.StageViewportH * 0.9; first < want*0.9 || first > want*1.1 {
+		t.Fatalf("PageDown moved %.0f DIP, want about %.0f (0.9 of the %.0f-DIP viewport)",
+			first, want, a.StageViewportH)
+	}
+
+	// End reaches the bottom and Home returns to the top.
+	tr.Key(0, ui.KeyEnd)
+	tr.Frame()
+	tr.Frame()
+	if a.Scroll.Y != a.Scroll.MaxY {
+		t.Fatalf("End left the column at %.0f, the content ends at %.0f", a.Scroll.Y, a.Scroll.MaxY)
+	}
+	tr.Key(0, ui.KeyHome)
+	tr.Frame()
+	tr.Frame()
+	if a.Scroll.Y != 0 {
+		t.Fatalf("Home left the column at %.0f, want its top", a.Scroll.Y)
+	}
+
+	// PageUp from the top stays at the top rather than going negative.
+	tr.Key(0, ui.KeyPageUp)
+	tr.Frame()
+	tr.Frame()
+	if a.Scroll.Y != 0 {
+		t.Fatalf("PageUp from the top left the column at %.0f", a.Scroll.Y)
+	}
+
+	// And the content really becomes reachable: the lesson card is what sits at the
+	// bottom of every stage, and before this change Find still reported it while no
+	// key could bring it into the window.
+	tr.Key(0, ui.KeyEnd)
+	tr.Frame()
+	tr.Frame()
+	if !tr.HasText("这一段在讲什么") {
+		t.Fatal("after scrolling to the end the lesson card is still not rendered")
+	}
+}
+
+// TestScrollKeysReachTheAppFromThePromptField: the four scroll keys must not be
+// eaten by the text field, since the reader may have just been typing.
+//
+// This is the half of the rule that differs from Space and Enter, which a focused
+// input does consume — they edit or submit the text, while PageDown does not.
+func TestScrollKeysReachTheAppFromThePromptField(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	tr.Move(0, 0)
+	tr.Frame()
+	tr.Key(0, ui.KeyTab) // focus the prompt field
+	tr.Frame()
+	if a.Scroll.Y != 0 {
+		t.Fatalf("the column was already scrolled to %.0f before the key", a.Scroll.Y)
+	}
+	tr.Key(0, ui.KeyPageDown)
+	tr.Frame()
+	tr.Frame()
+	if a.Scroll.Y <= 0 {
+		t.Fatal("PageDown with the prompt field focused did not scroll; the reader who just " +
+			"typed cannot reach the rest of the stage without moving the pointer")
+	}
+}

@@ -88,6 +88,13 @@ type App struct {
 	InspectorW float32
 
 	Scroll ui.ScrollState
+	// StageViewportH is the height of the scrolling stage column as the last frame
+	// laid it out, in DIPs. The keyboard scrolls by one of these for PageUp/PageDown,
+	// and mygo's ScrollState does not record a viewport size: it knows MaxY (how far
+	// the content goes) but not how much of it is on screen, so "a page" has to be
+	// measured from the element rather than assumed from the window height, which
+	// also has the sidebar, top bar and step bar in it.
+	StageViewportH float32
 	// RailScroll keeps the prompt strip's horizontal offset across stages.
 	RailScroll ui.ScrollState
 	// RevealRail asks the next frame to scroll the selected chip into view,
@@ -495,6 +502,20 @@ func (a *App) stageTransition(c *ui.Context) ui.ElementTransition {
 
 // selectStep changes the lesson and returns the main scroll area to the top.
 // It is the manual counterpart to play's automatic advance.
+// scrollStageBy moves the stage column by delta DIPs, clamped to its content. The
+// container clamps too, but doing it here keeps the state honest for anything that
+// reads Scroll.Y before the next layout.
+func (a *App) scrollStageBy(delta float32) {
+	y := a.Scroll.Y + delta
+	if y < 0 {
+		y = 0
+	}
+	if y > a.Scroll.MaxY {
+		y = a.Scroll.MaxY
+	}
+	a.Scroll.Y = y
+}
+
 func (a *App) selectStep(step int) {
 	if step < 0 || step >= len(lessons) {
 		return
@@ -563,7 +584,12 @@ func (a *App) View(c *ui.Context) {
 				a.stepbar(c)
 				// MinHeight(0) lets the scroll view give up height; without it
 				// the fixed rows above are squeezed to nothing at 1180×720.
-				ui.Scroll(c).Grow(1).MinHeight(0).Padding(16, 16, 24).Gap(12).TrackScroll(&a.Scroll).Children(func() {
+				stage := ui.Scroll(c).Grow(1).MinHeight(0).Padding(16, 16, 24).Gap(12).
+					TrackScroll(&a.Scroll)
+				if b := stage.LayoutBounds(); b.H > 0 {
+					a.StageViewportH = b.H
+				}
+				stage.Children(func() {
 					// One key per stage, so switching rebuilds this subtree as
 					// new content and it fades in rather than swapping
 					// instantly. The motion is opacity only, never position:
@@ -600,6 +626,29 @@ func (a *App) handleKeys(c *ui.Context) {
 		// never samples — measured, and the same mechanism that keeps Space out of the
 		// lesson while the field has focus.
 		a.sampleNext()
+	// PageUp/PageDown/Home/End scroll the stage column.
+	//
+	// This exists because the stage column holds the lesson text and the workings
+	// blocks, and at 1180×720 those are up to 870 DIP below the fold — more than a
+	// full viewport. Mouse scrolling works, but mygo only routes those keys to a
+	// scroller that is under the pointer or in the focus chain: measured, a
+	// keyboard-only reader (pointer parked at 0,0) could not move the column at all,
+	// with PageDown, Down, End, Space and the wheel all leaving Scroll.Y at 0.
+	//
+	// Measured: these four reach the app even while the prompt field has focus —
+	// unlike Space and Enter, which a focused input consumes, because those two do
+	// something to the text being edited while PageDown does nothing there. So the
+	// keys cannot be stolen from the reader's field by this.
+	case c.Shortcut(0, ui.KeyPageDown):
+		a.scrollStageBy(a.StageViewportH * 0.9)
+	case c.Shortcut(0, ui.KeyPageUp):
+		a.scrollStageBy(-a.StageViewportH * 0.9)
+	case c.Shortcut(0, ui.KeyHome):
+		// Home goes to the top of the stage, not the top of the window: the reader
+		// wants the beginning of the card they are reading.
+		a.Scroll.Y = 0
+	case c.Shortcut(0, ui.KeyEnd):
+		a.Scroll.Y = a.Scroll.MaxY
 	case c.Shortcut(ui.Ctrl, ui.KeyZ):
 		// Ctrl+Z takes back the last sample. It sits here with the global shortcuts
 		// rather than on the sampling card because a reader who has just sampled

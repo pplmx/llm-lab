@@ -1422,7 +1422,7 @@ func (a *App) lesson(c *ui.Context) {
 		if a.undo != nil {
 			undo = " · Ctrl+Z 撤销采样"
 		}
-		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · Enter 采样%s · 1–7 跳转", shift, undo)).
+		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · Enter 采样%s · 1–7 跳转 · PgUp/PgDn 滚动", shift, undo)).
 			FontSize(fontMicro).TextColor(colFaint)
 	})
 }

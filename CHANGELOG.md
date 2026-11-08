@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **键盘可以滚动中栏了**（`PageUp` / `PageDown` / `Home` / `End`）。中栏装着 lesson 正文和算式块，1180×720 下最多有 **870 DIP 的内容在视口外，比一整屏还多**；mygo 默认只把滚动键交给「指针下方或焦点链里」的滚动容器
+  - 实测纯键盘读者（指针停在 0,0）此前**完全够不到**这些内容：`PageDown`、`Down`、`End`、`Space` 和滚轮**全部**让 `Scroll.Y` 停在 0
+  - 翻一屏用 **0.9 个视口高**，不是整屏：留一点重叠，读者不会刚好翻过一段的开头。视口高度从滚动元素自己的 `LayoutBounds()` 量（`StageViewportH`）——mygo 的 `ScrollState` 只记 `MaxY` 不记视口，用窗口高度减侧栏/顶栏/步进条去估是错的
+  - 这四个键**不会被输入框吃掉**（实测：焦点在提示词输入框里按 PageDown 照样滚动），这一点和 `Space` / `Enter` 不同——那两个会改/提交正在编辑的文字，PageDown 不会
+  - `TestKeyboardScrollsTheStageColumn` 在 1180×720 的第 5 步上验证翻屏量、`End` 到底、`Home` 回顶、`PageUp` 不越界，并确认滚到底后 lesson 卡片真的渲染出来；已验证删掉按键分支会报 `PageDown left the column at Y=0; the keyboard still cannot scroll it`
+  - `TestAdvertisedShortcutsDoWhatTheLineSays` 新增一节：**按下**这两个键并检查中栏确实移动，不是只检查快捷键行写了这两个词
+
 ### Fixed
 
 - **三处文档与代码不符，都是「改了一边另一边不会报警」那一类**（CONTRIBUTING 第 8 条的成对一致性）
