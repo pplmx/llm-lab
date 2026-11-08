@@ -1041,28 +1041,24 @@ func TestTypingRecomputesWithoutAKey(t *testing.T) {
 	}
 }
 
-// TestUndoLastSampleRestoresEverythingTheSampleChanged covers the whole state a
-// sample replaces: prompt, token selection and the record of the draw.
+// TestUndoRestoresEverythingTheActionReplaced covers the state a destructive prompt
+// action replaces: the text, the token selection and the sample record.
 //
-// Sampling is the only action that writes into the prompt the reader did not type,
-// so it is the only one that needs a way back. Before this it had none: a reader
-// who pressed 采样并续写 on the default prompt to see what it did was left with a
-// byte they could only remove by clearing the field and retyping the sentence.
-func TestUndoLastSampleRestoresEverythingTheSampleChanged(t *testing.T) {
+// The scope widened this round. It began as "undo the last sample", which is the
+// smallest loss the app can cause — one byte. The presets and 重置 cause a much
+// larger one: they replace a sentence the reader typed. Measured before the change,
+// typing "my own sentence here" and clicking 中文 left the field at the preset with
+// undo == nil, so the reader's own text was gone with no way back.
+func TestUndoRestoresEverythingTheActionReplaced(t *testing.T) {
+	// Sampling: one byte, and the selection moves to what was produced.
 	a := newTestApp(t)
-	a.Step = 6
-	prompt := a.Prompt
-	sel := a.SelToken
+	prompt, sel := a.Prompt, a.SelToken
 	if a.undo != nil {
 		t.Fatal("a fresh app already offers an undo")
 	}
-	if a.undoLastSample() {
+	if a.undoPrompt() {
 		t.Fatal("undo returned true with nothing to undo")
 	}
-	if a.Prompt != prompt {
-		t.Fatalf("an undo with nothing to undo changed the prompt to %q", a.Prompt)
-	}
-
 	a.sampleNext()
 	if a.Prompt == prompt {
 		t.Fatal("sampling did not change the prompt; the rest of this test would be vacuous")
@@ -1070,13 +1066,13 @@ func TestUndoLastSampleRestoresEverythingTheSampleChanged(t *testing.T) {
 	if a.undo == nil {
 		t.Fatal("sampling did not record an undo point")
 	}
-	// The sample selects what it produced; that is a different token from the one
-	// the reader was on.
+	if a.undo.what != "采样续写" {
+		t.Fatalf("the sample's undo point is labelled %q", a.undo.what)
+	}
 	if a.SelToken == sel {
 		t.Fatalf("the sample left the selection on token %d, the same one it started from", sel)
 	}
-
-	if !a.undoLastSample() {
+	if !a.undoPrompt() {
 		t.Fatal("undo returned false with a sample to take back")
 	}
 	if a.Prompt != prompt {
@@ -1091,62 +1087,132 @@ func TestUndoLastSampleRestoresEverythingTheSampleChanged(t *testing.T) {
 		t.Fatalf("undo left the sample record %q; it describes a byte that is gone", a.LastSample)
 	}
 	// One step, not a stack: a second undo has nothing to take back.
-	if a.undoLastSample() {
+	if a.undoPrompt() {
 		t.Fatal("undo kept going after the only sample it had")
 	}
+
+	// A preset replacing typed text — the case this round added.
+	b := newTestApp(t)
+	b.Prompt = "my own sentence here"
+	b.recompute()
+	typed := b.Prompt
+	b.applyPrompt("注意力就是加权求和")
+	if b.Prompt == typed {
+		t.Fatal("the preset did not change the prompt")
+	}
+	if b.undo == nil || b.undo.what != "换成预设提示词" {
+		t.Fatalf("a preset click left no labelled undo point: %+v", b.undo)
+	}
+	if !b.undoPrompt() {
+		t.Fatal("a preset click could not be undone")
+	}
+	if b.Prompt != typed {
+		t.Fatalf("undoing a preset gave %q, want the typed text %q", b.Prompt, typed)
+	}
+
+	// 重置, the other way to throw away a whole prompt.
+	c := newTestApp(t)
+	c.Prompt = "another sentence entirely"
+	c.recompute()
+	c.applyPrompt(defaultPrompt)
+	if !c.undoPrompt() {
+		t.Fatal("重置 could not be undone")
+	}
+	if c.Prompt != "another sentence entirely" {
+		t.Fatalf("undoing 重置 gave %q", c.Prompt)
+	}
 }
 
-// TestUndoIsDroppedWhenThePromptChangesElsewhere pins the other half of the
-// lifecycle: what invalidates the undo point.
+// TestUndoSurvivesTypingButNotAnotherReplacement pins the rule that decides which
+// actions touch the undo point.
 //
-// "Undo the sample" is unambiguous only while the sample is the last thing that
-// happened to the prompt. Once the reader types on top of it, the action could mean
-// "remove the byte" or "remove the byte and my keystrokes" — the app drops the
-// point rather than guessing, which is also why the button disappears.
-func TestUndoIsDroppedWhenThePromptChangesElsewhere(t *testing.T) {
-	cases := []struct {
-		name string
-		act  func(a *App)
-	}{
-		{"typing", func(a *App) { a.applyPrompt(a.Prompt + "x") }},
-		{"a preset", func(a *App) { a.applyPrompt(defaultPrompt) }},
-		{"clearing the field", func(a *App) { a.applyPrompt("") }},
+// Replacing the whole prompt records one; typing does not. That asymmetry is the
+// point: an undo point on every keystroke would make Ctrl+Z walk back through the
+// reader's editing one character at a time, which is a text editor's behaviour and
+// not this app's.
+//
+// Typing must also not *destroy* an existing point. The earlier version of this test
+// asserted the opposite — that any prompt change dropped it — which was right while
+// the undo only meant "the sample", and is wrong now: a reader who pasted a preset
+// over their paragraph should still be able to take that back after typing one more
+// character.
+func TestUndoSurvivesTypingButNotAnotherReplacement(t *testing.T) {
+	a := newTestApp(t)
+	a.Prompt = "the sentence I want back"
+	a.recompute()
+	typed := a.Prompt
+	a.applyPrompt("注意力就是加权求和")
+	if a.undo == nil {
+		t.Fatal("the preset click recorded no undo point")
 	}
-	for _, c := range cases {
-		a := newTestApp(t)
-		a.sampleNext()
-		if a.undo == nil {
-			t.Fatalf("%s: no undo point after sampling", c.name)
-		}
-		before := a.Prompt
-		c.act(a)
-		if a.undo != nil {
-			t.Fatalf("%s: the undo point survived, so pressing undo would restore a "+
-				"prompt that predates the reader's own edit (%q after %q)", c.name, a.Prompt, before)
-		}
+	// Typing on top of the preset must leave the point alone.
+	a.Prompt += "x"
+	a.promptChanged()
+	if a.undo == nil {
+		t.Fatal("typing destroyed the undo point, so the reader's own sentence is " +
+			"unrecoverable after a single keystroke on top of the preset")
+	}
+	if !a.undoPrompt() {
+		t.Fatal("the point was there but undo refused")
+	}
+	if a.Prompt != typed {
+		t.Fatalf("undo gave %q, want the sentence that was replaced %q", a.Prompt, typed)
+	}
+
+	// A second replacement overwrites the point rather than stacking: the reader
+	// takes back the last thing that happened, which is the only one they can reason
+	// about.
+	b := newTestApp(t)
+	b.Prompt = "one"
+	b.recompute()
+	b.applyPrompt("two")
+	b.applyPrompt("three")
+	if !b.undoPrompt() {
+		t.Fatal("no undo point after two replacements")
+	}
+	if b.Prompt != "two" {
+		t.Fatalf("after two replacements undo gave %q, want the previous one, two", b.Prompt)
+	}
+	if b.undoPrompt() {
+		t.Fatal("undo went back further than one step")
 	}
 }
 
-// TestUndoButtonAppearsOnlyWhenThereIsSomethingToUndo keeps the control honest: the
-// card shows it after a sample and not before, so a reader never presses a button
-// that cannot act.
-func TestUndoButtonAppearsOnlyWhenThereIsSomethingToUndo(t *testing.T) {
+// TestUndoButtonNamesTheActionItTakesBack keeps the control honest twice over: it
+// appears only when there is something to take back, and it says which action that
+// is.
+//
+// The fixed label "撤销上次采样" stopped being true when the undo grew to cover the
+// presets: after a preset click it would have offered to undo a sample that was
+// never drawn.
+func TestUndoButtonNamesTheActionItTakesBack(t *testing.T) {
 	a := newTestApp(t)
 	a.Step = 6
 	tr := ui.NewTester(a.View, 1500, 940)
 	tr.Frame()
-	if tr.HasText("撤销上次采样") {
-		t.Fatal("the undo button is on the card before anything has been sampled")
+	if tr.HasText("撤销「") || tr.HasText("撤销上次采样") {
+		t.Fatal("the undo button is on the card before anything destructive has happened")
 	}
 	a.sampleNext()
 	tr.Frame()
-	if !tr.HasText("撤销上次采样") {
-		t.Fatal("the undo button did not appear after sampling")
+	if !tr.HasText("撤销「采样续写」") {
+		t.Fatal("the undo button does not name the sample it takes back")
 	}
-	a.undoLastSample()
+	a.undoPrompt()
 	tr.Frame()
-	if tr.HasText("撤销上次采样") {
+	if tr.HasText("撤销「") {
 		t.Fatal("the undo button is still there after the state it undoes is gone")
+	}
+
+	// After a preset the label names the preset, not a sample.
+	b := newTestApp(t)
+	b.Step = 6
+	trb := ui.NewTester(b.View, 1500, 940)
+	trb.Frame()
+	b.applyPrompt("中文 preset")
+	trb.Frame()
+	if !trb.HasText("撤销「换成预设提示词」") {
+		t.Fatal("after a preset click the undo button does not name the preset")
 	}
 }
 
@@ -1198,7 +1264,7 @@ func TestShortcutLineAdvertisesUndoOnlyWithSomethingToUndo(t *testing.T) {
 	if got := line(a); !strings.Contains(got, "Ctrl+Z") {
 		t.Fatalf("the shortcut line does not advertise Ctrl+Z after a sample: %q", got)
 	}
-	a.undoLastSample()
+	a.undoPrompt()
 	if got := line(a); strings.Contains(got, "Ctrl+Z") {
 		t.Fatalf("the shortcut line still advertises Ctrl+Z after the sample was undone: %q", got)
 	}
@@ -1567,5 +1633,66 @@ func TestReadmeRailLimitationIsStillTrue(t *testing.T) {
 	}
 	if a.SelToken >= startSel {
 		t.Fatalf("Shift+Left did not move the selection (still %d)", a.SelToken)
+	}
+}
+
+// TestShortcutLineExplainsFocusPrecedence keeps the shortcut line from promising
+// something a focused control takes away.
+//
+// The line says "空格 播放/暂停 · Enter 采样" unconditionally, which is true while
+// nothing is focused and false the moment the reader tabs to a button: measured, with
+// 重置 focused Enter activates the button instead of sampling. That precedence is
+// correct — the reader chose to operate that control — but an advertised key that
+// silently does something else needs its exception stated where the key is listed.
+func TestShortcutLineExplainsFocusPrecedence(t *testing.T) {
+	a := newTestApp(t)
+	tr := ui.NewTester(a.View, 1500, 2000)
+	tr.Frame()
+	var line, note string
+	for _, s := range tr.Texts() {
+		if strings.HasPrefix(s, "快捷键：") {
+			line = s
+		}
+		if strings.HasPrefix(s, "（用 Tab 选中某个按钮时") {
+			note = s
+		}
+	}
+	if line == "" {
+		t.Fatal("the shortcut line is missing")
+	}
+	for _, want := range []string{"空格", "Enter"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the line no longer advertises %q", want)
+		}
+	}
+	if note == "" {
+		t.Fatal("the shortcut line no longer explains that a focused button takes Space and Enter")
+	}
+
+	// And the exception is real, not decorative: with 重置 focused, Enter must
+	// activate the button rather than sample.
+	b := newTestApp(t)
+	b.Step = 3
+	b.Prompt = "zzz"
+	b.recompute()
+	trb := ui.NewTester(b.View, 1500, 940)
+	trb.Frame()
+	trb.Move(0, 0)
+	trb.Frame()
+	trb.Key(0, ui.KeyTab) // prompt field
+	trb.Frame()
+	trb.Key(0, ui.KeyTab) // 重置
+	trb.Frame()
+	before := len(b.Prompt)
+	trb.Key(0, ui.KeyEnter)
+	trb.Frame()
+	trb.Frame()
+	if len(b.Prompt) == before+1 {
+		t.Fatal("Enter with 重置 focused sampled a byte; the note says a focused button " +
+			"takes Enter, so the exception it describes is not the one that happens")
+	}
+	if b.Prompt != defaultPrompt {
+		t.Fatalf("Enter with 重置 focused left the prompt at %q; the note says the button "+
+			"is what gets pressed", b.Prompt)
 	}
 }

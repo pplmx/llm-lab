@@ -123,7 +123,7 @@ type App struct {
 	// It holds one step, not a stack. The app is a lesson, not an editor, and the
 	// action it undoes is a single demonstration; keeping history would invite a
 	// reader to treat the prompt as a document.
-	undo   *sampleUndo
+	undo   *promptUndo
 	Status string
 
 	// cancelStats is the per-trace cancellation summary the attention stage
@@ -179,9 +179,28 @@ func New(w *model.Weights) *App {
 
 // applyPrompt replaces the prompt and re-runs the forward pass, dropping the
 // sample and autoplay state that belonged to the previous prompt.
+//
+// It records an undo point first, unless the prompt is not actually changing: a
+// preset click that re-selects the prompt already in the field destroys nothing, and
+// offering to "undo" it would put a no-op button on screen.
 func (a *App) applyPrompt(p string) {
+	if p != a.Prompt {
+		a.recordUndo("换成预设提示词")
+	}
 	a.Prompt = p
 	a.promptChanged()
+}
+
+// recordUndo remembers the current prompt state, labelled with the action about to
+// replace it, so the reader can take that action back.
+//
+// Only actions that *replace* the whole prompt call this. Typing does not: an
+// undo point taken on every keystroke would let Ctrl+Z walk back through the
+// reader's editing one character at a time, which is a text editor's behaviour and
+// not this app's — and worse, the undo would then be claimed while what the reader
+// most likely wants is not to lose the sentence.
+func (a *App) recordUndo(what string) {
+	a.undo = &promptUndo{prompt: a.Prompt, sel: a.SelToken, lastSam: a.LastSample, what: what}
 }
 
 // promptChanged drops the state that belonged to the previous prompt and re-runs the
@@ -194,9 +213,12 @@ func (a *App) applyPrompt(p string) {
 // which is why the assignment stays in applyPrompt rather than moving in here.
 func (a *App) promptChanged() {
 	a.LastSample = ""
-	// An edit on top of a sample makes "undo the sample" ambiguous, so the point
-	// is dropped rather than redefined.
-	a.undo = nil
+	// The undo point is NOT dropped here. It is recorded by applyPrompt before the
+	// replacement, so clearing it here would immediately discard the very thing that
+	// makes 重置 and the presets recoverable. Typing goes through this function too,
+	// and typing is the case that should not create a point — but it also should not
+	// destroy an existing one: a reader who pasted a preset over their sentence can
+	// still take that back after typing one more character.
 	a.stopPlayback()
 	a.recompute()
 }
@@ -654,7 +676,7 @@ func (a *App) handleKeys(c *ui.Context) {
 		// rather than on the sampling card because a reader who has just sampled
 		// from the top bar's button expects the undo key to work without hunting for
 		// which card they sampled from; the card carries the mouse's button.
-		a.undoLastSample()
+		a.undoPrompt()
 	case c.Shortcut(0, ui.KeyEscape):
 		// Esc is the one "let go of everything" key: it stops playback and
 		// releases a pinned cell, so a reader who clicked the matrix can get
@@ -1246,12 +1268,22 @@ func (a *App) inspectorHoverCell(c *ui.Context) {
 	})
 }
 
-// sampleUndo is the state sampleNext replaced, kept so the reader can take a
-// demonstration back without retyping the prompt.
-type sampleUndo struct {
+// promptUndo is the prompt state a destructive action replaced: the text, the
+// selected token, and the record of the last sample (which belongs to the prompt it
+// was drawn from).
+//
+// It exists because the three ways this app replaces a whole prompt all discard what
+// the reader had: the preset chips, 重置, and sampling. Sampling is the smallest —
+// one byte — but the other two throw away a sentence the reader typed, and before
+// this they did so with no way back at all. Measured: typing "my own sentence here"
+// and clicking 中文 left the field at the preset with undo == nil.
+type promptUndo struct {
 	prompt  string
 	sel     int
 	lastSam string
+	// what names the action this takes back, so the button and the tooltip can say
+	// which one the reader is undoing rather than calling every case "采样".
+	what string
 }
 
 // draw describes one deterministic sampling step: the seed the prompt hashed
@@ -1328,7 +1360,7 @@ func (a *App) sampleNext() {
 	// Remember what this is about to replace. Captured before any mutation, because
 	// the undo point is the state the reader was looking at when they pressed the
 	// button — prompt, selection and the record all change below.
-	a.undo = &sampleUndo{prompt: a.Prompt, sel: a.SelToken, lastSam: a.LastSample}
+	a.recordUndo("采样续写")
 	a.LastSample = fmt.Sprintf("%q (id %d, p=%.3f)", byteText(pick), pick, probs[pick])
 	// A byte-level model predicts bytes, not runes: append exactly one byte.
 	a.Prompt += string([]byte{byte(pick)})
@@ -1350,16 +1382,18 @@ func (a *App) sampleNext() {
 	}
 }
 
-// undoLastSample puts the prompt back the way it was before the last sample, and
-// returns false when there is nothing to take back.
+// undoPrompt replaces the prompt with the state recorded before the last destructive
+// action, and reports whether there was one.
 //
-// Every other way of changing the prompt clears the undo point, so what this
-// restores is always the state the sample itself replaced: the reader can never
-// land on a prompt they never had. That is why promptChanged and the preset chips
-// both drop it — typing on top of a sample makes the undo ambiguous (take back the
-// byte, or the byte and the keystrokes?), and the honest answer is to offer
-// neither rather than guess.
-func (a *App) undoLastSample() bool {
+// The actions it covers are the ones that discard a whole prompt: the preset chips,
+// 重置, and sampling. Measured before this existed, typing a sentence and clicking a
+// preset left the field at the preset with no undo point at all — the reader's own
+// text was gone with no way back, a bigger loss than the one byte sampling costs.
+//
+// The name says "prompt" rather than "sample" because the scope widened; the button
+// and the shortcut line name the specific action from the label the recorder stored,
+// so the reader is told which one they are taking back.
+func (a *App) undoPrompt() bool {
 	u := a.undo
 	if u == nil {
 		return false
@@ -1370,8 +1404,8 @@ func (a *App) undoLastSample() bool {
 	a.stopPlayback()
 	a.recompute()
 	// recompute preserves a selection that still exists, which is the typing rule.
-	// Undo has to restore the selection the sample found, not leave the reader on
-	// the token the sample selected: that token no longer exists.
+	// Undo has to restore the selection the action found: the token a sample selected
+	// no longer exists, and a preset of a different length has its own positions.
 	if n := len(a.Trace.Tokens); n > 0 {
 		sel := u.sel
 		if sel < 0 || sel >= n {

@@ -918,12 +918,15 @@ func (a *App) stageLogitLens(c *ui.Context) {
 		for _, rung := range lens.Rungs {
 			p := rung.Probs[lens.Final]
 			label := rung.Name
+			// One distinction, and the palette's own: colAccent2 means "this is what
+			// the model actually produced", everything else is a read-out. The first
+			// version also coloured rungs that happened to agree with the final answer
+			// in colAccent, which was wrong twice over — the bar's length already says
+			// how much of the final answer is there, so a rung can agree while showing
+			// a short bar, and the colour had no legend to explain it.
 			colour := colGreen
-			switch {
-			case rung.IsFinal:
+			if rung.IsFinal {
 				colour = colAccent2
-			case rung.AgreesWithFinal:
-				colour = colAccent
 			}
 			rows = append(rows, barRow{
 				Label:      label,
@@ -1485,9 +1488,14 @@ func (a *App) stageOutput(c *ui.Context) {
 			// The undo only exists while there is something to take back: a button
 			// that is always there and usually does nothing would read as broken,
 			// and this app dims or hides controls that cannot act.
+			//
+			// Its label names the action being taken back. It used to be fixed at
+			// "撤销上次采样", which stopped being true when the undo grew to cover the
+			// presets and 重置: after a preset click that button would have claimed to
+			// undo a sample that was never drawn.
 			if a.undo != nil {
-				if ui.Button(c, "撤销上次采样").Clicked() {
-					a.undoLastSample()
+				if ui.Button(c, "撤销「"+a.undo.what+"」").Clicked() {
+					a.undoPrompt()
 				}
 				ui.Text(c, "Ctrl+Z").FontSize(fontMicro).TextColor(colFaint).Shrink(0)
 			}
@@ -1559,10 +1567,21 @@ func (a *App) lesson(c *ui.Context) {
 		// currently does nothing teaches the reader the app ignores them.
 		undo := ""
 		if a.undo != nil {
-			undo = " · Ctrl+Z 撤销采样"
+			// Named from the recorded action, like the card's button: Ctrl+Z no longer
+			// only takes back a sample.
+			undo = " · Ctrl+Z 撤销「" + a.undo.what + "」"
 		}
-		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · Enter 采样%s · 1–7 跳转 · PgUp/PgDn 滚动", shift, undo)).
-			FontSize(fontMicro).TextColor(colFaint)
+		// The precedence note is here because the line below it is unconditional and
+		// a focused control is not. Measured: with 重置 focused, Enter activates the
+		// button rather than sampling; with a step button focused, Space activates it
+		// rather than playing. That is the right precedence — a button under the
+		// keyboard is what the reader most recently chose to operate — but a reader who
+		// tabbed to a control and then found Enter doing something else needs to be told
+		// why, and the line that advertises Enter is where they will look.
+		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · Enter 采样%s · 1–7 跳转 · PgUp/PgDn 滚动",
+			shift, undo)).FontSize(fontMicro).TextColor(colFaint)
+		ui.Text(c, "（用 Tab 选中某个按钮时，空格与 Enter 先作用于那个按钮——例如「重置」会被直接按下。）").
+			FontSize(fontMicro).TextColor(colFaint).LineHeight(1.35)
 	})
 }
 
