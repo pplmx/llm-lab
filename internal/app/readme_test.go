@@ -29,7 +29,7 @@ func readREADME(t *testing.T) string {
 // TestReadmeCalloutCountMatchesTheStages: "第 3–7 步各带「常见误解」卡片，共六条".
 func TestReadmeCalloutCountMatchesTheStages(t *testing.T) {
 	doc := readREADME(t)
-	if !strings.Contains(doc, "共十三条") {
+	if !strings.Contains(doc, "共十四条") {
 		t.Fatal("the README no longer states the callout count; update or remove this test")
 	}
 
@@ -47,8 +47,8 @@ func TestReadmeCalloutCountMatchesTheStages(t *testing.T) {
 			}
 		}
 	}
-	if total != 13 {
-		t.Fatalf("the README says 共十三条, the app renders %d", total)
+	if total != 14 {
+		t.Fatalf("the README says 共十四条, the app renders %d", total)
 	}
 	// And they are on stages 3-7, with two callouts on step 4 (Softmax) and on
 	// step 5 (residual: the stream-grows rebuttal and the logit-lens one).
@@ -69,7 +69,7 @@ func TestReadmeCalloutCountMatchesTheStages(t *testing.T) {
 		case 4:
 			want = 3 // stream grows + logit lens + layer rewrite
 		case 5:
-			want = 2 // GELU is not ReLU + the FFN concentration comparison
+			want = 3 // GELU is not ReLU + FFN writes the answer + the concentration comparison
 		case 6:
 			want = 2 // 97% is not correctness + weight tying is not just cheaper
 		}

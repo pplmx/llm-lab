@@ -3217,3 +3217,149 @@ func TestHeadIndependenceCardQuotesItsOwnNumbers(t *testing.T) {
 		}
 	}
 }
+
+// TestFFNAnswerDirectionMatchesADirectRanking recomputes the ranks and cosines straight
+// from the trace, independently of the helper's own loop.
+func TestFFNAnswerDirectionMatchesADirectRanking(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	w := a.W
+	d, vocab := w.Config.DModel, w.Config.Vocab
+	last := len(tr.Tokens) - 1
+	rankAgainst := func(v []float32, actual int) (int, float64) {
+		var nv float64
+		for _, x := range v {
+			nv += float64(x) * float64(x)
+		}
+		root := math.Sqrt(nv)
+		target, rank := 0.0, 1
+		for id := 0; id < vocab; id++ {
+			var dot, ne float64
+			for k := 0; k < d; k++ {
+				e := float64(w.TokEmbed[id*d+k])
+				dot += float64(v[k]) * e
+				ne += e * e
+			}
+			c := dot / (root * math.Sqrt(ne))
+			if id == actual {
+				target = c
+			}
+		}
+		for id := 0; id < vocab; id++ {
+			if id == actual {
+				continue
+			}
+			var dot, ne float64
+			for k := 0; k < d; k++ {
+				e := float64(w.TokEmbed[id*d+k])
+				dot += float64(v[k]) * e
+				ne += e * e
+			}
+			if dot/(root*math.Sqrt(ne)) > target {
+				rank++
+			}
+		}
+		return rank, target
+	}
+	for li := range tr.Layers {
+		m := computeFFNAnswerDirection(a.W, tr, li)
+		if !m.OK {
+			t.Fatalf("layer %d: no direction measured", li)
+		}
+		if m.Positions != last {
+			t.Fatalf("layer %d: %d positions, the prompt offers %d", li, m.Positions, last)
+		}
+		var outRank, inRank, outCos, inCos float64
+		top10 := 0
+		for p := 0; p < last; p++ {
+			actual := int(tr.Tokens[p+1].Byte)
+			or, oc := rankAgainst(tr.Layers[li].FFNOut[p], actual)
+			ir, ic := rankAgainst(tr.Layers[li].In[p], actual)
+			outRank += float64(or)
+			inRank += float64(ir)
+			outCos += oc
+			inCos += ic
+			if or <= 10 {
+				top10++
+			}
+		}
+		f := float64(last)
+		for name, pair := range map[string][2]float64{
+			"output rank": {m.OutputMeanRank, outRank / f},
+			"input rank":  {m.InputMeanRank, inRank / f},
+			"output cos":  {m.OutputMeanCos, outCos / f},
+			"input cos":   {m.InputMeanCos, inCos / f},
+		} {
+			if math.Abs(pair[0]-pair[1]) > 1e-6 {
+				t.Fatalf("layer %d %s: card %v, recomputed %v", li, name, pair[0], pair[1])
+			}
+		}
+		if m.OutputTop10 != top10 {
+			t.Fatalf("layer %d top-10 count: card %d, recomputed %d", li, m.OutputTop10, top10)
+		}
+		if m.Vocab != vocab {
+			t.Fatalf("layer %d vocab %d, config %d", li, m.Vocab, vocab)
+		}
+	}
+}
+
+// TestFFNAnswerDirectionShowsLayerZeroDoingTheWork is the premise of the card's claim:
+// layer 0's FFN moves the true byte from near chance to near the top.
+//
+// The card says the answer direction is written from nothing rather than refined. That
+// needs layer 0's input rank to be close to chance and its output rank to be far better,
+// measured rather than assumed.
+func TestFFNAnswerDirectionShowsLayerZeroDoingTheWork(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		if len(a.Trace.Tokens) < 3 {
+			continue
+		}
+		m := computeFFNAnswerDirection(a.W, a.Trace, 0)
+		if !m.OK {
+			t.Fatalf("prompt %q: no measurement", prompt)
+		}
+		chance := float64(m.Vocab) / 2
+		// The input has to be far from the answer for the sentence to be right.
+		if m.InputMeanRank < chance/3 {
+			t.Fatalf("prompt %q: layer 0's input already ranks the true byte %.1f out of %d; "+
+				"the card says the FFN writes the direction from nothing",
+				prompt, m.InputMeanRank, m.Vocab)
+		}
+		// And the output has to be much better.
+		if m.OutputMeanRank > m.InputMeanRank/5 {
+			t.Fatalf("prompt %q: layer 0's FFN output ranks the true byte %.1f against the "+
+				"input's %.1f; the card says the FFN moves it close to the top",
+				prompt, m.OutputMeanRank, m.InputMeanRank)
+		}
+		t.Logf("%q: layer 0 input rank %.1f -> output rank %.1f", prompt, m.InputMeanRank, m.OutputMeanRank)
+	}
+}
+
+// TestFFNAnswerDirectionCardQuotesItsOwnNumbers reads both layers' lines out of the text.
+func TestFFNAnswerDirectionCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 5
+	tr := ui.NewTester(a.View, 1500, 3400)
+	tr.Frame()
+	joined := ""
+	for _, s := range tr.Texts() {
+		joined += s + "\n"
+	}
+	if !strings.Contains(joined, "FFN 的输出指向下一个字节吗") {
+		t.Fatal("the FFN answer-direction card is missing")
+	}
+	for li := range a.Trace.Layers {
+		m := computeFFNAnswerDirection(a.W, a.Trace, li)
+		want := fmt.Sprintf("层 %d：输入里真实字节平均第 %.1f 名（余弦 %+.3f），FFN 之后第 %.1f 名（余弦 %+.3f）",
+			li, m.InputMeanRank, m.InputMeanCos, m.OutputMeanRank, m.OutputMeanCos)
+		if !strings.Contains(joined, want) {
+			t.Fatalf("the card does not print %q", want)
+		}
+	}
+}

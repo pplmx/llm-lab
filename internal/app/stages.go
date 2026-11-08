@@ -1485,6 +1485,8 @@ func (a *App) stageFFN(c *ui.Context) {
 	// After the stage's own figure. Written above it, this card's header started at
 	// y=667 in a 720-DIP window: the FFN heading fit but every row it introduces was
 	// below the fold, so the stage opened on a chart about the FFN rather than the FFN.
+	a.stageFFNAnswerDirection(c)
+
 	a.stageFFNConcentration(c)
 }
 
@@ -2488,7 +2490,7 @@ var stageCards = [][]string{
 	{"残差流", "每层说什么", "每层改多少", "LayerNorm", "残差为何不爆"},
 	// The stage's own FFN figure comes first (measured at 93 against 664 for the
 	// concentration card, which was placed after it last round for exactly this reason).
-	{"FFN 内部", "哪个单元在干活"},
+	{"FFN 内部", "FFN 写出了答案", "哪个单元在干活"},
 	{"最后位置", "每位置预测", "绑定权重", "Top-12", "采样"},
 }
 
@@ -2713,6 +2715,98 @@ func (a *App) stageHeadIndependence(c *ui.Context) {
 					"若是先相加再投影，这些差别会互相抵消。所以「多几个头」不是求平均求稳，而是并行的四条通道。",
 					first.Layer, first.MinPairCosine, first.MaxPairCosine,
 					100*first.MinShare, 100*first.MaxShare))
+		}
+	})
+}
+
+// stageFFNAnswerDirection answers what the FFN's output has to do with the answer, which
+// the FFN stage never said: it draws the hidden units and the output sum and stops there.
+//
+// Rank every byte by the cosine between its input embedding and the vector in question,
+// then ask where the byte that actually comes next lands. On the bundled weights:
+//
+//	layer 0   input mean rank 103  →  FFN output mean rank 4.5, top-10 at 30 of 35 positions
+//	layer 1   input mean rank 3.7  →  FFN output mean rank 10.7
+//
+// So layer 0's FFN does not refine a hint that was already in its input — the hint is not
+// there before it. Layer 1's input is already near the answer, and its FFN does not improve
+// on that rank, which is the same asymmetry the residual stage reports as "the first block
+// transforms, the second corrects".
+func (a *App) stageFFNAnswerDirection(c *ui.Context) {
+	if len(a.Trace.Tokens) < 2 {
+		return
+	}
+	rows := make([]ffnAnswerDirection, 0, len(a.Trace.Layers))
+	for li := range a.Trace.Layers {
+		m := computeFFNAnswerDirection(a.W, a.Trace, li)
+		if m.OK {
+			rows = append(rows, m)
+		}
+	}
+	if len(rows) == 0 {
+		return
+	}
+	a.cardNamed(c, "FFN 写出了答案", func() {
+		sectionTitle(c, "FFN 的输出指向下一个字节吗", "把 256 个字节按余弦排名")
+		mutedText(c, "上一张卡片看的是单元怎么分工。这里问一个更直接的问题：把 256 个字节按「它的输入嵌入和这个向量的余弦」排名，"+
+			"真实的下一个字节排第几？什么都不做的话，256 个里随便一个的平均名次是 128。")
+		first := rows[0]
+		out := make([]barRow, 0, len(rows)*2)
+		var maxRank float64 = 8
+		for _, m := range rows {
+			if m.InputMeanRank > maxRank {
+				maxRank = m.InputMeanRank
+			}
+			if m.OutputMeanRank > maxRank {
+				maxRank = m.OutputMeanRank
+			}
+		}
+		for _, m := range rows {
+			hl := m.Layer == a.Layer
+			inLabel := fmt.Sprintf("层 %d 输入", m.Layer)
+			outLabel := fmt.Sprintf("层 %d FFN 后", m.Layer)
+			inColour, outColour := colFaint, colGreen
+			if hl {
+				inColour, outColour = colMuted, colAccent2
+				inLabel += " ◂"
+				outLabel += " ◂"
+			}
+			out = append(out, barRow{
+				Label: inLabel, Value: float32(m.InputMeanRank),
+				ValueText: fmt.Sprintf("%.0f 名", m.InputMeanRank),
+				Color:     inColour, LabelWidth: 96, ValueWidth: 56,
+				Tip: fmt.Sprintf("层 %d 的输入向量：真实下一个字节的平均名次 %.1f / %d",
+					m.Layer, m.InputMeanRank, m.Vocab),
+			})
+			out = append(out, barRow{
+				Label: outLabel, Value: float32(m.OutputMeanRank),
+				ValueText: fmt.Sprintf("%.0f 名", m.OutputMeanRank),
+				Color:     outColour, LabelWidth: 96, ValueWidth: 56,
+				Tip: fmt.Sprintf("层 %d 的 FFN 输出：平均名次 %.1f，前 10 名占 %d / %d 个位置",
+					m.Layer, m.OutputMeanRank, m.OutputTop10, m.Positions),
+			})
+		}
+		ui.Text(c, fmt.Sprintf("真实下一个字节的平均名次（越靠上越好，%d 个字节里随机是 ~%d 名）",
+			first.Vocab, first.Vocab/2)).FontSize(fontMicro).TextColor(colFaint)
+		bars(c, out, float32(maxRank), colGreen)
+		for _, m := range rows {
+			workingsLinesCopyable(c, []string{
+				fmt.Sprintf("层 %d：输入里真实字节平均第 %.1f 名（余弦 %+.3f），FFN 之后第 %.1f 名（余弦 %+.3f）",
+					m.Layer, m.InputMeanRank, m.InputMeanCos, m.OutputMeanRank, m.OutputMeanCos),
+				fmt.Sprintf("层 %d：FFN 之后真实字节进入前 10 名 %d / %d 个位置",
+					m.Layer, m.OutputTop10, m.Positions),
+			})
+		}
+		// Layer 0 is the interesting one: its input is near chance and its output is not.
+		if first.InputMeanRank > 3*first.OutputMeanRank {
+			misconception(c,
+				"「FFN 只是给已经算好的结果加点非线性调味，方向是注意力定的」",
+				fmt.Sprintf("方向不是注意力定的。层 %d 的输入里，真实的下一个字节在 %d 个字节中平均排第 %.0f 名——和瞎猜差不多；"+
+					"经过这一层的 FFN 之后，它排到第 %.0f 名，%d 个位置里有 %d 个进了前 10。"+
+					"也就是说这一步是从无到有地把答案方向写进残差流，而不是修饰一个已有的信号。"+
+					"这也正是第 5 步 logit lens 那张阶梯看到的现象——预测在层 0 的 FFN 之后才成形——的原因。",
+					first.Layer, first.Vocab, first.InputMeanRank, first.OutputMeanRank,
+					first.Positions, first.OutputTop10))
 		}
 	})
 }

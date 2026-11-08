@@ -1751,3 +1751,112 @@ func computeHeadIndependence(l model.LayerTrace, tokens int) headIndependence {
 	c.OK = true
 	return c
 }
+
+// ffnWritesTheAnswer measures whether the FFN's output points at the byte that actually
+// comes next — which is the sharpest available statement of what the FFN is for, and the
+// mechanism behind the residual stage's logit-lens observation.
+//
+// The FFN stage draws one position's hidden units and its output sum. It never says
+// whether that output has anything to do with the answer. Measured on the bundled weights
+// with the default prompt, it very much does: rank every one of the 256 bytes by the
+// cosine between its input embedding and the vector in question, and at each position ask
+// where the byte that actually follows lands.
+//
+//	layer 0's FFN output   mean rank 4    the true byte is in the top 10 at 30 of 35 positions
+//	layer 0's input        mean rank 103  the true byte is indistinguishable from chance
+//
+// So the FFN is not refining a hint that was already there — the hint is not there before
+// it, and is close to the answer after it. That is the same fact the logit lens shows from
+// the other direction ("the prediction is formed after layer 0's FFN"), stated as a rank
+// rather than as a sampled byte.
+type ffnAnswerDirection struct {
+	// Layer is the block measured. Positions is how many next-byte predictions the prompt
+	// offers, t = 0 .. T-2.
+	Layer     int
+	Positions int
+	// Vocab is how many bytes the rank is out of.
+	Vocab int
+	// OutputMeanRank and InputMeanRank are the mean rank of the true next byte, ranked by
+	// cosine against the FFN output and against the block's input.
+	OutputMeanRank, InputMeanRank float64
+	// OutputTop10 is how many positions put the true byte in the top ten by output.
+	OutputTop10 int
+	// OutputMeanCos and InputMeanCos are the mean cosine to the true byte.
+	OutputMeanCos, InputMeanCos float64
+	OK                          bool
+}
+
+// computeFFNAnswerDirection ranks the true next byte at every position, against the FFN
+// output and against the block's input, for one layer.
+func computeFFNAnswerDirection(w *model.Weights, tr *model.Trace, layer int) ffnAnswerDirection {
+	var m ffnAnswerDirection
+	if w == nil || tr == nil || layer < 0 || layer >= len(tr.Layers) {
+		return m
+	}
+	d, vocab := w.Config.DModel, w.Config.Vocab
+	last := len(tr.Tokens) - 1
+	if d <= 0 || vocab <= 0 || last < 1 || len(w.TokEmbed) < vocab*d {
+		return m
+	}
+	m.Layer = layer
+	m.Vocab = vocab
+	l := &tr.Layers[layer]
+	// cosineToAll returns the cosine of v against every byte's embedding.
+	cosineToAll := func(v []float32) []float64 {
+		out := make([]float64, vocab)
+		var nv float64
+		for _, x := range v {
+			nv += float64(x) * float64(x)
+		}
+		if nv == 0 {
+			return out
+		}
+		root := math.Sqrt(nv)
+		for id := 0; id < vocab; id++ {
+			var dot, ne float64
+			for k := 0; k < d; k++ {
+				e := float64(w.TokEmbed[id*d+k])
+				dot += float64(v[k]) * e
+				ne += e * e
+			}
+			if ne > 0 {
+				out[id] = dot / (root * math.Sqrt(ne))
+			}
+		}
+		return out
+	}
+	rankOf := func(cosines []float64, actual int) int {
+		target := cosines[actual]
+		rank := 1
+		for id := 0; id < vocab; id++ {
+			if id != actual && cosines[id] > target {
+				rank++
+			}
+		}
+		return rank
+	}
+	var outRank, inRank, outCos, inCos float64
+	for p := 0; p < last && p < len(l.FFNOut) && p < len(l.In); p++ {
+		actual := int(tr.Tokens[p+1].Byte)
+		oc := cosineToAll(l.FFNOut[p])
+		ic := cosineToAll(l.In[p])
+		outRank += float64(rankOf(oc, actual))
+		inRank += float64(rankOf(ic, actual))
+		outCos += oc[actual]
+		inCos += ic[actual]
+		if rankOf(oc, actual) <= 10 {
+			m.OutputTop10++
+		}
+		m.Positions++
+	}
+	if m.Positions == 0 {
+		return m
+	}
+	f := float64(m.Positions)
+	m.OutputMeanRank = outRank / f
+	m.InputMeanRank = inRank / f
+	m.OutputMeanCos = outCos / f
+	m.InputMeanCos = inCos / f
+	m.OK = true
+	return m
+}

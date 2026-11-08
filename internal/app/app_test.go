@@ -8350,7 +8350,10 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 		// the GELU squeeze note, plus the FFN concentration comparison: whether the two
 		// layers divide their hidden units differently is a property of the weights, so
 		// with random ones the sentence is absent rather than false
-		5: {"只剩一根柱子", "还能看出分布的形状", "两层的用法很不一样"},
+		// the GELU squeeze note, the FFN concentration comparison, and the answer-direction
+		// callout: whether the FFN writes the answer direction is a property of the weights,
+		// so with random ones the sentence is absent rather than false
+		5: {"只剩一根柱子", "还能看出分布的形状", "两层的用法很不一样", "方向不是注意力定的"},
 		// the confidence note, plus the word-boundary sentence: whether the gap it
 		// describes exists is a property of the weights, so with random ones it is
 		// absent rather than false
@@ -8547,7 +8550,11 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 		// designed difference rather than drift. Its own comparison sentence also needs
 		// a token pair to be a comparison at all.
 		// (Only fragments from strings over 40 runes can be reached by the check below.)
-		5: {"两层的用法很不一样", "个单元凑够一半激活，每位置都开的有", "把整句每个位置都算进来"},
+		5: {"两层的用法很不一样", "个单元凑够一半激活，每位置都开的有", "把整句每个位置都算进来",
+			// The answer-direction card needs a second token before there is a next byte to
+			// rank at all, so a one-token prompt renders none of it.
+			"把 # 个字节按「它的输入嵌入和这个向量的余弦」排名",
+			"：输入里真实字节平均第", "方向不是注意力定的"},
 		6: {"这么高的把握", "根本没有那么大的把握", "有那么大的把握", "选中的 t=# 不参与预测",
 			"这个提示词只有一个位置",
 			// The per-position card's body exists only when there is a position to score, so
