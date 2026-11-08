@@ -1495,3 +1495,77 @@ func TestCopiedWorkingsMatchThePinnedCell(t *testing.T) {
 			want, got)
 	}
 }
+
+// TestReadmeRailLimitationIsStillTrue keeps the two token-rail limitations the
+// README now states from quietly becoming false.
+//
+// The README says the strip "超出视口后只能用指针拖": it scrolls horizontally, draws
+// no scrollbar, has no horizontal key (←/→ switch stage) and the vertical wheel does
+// not move it. It also says a keyboard reader can still reach every chip because
+// Shift+←/→ moves the selection and the strip follows it. Both halves matter — the
+// second is what makes the first tolerable — and neither was recorded anywhere.
+func TestReadmeRailLimitationIsStillTrue(t *testing.T) {
+	long := func() *App {
+		a := newTestApp(t)
+		a.Prompt = strings.Repeat("attention ", 12)
+		a.recompute()
+		return a
+	}
+
+	a := long()
+	tr := ui.NewTester(a.View, 1180, 720)
+	tr.Frame()
+	if a.RailScroll.MaxX <= 0 {
+		t.Fatalf("the long prompt no longer overflows the strip (MaxX=%.0f), so this test "+
+			"cannot measure the limitation", a.RailScroll.MaxX)
+	}
+	tr.Move(0, 0)
+	tr.Frame()
+
+	// The vertical wheel over the strip does not scroll it horizontally.
+	x0 := a.RailScroll.X
+	tr.Move(400, 160)
+	tr.Frame()
+	tr.Wheel(400, 160, 0, 400)
+	tr.Advance(2e9)
+	tr.Frame()
+	if a.RailScroll.X != x0 {
+		t.Fatalf("the vertical wheel now scrolls the strip horizontally (%.0f -> %.0f); "+
+			"the README says it does not", x0, a.RailScroll.X)
+	}
+
+	// And the escape hatch the README promises: Shift+← moves the selection and the
+	// strip keeps the selected chip on screen, so a keyboard reader can walk the
+	// whole sequence without a pointer.
+	//
+	// The thing to assert is the chip's position, not the scroll offset. The first
+	// version of this test required RailScroll.X to decrease on every press and
+	// failed — ScrollIntoView scrolls the least it can, so a chip that is already
+	// visible needs no scroll at all, and the strip only moves once the selection
+	// nears the left edge. Measured: walking 63 → 48 moves the chip from x=657 to
+	// x=277 while the offset stays at 1321 for the first fourteen presses.
+	tr.Move(0, 0)
+	tr.Frame()
+	startSel := a.SelToken
+	for i := 0; i < 15; i++ {
+		tr.Key(ui.Shift, ui.KeyLeft)
+		tr.Frame()
+		tr.Frame()
+		r, ok := tr.Find("token " + itoa(a.SelToken))
+		if !ok {
+			t.Fatalf("press %d: the selected chip (token %d) is not in the frame at all",
+				i+1, a.SelToken)
+		}
+		if r.W <= 0 {
+			t.Fatalf("press %d: the selected chip (token %d) has zero width, so it is "+
+				"clipped out of the strip", i+1, a.SelToken)
+		}
+		if r.X < 0 || r.X+22 > 1180 {
+			t.Fatalf("press %d: the selected chip (token %d) is off screen at x=%.0f; the "+
+				"README says a keyboard reader can reach every chip", i+1, a.SelToken, r.X)
+		}
+	}
+	if a.SelToken >= startSel {
+		t.Fatalf("Shift+Left did not move the selection (still %d)", a.SelToken)
+	}
+}
