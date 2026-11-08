@@ -848,6 +848,8 @@ func (a *App) stageResidual(c *ui.Context) {
 	// nobody.
 	a.stageLogitLens(c)
 
+	a.stageLayerRewrite(c)
+
 	card(c, func() {
 		sectionTitle(c, "残差流", fmt.Sprintf("层 %d · 两次加法，信息都绕过了子层", a.Layer))
 		// The three strips below are the residual chain, and it is easy to label
@@ -2292,4 +2294,73 @@ func (a *App) skillBreakdownLine(c *ui.Context, tr *model.Trace, skill nextByteS
 		mutedText(c, "错得最多的地方是词边界：空格之后是一个新词的开头，而这个模型只读过 61 句关于 "+
 			"transformer 的英文，它知道一个词内部字母怎么接下去，不知道下一个词是什么。")
 	}
+}
+
+// stageLayerRewrite compares how much each block changes the residual stream, which
+// is the layer-level counterpart to the four-head comparison on the Softmax stage.
+//
+// The app has always let a reader switch layers, and every figure redraws — but
+// nothing said whether the two layers are doing comparable work. They are not.
+// Measured on the bundled weights: layer 0 leaves the stream almost unrelated to what
+// entered it (cosine 0.22–0.24 across three prompts) and writes 2.8–3.2 times its
+// input length, while layer 1 keeps the direction (0.92–0.93) and adds 0.41–0.45. Most
+// of the transformation happens in the first block, and the second refines it.
+//
+// That is the same shape the logit lens shows from the other side: the prediction is
+// already there after layer 0's FFN, and layer 1 sharpens it.
+func (a *App) stageLayerRewrite(c *ui.Context) {
+	layers := computeLayerRewrite(a.Trace)
+	if len(layers) < 2 {
+		return
+	}
+	card(c, func() {
+		sectionTitle(c, "每一层改写了多少", "进入 / 离开这一层的残差流有多像")
+		mutedText(c, "上面那张阶梯图看的是每一层「说什么」，这里看每一层「改多少」。"+
+			"余弦接近 1 表示这一层基本只是把原向量传下去；接近 0 表示离开时的方向与进来时几乎无关。"+
+			"比值是这一层写进流里的长度除以它读到的长度——比值大，说明这一层在大量新增内容而不是微调。")
+		rows := make([]barRow, 0, len(layers))
+		var maxRatio float64
+		for _, l := range layers {
+			if l.FFNRatio > maxRatio {
+				maxRatio = l.FFNRatio
+			}
+		}
+		for _, l := range layers {
+			label := fmt.Sprintf("层 %d", l.Layer)
+			colour := colGreen
+			if l.Layer == a.Layer {
+				label = fmt.Sprintf("层 %d ◂", l.Layer)
+				colour = colAccent2
+			}
+			rows = append(rows, barRow{
+				Label:      label,
+				Value:      float32(l.FFNRatio),
+				ValueText:  fmt.Sprintf("‖ΔFFN‖/‖x‖ = %.2f", l.FFNRatio),
+				Color:      colour,
+				LabelWidth: 46,
+				ValueWidth: 112,
+				Tip: fmt.Sprintf("层 %d：进出余弦 %.3f · ΔFFN 长度是输入的 %.2f 倍 · "+
+					"Δattn 是 %.2f 倍 · ‖x‖ %.1f → %.1f",
+					l.Layer, l.CosineInOut, l.FFNRatio, l.AttnRatio, l.InNorm, l.OutNorm),
+			})
+		}
+		bars(c, rows, float32(maxRatio), colGreen)
+		first, last := layers[0], layers[len(layers)-1]
+		workingsLinesCopyable(c, []string{
+			fmt.Sprintf("层 %d：进出余弦 %.3f，ΔFFN 是输入的 %.2f 倍（‖x‖ %.1f → %.1f）",
+				first.Layer, first.CosineInOut, first.FFNRatio, first.InNorm, first.OutNorm),
+			fmt.Sprintf("层 %d：进出余弦 %.3f，ΔFFN 是输入的 %.2f 倍（‖x‖ %.1f → %.1f）",
+				last.Layer, last.CosineInOut, last.FFNRatio, last.InNorm, last.OutNorm),
+			fmt.Sprintf("前一层改写了方向，后一层基本保持了方向——%d 层模型里大部分变换发生在第一层",
+				len(layers)),
+		})
+		misconception(c,
+			"「每一层做同样多的活，层数加倍的模型就是把同一个变换做两遍」",
+			fmt.Sprintf("两层做的量差得很远。层 %d 离开时的方向与进入时几乎无关（余弦 %.2f），"+
+				"写进去的内容是它读到的 %.1f 倍；层 %d 的余弦是 %.2f，只加了 %.2f 倍。"+
+				"这也解释了上面那张阶梯：预测在层 0 的 FFN 之后就已经成形，层 1 是在把它磨尖。"+
+				"所以「加一层」不等于「把同一件事再做一遍」——每一层的活是训练出来的，各不相同。",
+				first.Layer, first.CosineInOut, first.FFNRatio,
+				last.Layer, last.CosineInOut, last.FFNRatio))
+	})
 }

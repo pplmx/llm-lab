@@ -8856,14 +8856,18 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 		a := newTestApp(t)
 		a.Step = step
 		a.SelToken = 20
-		tr := ui.NewTester(a.View, 1500, 1400)
+		tr := ui.NewTester(a.View, 1500, 2300)
 		tr.Frame()
 		base := tr.Texts()
 		best := 0
-		// A coarse grid: one hit anywhere on the strips or the matrix is enough to answer the question,
-		// and the dense sweep took eleven seconds for the same answer.
-		for y := 400; y < 1200; y += 100 {
-			for x := 300; x < 1150; x += 200 {
+		// A finer grid than the original 100-DIP steps. Those were coarse enough that whether the
+		// probe hit a strip depended on where the cards happened to sit — adding a card above the
+		// strips moved them and the sweep started reporting "no hover feedback" for a stage whose
+		// strips were still perfectly hoverable (measured: the residual strips write HoverDimIn at
+		// y=1058, between the old probe's 1000 and 1100 rows). The question this test asks is
+		// whether a stage has hover feedback at all, so the probe has to be able to find it.
+		for y := 400; y < 2200; y += 25 {
+			for x := 300; x < 1150; x += 100 {
 				tr.Move(float32(x), float32(y))
 				tr.Frame()
 				now := tr.Texts()
@@ -8886,15 +8890,24 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 	}
 
 	// The stages that highlight must keep doing so.
-	for _, step := range []int{1, 2, 3, 4} {
+	//
+	// Stage 7 joined this list when the per-position strip was added: it is one cell per
+	// position, seven cells wide of prose either side, so pointing at one has to say
+	// which — the same reason the matrices and vector strips highlight. The record below
+	// still listed it as inert, which this test caught once its probe was fine enough to
+	// reach the strip (the old 100-DIP grid stepped over it at (300,525)).
+	for _, step := range []int{1, 2, 3, 4, 6} {
 		if n := hoverChanges(step); n == 0 {
-			t.Fatalf("stage %d no longer changes on hover; the strips and matrices there carry one value per "+
-				"element and the reader needs the highlight to know which", step)
+			t.Fatalf("stage %d no longer changes on hover; the strips, matrices and the per-position "+
+				"strip there carry one value per element and the reader needs the highlight to know which", step)
 		}
 	}
 	// The stages that do not must not start: if one of them gains a highlight, this record is stale and the
 	// comment above needs revisiting rather than silently disagreeing.
-	for _, step := range []int{0, 5, 6} {
+	//
+	// Only stages 1 and 6 remain. Stage 1's token chips label themselves with a glyph and
+	// an id, and stage 6's GELU histogram is read against the axis printed under it.
+	for _, step := range []int{0, 5} {
 		if n := hoverChanges(step); n != 0 {
 			t.Fatalf("stage %d now changes on hover (%d texts); update this record's reasoning", step, n)
 		}

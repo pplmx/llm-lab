@@ -2534,3 +2534,97 @@ func TestSkillBreakdownLineRendersItsOwnNumbers(t *testing.T) {
 		t.Fatal("the card does not name the word boundary")
 	}
 }
+
+// TestLayerRewriteMatchesTheTrace recomputes every quantity the card quotes, per layer.
+func TestLayerRewriteMatchesTheTrace(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	layers := computeLayerRewrite(tr)
+	if len(layers) != len(tr.Layers) {
+		t.Fatalf("%d layer measurements for %d layers", len(layers), len(tr.Layers))
+	}
+	n := len(tr.Tokens)
+	for _, r := range layers {
+		l := &tr.Layers[r.Layer]
+		var cosSum, ffnSum, attnSum, inSum, outSum float64
+		for i := 0; i < n; i++ {
+			cosSum += cosineF32(l.In[i], l.AfterFFN[i])
+			ffnSum += float64(norm(l.FFNOut[i]))
+			attnSum += float64(norm(l.AttnProj[i]))
+			inSum += float64(norm(l.In[i]))
+			outSum += float64(norm(l.AfterFFN[i]))
+		}
+		f := float64(n)
+		for name, pair := range map[string][2]float64{
+			"cosine":    {r.CosineInOut, cosSum / f},
+			"inNorm":    {r.InNorm, inSum / f},
+			"outNorm":   {r.OutNorm, outSum / f},
+			"ffnRatio":  {r.FFNRatio, (ffnSum / f) / (inSum / f)},
+			"attnRatio": {r.AttnRatio, (attnSum / f) / (inSum / f)},
+		} {
+			if math.Abs(pair[0]-pair[1]) > 1e-9 {
+				t.Fatalf("layer %d %s: card says %v, recomputed %v", r.Layer, name, pair[0], pair[1])
+			}
+		}
+		if r.Hidden != tr.Config.DFF {
+			t.Fatalf("layer %d hidden %d, config says %d", r.Layer, r.Hidden, tr.Config.DFF)
+		}
+	}
+}
+
+// TestLayerRewriteIsUnevenEverywhere is the premise of the card's claim: the first
+// layer rewrites the stream far more than the last one.
+//
+// Measured across three prompts: layer 0's cosine is 0.22–0.24 and its FFN ratio
+// 2.8–3.2, while layer 1's cosine is 0.92–0.93 and its ratio 0.41–0.45. The card tells
+// the reader "most of the transformation happens in the first block", and that sentence
+// has to keep being true for every prompt rather than for the default one.
+func TestLayerRewriteIsUnevenEverywhere(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+		"Attention lets every token look at the tokens before it.",
+		"hi",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		layers := computeLayerRewrite(a.Trace)
+		if len(layers) < 2 {
+			continue
+		}
+		first, last := layers[0], layers[len(layers)-1]
+		if first.CosineInOut >= last.CosineInOut {
+			t.Fatalf("prompt %q: layer 0's cosine (%.3f) is not below layer 1's (%.3f); "+
+				"the card says the first block is the one that rewrites the direction",
+				prompt, first.CosineInOut, last.CosineInOut)
+		}
+		if first.FFNRatio <= last.FFNRatio {
+			t.Fatalf("prompt %q: layer 0 adds %.2f of its input, layer 1 adds %.2f; the card "+
+				"says the first block adds more", prompt, first.FFNRatio, last.FFNRatio)
+		}
+	}
+}
+
+// TestLayerRewriteCardQuotesItsOwnNumbers reads the card's two per-layer lines out of
+// the rendered text.
+func TestLayerRewriteCardQuotesItsOwnNumbers(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 4
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
+	layers := computeLayerRewrite(a.Trace)
+	joined := ""
+	for _, s := range tr.Texts() {
+		joined += s + "\n"
+	}
+	if !strings.Contains(joined, "每一层改写了多少") {
+		t.Fatal("the layer-rewrite card is missing")
+	}
+	for _, l := range layers {
+		want := fmt.Sprintf("层 %d：进出余弦 %.3f，ΔFFN 是输入的 %.2f 倍", l.Layer, l.CosineInOut, l.FFNRatio)
+		if !strings.Contains(joined, want) {
+			t.Fatalf("the card does not print %q for layer %d", want, l.Layer)
+		}
+	}
+}
