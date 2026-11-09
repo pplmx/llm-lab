@@ -1659,32 +1659,39 @@ func TestNextByteSkillLossIsReal(t *testing.T) {
 		skill.MeanLoss, skill.UniformReference)
 }
 
-// TestNextByteSkillIsCalibratedAtTOne is the measurement that made this test worth
-// writing: the mean loss is *not* monotone in temperature, and assuming it was
-// produced a failing assertion before this test was rewritten.
+// TestNextByteSkillCurveHasAValley pins the shape of the loss-vs-temperature curve and,
+// deliberately, does *not* pin where its minimum is.
 //
-// Measured on the bundled weights with the default prompt: T=0.1 → 6.392 nats,
-// T=0.5 → 1.510, T=0.8 → 1.184, T=1.0 → 1.121, T=2.0 → 1.246, T=3.0 → 1.524. The
-// minimum sits at T = 1, which is the temperature the loss was trained at — the
-// weights are calibrated for exactly that scaling. Sharpening past it makes the
-// model confidently wrong about the positions it misses (T=0.1 turns an 11/35 miss
-// rate into 6.4 nats), and flattening it hands mass to 244 wrong bytes.
+// The mean loss is not monotone in temperature — that is the useful fact, and it is why the
+// card names the temperature beside its figures: a reader who drags the slider watches a
+// number the app presents as the model's score move, and the honest explanation is that the
+// score is defined at a chosen T.
 //
-// That U shape is the reason the card names the temperature beside its figures:
-// a reader who drags the slider will watch a number the app presents as the
-// model's score move, and the honest explanation is that the score is defined at
-// T=1 and only the reader's choice of T changes it.
-func TestNextByteSkillIsCalibratedAtTOne(t *testing.T) {
+// This test used to assert that T=1 was the minimum, and to be named for that claim. Measured
+// across the prompts the app ships, it is false on all of them: the minimum is T=1.25 on the
+// default prompt, 1.50 on "attention is all you need", 2.00 on "hi". It passed anyway because
+// it compared T=1 against 0.5 and 2.0 with a one-sided inequality — a curve whose minimum is
+// at 1.25 satisfies "0.5 costs more than 1.0" just as readily as one whose minimum is at 1.0.
+// The card had already been corrected to compute and print the real minimum (round 24); the
+// test's premise and the README sentence that repeated it were left behind.
+//
+// So the minimum is not asserted here at all. Where it falls is a measurement the card makes
+// from the current trace, and TestTemperatureCurveFindsTheActualMinimum is what checks it
+// against a fresh scan. What survives here is the shape, which is the part that is a property
+// of the model rather than of one prompt.
+func TestNextByteSkillCurveHasAValley(t *testing.T) {
 	a := newTestApp(t)
 	loss := func(temp float64) float64 {
 		return computeNextByteSkill(a.W, a.Trace, temp).MeanLoss
 	}
 	one := loss(1.0)
-	// Both directions cost more, which is the U shape rather than a slope.
+	// Both directions cost more than T=1, which is what makes the curve a valley rather than
+	// a slope. This is the assertion that survives: it says nothing about *where* the bottom
+	// is, only that T=1 is not on a monotone flank.
 	for _, temp := range []float64{0.5, 2.0} {
 		if got := loss(temp); got <= one {
-			t.Fatalf("mean loss at T=%.1f is %.3f, not above T=1.0's %.3f; the loss is "+
-				"trained for T=1 and should be lowest there", temp, got, one)
+			t.Fatalf("mean loss at T=%.1f is %.3f, not above T=1.0's %.3f; the curve has "+
+				"lost its valley at this prompt", temp, got, one)
 		}
 	}
 	// And the fall from sharpening is the steep one, so the ordering on each side
