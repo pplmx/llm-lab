@@ -6,6 +6,13 @@
 
 ### Added
 
+- **`clearPointer()` 要手工维护一份「指针状态字段」清单，但没有任何测试盯着这份清单是否完整。** 新增一个悬停字段却忘了加进去，检查器就会继续描述指针早已离开的地方——这个项目历史上踩过
+  - 新增 `TestClearPointerResetsEveryHoverField`：**用反射遍历 `App` 的整型字段**，按名字识别指针状态（`Hover*` 加 `PredHover`），全部置为 3 后调 `clearPointer()`，再断言每个都回到 -1
+  - **写测试时自己先把语义搞混了一次**：最初把 `Pred*` 全部纳入，测试立刻报 `App.PredSel is 3, want -1`。查证后确认 `PredSel` 是**点击固定**的状态（`KeyQ/KeyK` 同理），本就该比指针活得久、由 `clearHover()` 而非 `clearPointer()` 清除——**是我的假设错了，不是代码错了**
+  - 修正后按语义精确取 `Hover*` + `PredHover`（后者是条带自己的命名习惯），并把「哪些算指针状态、哪些算固定状态」写进 `isPointerField` 的注释，避免下一个读者以为是漏掉
+  - 破坏性验证：往 `App` 加一个 `HoverDimForgotten` 字段 → 立刻红：`after clearPointer, App.HoverDimForgotten is 3, want -1 ... add it to clearPointer`
+- **本轮先扫了四个方向，都确认无缺陷**：温度极值下的文案、损坏权重文件的错误信息（五种都清晰具体）、窄模型（d_model=48/192）下卡片是否还写着默认配置、播放中采样与撤销的状态交互、切换阶段后所有悬停状态是否清除。**这些都正确，未改**
+
 - **找到了热力图 bug 能活这么久的结构性原因：本仓库所有尺寸列表最大只到 1920×1080，2560 与 3840 一处都没测过。**
   - 实测 grep：`app_test.go` / `interaction_test.go` / `layout_test.go` 里 5 处尺寸列表，全是 `{1180,720}, {1500,940}, {1920,1080}`，**没有一处更大**
   - 于是「热力图在 1500 之后再也不长」这件事，从测试角度根本不可见——直到第 61 轮我手动渲染了 4K 才发现

@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -10050,6 +10051,65 @@ func TestHumanCountNeverPrintsAUnitItsLabelDenies(t *testing.T) {
 	for n := 999900; n < 1000100; n++ {
 		if got := humanCount(n); got == "1000.0K" {
 			t.Fatalf("humanCount(%d) = %q; a count that rounds to 1000 K belongs in M", n, got)
+		}
+	}
+}
+
+// isPointerField reports whether an App int field records "the pointer is over this".
+//
+// The name is the only signal available to reflection, and the convention holds: Hover* for
+// everything, plus PredHover, which follows the strip's own naming. PredSel and KeyQ/KeyK are pinned
+// state — set by a click or a key, meant to survive the pointer leaving — so they are excluded
+// deliberately rather than by omission.
+func isPointerField(name string) bool {
+	return strings.HasPrefix(name, "Hover") || name == "PredHover"
+}
+
+// TestClearPointerResetsEveryHoverField keeps the pointer state from outliving the pointer.
+//
+// clearPointer resets each field that records "the pointer is over this". The list is maintained by
+// hand, so adding a hover field and forgetting it here leaves the inspector describing an element
+// the pointer left long ago — the failure mode this project has hit more than once, and the reason
+// the strips have separate indices rather than one shared one.
+//
+// The check is reflective on purpose: it walks App's pointer-shaped fields rather than naming them,
+// so a new one fails this test until clearPointer handles it. Fields are identified by name prefix
+// and must be int, which is what all of them are.
+func TestClearPointerResetsEveryHoverField(t *testing.T) {
+	a := newTestApp(t)
+	// Put every candidate field into a non-negative state first, so "already -1" cannot pass.
+	rv := reflect.ValueOf(a).Elem()
+	rt := rv.Type()
+	sawAny := false
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if f.Type.Kind() != reflect.Int {
+			continue
+		}
+		if !isPointerField(f.Name) {
+			continue
+		}
+		sawAny = true
+		rv.Field(i).SetInt(3)
+	}
+	if !sawAny {
+		t.Fatal("no pointer-shaped int fields found on App; this test is checking nothing")
+	}
+
+	a.clearPointer()
+
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if f.Type.Kind() != reflect.Int {
+			continue
+		}
+		if !isPointerField(f.Name) {
+			continue
+		}
+		if got := rv.Field(i).Int(); got != -1 {
+			t.Errorf("after clearPointer, App.%s is %d, want -1. A field describing what the "+
+				"pointer is over has to be reset when the pointer leaves, or the inspector keeps "+
+				"describing something that is no longer there — add it to clearPointer", f.Name, got)
 		}
 	}
 }
