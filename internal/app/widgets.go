@@ -882,3 +882,47 @@ func (a *App) predictionCursor(skill nextByteSkill) int {
 	}
 	return worst
 }
+
+// headsWord is the counting phrase for a number of attention heads, measure word included:
+// 一个头, 两个头, 四个头, 十二个头.
+//
+// The prose used to say 四个头 everywhere, which is right for the bundled weights and wrong for
+// any other — n_head is free as long as d_model divides by it, so a two-head checkpoint loads and
+// eleven strings described four heads it does not have. Measured with n_head=2: the section
+// title, the verdict, the misconception, the bar caption and the copyable lines all said 四个头.
+//
+// The measure word is part of the return value, not appended by each caller. Callers write
+// "%s头" as one word, and an earlier version of this function returned only the numeral — which
+// rendered "四头" for the default checkpoint, a sentence that reads as broken Chinese. The
+// convention "一个/两个/三个…" is regular enough to keep in one place.
+//
+// Chinese normally uses 两 rather than 二 before a measure word, which is why two is spelled
+// differently from the digit.
+func headsWord(n int) string {
+	var numeral string
+	switch n {
+	case 1:
+		numeral = "一"
+	case 2:
+		numeral = "两"
+	case 3:
+		numeral = "三"
+	case 4:
+		numeral = "四"
+	case 5:
+		numeral = "五"
+	case 6:
+		numeral = "六"
+	case 7:
+		numeral = "七"
+	case 8:
+		numeral = "八"
+	case 9:
+		numeral = "九"
+	case 10:
+		numeral = "十"
+	default:
+		return fmt.Sprintf("%d 个", n)
+	}
+	return numeral + "个"
+}

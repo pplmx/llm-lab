@@ -498,3 +498,84 @@ func TestNoStageNamesTheBundleContextAtAnotherWindow(t *testing.T) {
 			len(stale), ctx, small.Config.Ctx, b.String())
 	}
 }
+
+// headsWeights returns a copy of w declaring a different n_head. The tensors are unchanged: the
+// head count only decides how the existing d_model is split, which is what the app reads for its
+// labels and what the per-head views index into.
+func headsWeights(base *model.Weights, n int) *model.Weights {
+	out := *base
+	out.Config = base.Config
+	out.Config.NHead = n
+	return &out
+}
+
+// TestEveryHeadCountRendersAndCountsItself covers n_head, which is the one config field that
+// crashed the whole window rather than merely misdescribing it.
+//
+// validate requires only that d_model divides by n_head, so a two-head checkpoint loads. The
+// head-profile card then read profiles[0]..profiles[3] unconditionally and panicked with "index
+// out of range [2] with length 2" — measured on n_head = 1, 2 and 3, all on the softmax stage,
+// while 4 and 8 were fine. Because the bundle has four heads, no test ever rendered anything
+// else.
+//
+// Two things are asserted, because they fail independently: every divisor of d_model renders all
+// seven stages without panicking, and the prose counts the heads it actually has. The second is
+// why headsWord exists — eleven strings said 四个头 and were correct only for the bundle, and an
+// earlier version of the helper returned the numeral alone, rendering "四头" at the default.
+func TestEveryHeadCountRendersAndCountsItself(t *testing.T) {
+	base, err := model.Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	// The chip label in stageCards is a fixed table of contents entry and cannot vary with the
+	// checkpoint; it is the one place allowed to say 四个头 regardless.
+	allowed := map[string]bool{"四个头": true}
+
+	for n := 1; n <= base.Config.DModel; n++ {
+		if base.Config.DModel%n != 0 {
+			continue
+		}
+		w := headsWeights(base, n)
+		a := New(w)
+		for step := 0; step < 7; step++ {
+			step := step
+			// A panic would take down the window, so it is fatal here rather than a t.Fatalf
+			// inside a recover — the failure has to name the stage either way.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("n_head=%d (d_head=%d) step %d panicked: %v",
+							n, w.Config.DHead(), step+1, r)
+					}
+				}()
+				a.Step = step
+				tr := ui.NewTester(a.View, 1500, 4000)
+				tr.Frame()
+				// Only wrong when the model does not have four heads. At n_head=4 these
+				// strings are correct, and a guard that flagged them would be testing the
+				// bundle rather than the derivation.
+				if n == 4 {
+					return
+				}
+				for _, s := range tr.Texts() {
+					if allowed[s] {
+						continue
+					}
+					if strings.Contains(s, "四个头") || strings.Contains(s, "四头") {
+						t.Fatalf("n_head=%d step %d still says four heads: %q", n, step+1, s)
+					}
+				}
+			}()
+		}
+
+	}
+	// The phrase itself has to be well formed: "四头" is what a numeral helper without a measure
+	// word produces, and it reads as broken Chinese. This is checked directly rather than
+	// through the render, because at n_head=4 the corpus happens to read correctly either way.
+
+	for n, want := range map[int]string{1: "一个", 2: "两个", 4: "四个", 8: "八个", 0: "0 个", 12: "12 个"} {
+		if got := headsWord(n); got != want {
+			t.Fatalf("headsWord(%d) = %q, want %q", n, got, want)
+		}
+	}
+}

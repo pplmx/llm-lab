@@ -865,8 +865,11 @@ func (a *App) stageSoftmax(c *ui.Context) {
 		// and they are all drawn across the same space. Without a word about that a reader
 		// compares them column by column, where cell 3 of the first sits over cell 12 of the
 		// second.
-		ui.Text(c, fmt.Sprintf("下面三条依次是：本头输出（%d 维）→ 投影回残差（%d 维）→ 四个头相加（%d 维）",
-			tr.Config.DHead(), tr.Config.DModel, tr.Config.DModel)).
+		// The three widths are d_head and then d_model twice: the head's own output, the same
+		// head projected back into the residual stream, and the sum of all heads. Writing them
+		// out goes wrong if any of the three changes, so they come from the config.
+		ui.Text(c, fmt.Sprintf("下面三条依次是：本头输出（%d 维）→ 投影回残差（%d 维）→ %s头相加（%d 维）",
+			tr.Config.DHead(), tr.Config.DModel, headsWord(len(l.Heads)), tr.Config.DModel)).
 			FontSize(fontMicro).TextColor(colFaint)
 		ui.Text(c, fmt.Sprintf("Σ α·v（头内输出，d_head = %d）", tr.Config.DHead())).FontSize(fontMicro).TextColor(colFaint)
 		vectorStrip(c, h.Out[i], 18, &a.HoverDimHeadOut)
@@ -906,18 +909,19 @@ func (a *App) stageSoftmax(c *ui.Context) {
 					Color:      colour,
 					LabelWidth: 40,
 					ValueWidth: 40,
-					Tip:        fmt.Sprintf("头 %d 写入残差的 L2 长度 %.3f（占四头之和 %.0f%%）", hh.Head, hh.Norm, hh.Share),
+					Tip: fmt.Sprintf("头 %d 写入残差的 L2 长度 %.3f（占%s头之和 %.0f%%）",
+						hh.Head, hh.Norm, headsWord(len(l.Heads)), hh.Share),
 				})
 			}
 			bars(c, rows, float32(hc.SumNorm), colGreen)
 			st := a.cancellation()
 			misconception(c,
-				"「四个头各写一块，加起来就是它们长度的和」",
-				fmt.Sprintf("范数不能直接相加。四个头的长度之和是 %.2f，但它们相加后的长度只有 %.2f，"+
-					"比值 %.2f——也就是说四个向量只有一部分指向同一方向，其余互相抵消了。"+
+				fmt.Sprintf("「%s头各写一块，加起来就是它们长度的和」", headsWord(len(l.Heads))),
+				fmt.Sprintf("范数不能直接相加。%s头的长度之和是 %.2f，但它们相加后的长度只有 %.2f，"+
+					"比值 %.2f——也就是说这几个向量只有一部分指向同一方向，其余互相抵消了。"+
 					"这不是这一行碰巧如此：本模型 %d 行里 %d 行都是这样（比值 %.2f–%.2f）。"+
-					"所以「注意力输出 = 各头之和」是一次向量加法，不是把四份贡献堆起来。",
-					hc.SumNorm, hc.TotalNorm, hc.Cancellation,
+					"所以「注意力输出 = 各头之和」是一次向量加法，不是把各份贡献堆起来。",
+					headsWord(len(l.Heads)), hc.SumNorm, hc.TotalNorm, hc.Cancellation,
 					st.Rows, st.Below, st.Lo, st.Hi))
 		}
 	})
@@ -1968,7 +1972,8 @@ func (a *App) inspectorAttention(c *ui.Context, tr *model.Trace) {
 		// chart is four empty bars against a log(1) = 0 scale. State the reason instead of
 		// drawing it: the causal mask, not the model, is what makes this row trivial.
 		if i == 0 {
-			mutedText(c, "第 0 行只能看到它自己，四个头的熵必然都是 0——从第 1 行起才有可比较的分配。")
+			mutedText(c, fmt.Sprintf("第 0 行只能看到它自己，%s头的熵必然都是 0——从第 1 行起才有可比较的分配。",
+				headsWord(len(a.Trace.Layers[0].Heads))))
 			return
 		}
 		// The four heads are a segmented control above the stage, and switching
@@ -2342,7 +2347,11 @@ func (a *App) stageHeadProfiles(c *ui.Context) {
 		return
 	}
 	a.cardNamed(c, "四个头", func() {
-		sectionTitle(c, "四个头各自在做什么", fmt.Sprintf("层 %d · 整句 %d 行的平均", a.Layer, profiles[0].Rows))
+		// The chip keeps the fixed label "四个头" — stageCards is a table of contents keyed on
+		// these names, and it cannot vary with the checkpoint. The count that matters is in the
+		// heading below it, which does follow n_head.
+		sectionTitle(c, fmt.Sprintf("%s头各自在做什么", headsWord(len(profiles))),
+			fmt.Sprintf("层 %d · 整句 %d 行的平均", a.Layer, profiles[0].Rows))
 		// No markdown in this app: ui.Text draws the characters it is given.
 		mutedText(c, "检查器里那张「这一行的统计」只描述一行：两个头可以在同一行上有相同的熵，"+
 			"却在看完全不同的地方。这里换两个能区分行为的量——行内有多少权重落在紧邻的前一个 token，"+
@@ -2395,25 +2404,32 @@ func (a *App) stageHeadProfiles(c *ui.Context) {
 		// sending the reader somewhere.
 		var verdict string
 		if a.Layer == 0 {
-			verdict = fmt.Sprintf("四个头在这一层上很接近（%.0f%%–%.0f%%），看不出分工。"+
+			verdict = fmt.Sprintf("%s头在这一层上很接近（%.0f%%–%.0f%%），看不出分工。"+
 				"第 0 层就是第一层，再往下没有可比的层——所以这里不是「还没看够」，"+
-				"而是这一层的四个头确实在做同一件事的不同强度版本", 100*lo, 100*hi)
+				"而是这一层的%s头确实在做同一件事的不同强度版本",
+				headsWord(len(profiles)), 100*lo, 100*hi, headsWord(len(profiles)))
 		} else {
-			verdict = fmt.Sprintf("四个头在这一层上很接近（%.0f%%–%.0f%%），看不出分工——"+
-				"换到第 0 层看看，那里的头差别明显得多", 100*lo, 100*hi)
+			verdict = fmt.Sprintf("%s头在这一层上很接近（%.0f%%–%.0f%%），看不出分工——"+
+				"换到第 0 层看看，那里的头差别明显得多", headsWord(len(profiles)), 100*lo, 100*hi)
 		}
 		if spread >= 0.2 {
-			verdict = fmt.Sprintf("四个头差别明显：%.0f%%–%.0f%%，也就是有的头主要在盯前一个 token、"+
+			verdict = fmt.Sprintf("%s头差别明显：%.0f%%–%.0f%%，也就是有的头主要在盯前一个 token、"+
 				"有的在整句里找别的位置——这就是「每个头学到不同的模式」在这份权重里的具体样子",
-				100*lo, 100*hi)
+				headsWord(len(profiles)), 100*lo, 100*hi)
+		}
+		// Built from the slice, not from indices 0..3. n_head is free — validate only requires
+		// that d_model divides by it — so a two-head checkpoint loads, and the fixed indices
+		// crashed the whole window with "index out of range [2] with length 2". Measured on
+		// n_head = 1, 2 and 3: all three panicked on the softmax stage, while 4 and 8 were fine.
+		prevShare, peakRows := make([]string, 0, len(profiles)), make([]string, 0, len(profiles))
+		for _, p := range profiles {
+			prevShare = append(prevShare, fmt.Sprintf("H%d %.0f%%", p.Head, 100*p.PrevShare))
+			peakRows = append(peakRows, fmt.Sprintf("H%d %d", p.Head, p.PeakRows))
 		}
 		workingsLinesCopyable(c, []string{
-			fmt.Sprintf("前一位权重：H0 %.0f%% · H1 %.0f%% · H2 %.0f%% · H3 %.0f%%",
-				100*profiles[0].PrevShare, 100*profiles[1].PrevShare,
-				100*profiles[2].PrevShare, 100*profiles[3].PrevShare),
-			fmt.Sprintf("押注超过半数的行：H0 %d · H1 %d · H2 %d · H3 %d（共 %d 行）",
-				profiles[0].PeakRows, profiles[1].PeakRows,
-				profiles[2].PeakRows, profiles[3].PeakRows, profiles[0].Rows),
+			fmt.Sprintf("前一位权重：%s", strings.Join(prevShare, " · ")),
+			fmt.Sprintf("押注超过半数的行：%s（共 %d 行）",
+				strings.Join(peakRows, " · "), profiles[0].Rows),
 			verdict,
 		})
 	})
@@ -2731,10 +2747,12 @@ func (a *App) stageHeadIndependence(c *ui.Context) {
 		return
 	}
 	a.cardNamed(c, "头之间重合吗", func() {
-		sectionTitle(c, "四个头说的是同一件事吗", "两两比较各头的投影输出")
-		mutedText(c, "下面那张图画的是「每个头各写了多少」，这张问的是另一件事：四个头写的东西像不像。"+
-			"像，那四个头就是浪费；不像，把四段拼接起来才是对的。量法是两点：两两之间投影输出的平均余弦（越接近 0 越互不相干），"+
-			"以及每个头占了多少长度。")
+		sectionTitle(c, fmt.Sprintf("%s头说的是同一件事吗", headsWord(len(a.Trace.Layers[a.Layer].Heads))),
+			"两两比较各头的投影输出")
+		mutedText(c, fmt.Sprintf("下面那张图画的是「每个头各写了多少」，这张问的是另一件事：%s头写的东西像不像。"+
+			"像，那%s头就是浪费；不像，把各段拼接起来才是对的。量法是两点：两两之间投影输出的平均余弦（越接近 0 越互不相干），"+
+			"以及每个头占了多少长度。",
+			headsWord(len(a.Trace.Layers[a.Layer].Heads)), headsWord(len(a.Trace.Layers[a.Layer].Heads))))
 		out := make([]barRow, 0, len(rows))
 		var maxPair float64
 		for _, r := range rows {
@@ -2763,13 +2781,14 @@ func (a *App) stageHeadIndependence(c *ui.Context) {
 					r.Layer, r.MinPairCosine, r.MaxPairCosine, 100*r.MinShare, 100*r.MaxShare),
 			})
 		}
-		ui.Text(c, "两两之间最大的平均余弦（越接近 0，四个头越各说各的）").
+		ui.Text(c, fmt.Sprintf("两两之间最大的平均余弦（越接近 0，%s头越各说各的）",
+			headsWord(len(a.Trace.Layers[a.Layer].Heads)))).
 			FontSize(fontMicro).TextColor(colFaint)
 		bars(c, out, float32(maxPair), colGreen)
 		for _, r := range rows {
 			workingsLinesCopyable(c, []string{
-				fmt.Sprintf("层 %d：四个头的投影输出两两平均余弦在 %+.3f 到 %+.3f 之间",
-					r.Layer, r.MinPairCosine, r.MaxPairCosine),
+				fmt.Sprintf("层 %d：%s头的投影输出两两平均余弦在 %+.3f 到 %+.3f 之间",
+					r.Layer, headsWord(r.Heads), r.MinPairCosine, r.MaxPairCosine),
 				fmt.Sprintf("层 %d：各头占 ‖Δ‖ 总量的 %.0f%%–%.0f%%，量级相当",
 					r.Layer, 100*r.MinShare, 100*r.MaxShare),
 			})
@@ -2781,12 +2800,12 @@ func (a *App) stageHeadIndependence(c *ui.Context) {
 		if first.MaxPairCosine < 0.25 {
 			misconception(c,
 				"「多头注意力就是把同样的注意力做几遍再取平均，多几个头只是更稳」",
-				fmt.Sprintf("四个头不是彼此的副本。层 %d 上，任意两个头的投影输出之间的平均余弦只有 %+.3f 到 %+.3f，"+
+				fmt.Sprintf("%s头不是彼此的副本。层 %d 上，任意两个头的投影输出之间的平均余弦只有 %+.3f 到 %+.3f，"+
 					"几乎互不相干，而且每个头的量级相当（%.0f%%–%.0f%%）。"+
-					"把它们各自乘上自己的 Wo 切片再拼起来，等于让模型在同一个位置同时读四种不同的关系；"+
-					"若是先相加再投影，这些差别会互相抵消。所以「多几个头」不是求平均求稳，而是并行的四条通道。",
-					first.Layer, first.MinPairCosine, first.MaxPairCosine,
-					100*first.MinShare, 100*first.MaxShare))
+					"把它们各自乘上自己的 Wo 切片再拼起来，等于让模型在同一个位置同时读%s种不同的关系；"+
+					"若是先相加再投影，这些差别会互相抵消。所以「多几个头」不是求平均求稳，而是并行的%s条通道。",
+					headsWord(first.Heads), first.Layer, first.MinPairCosine, first.MaxPairCosine,
+					100*first.MinShare, 100*first.MaxShare, headsWord(first.Heads), headsWord(first.Heads)))
 		}
 	})
 }
