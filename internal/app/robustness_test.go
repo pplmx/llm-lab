@@ -745,3 +745,35 @@ func TestEveryLegalConfigRendersEveryStage(t *testing.T) {
 		}
 	}
 }
+
+// TestNoLessonBodyDescribesAnEmptyTraceAsASmallOne keeps the empty state from being measured.
+//
+// The softmax lesson's body had one branch for "fewer than three comparable rows", which covered
+// zero rows as well as one and two. On an empty prompt it rendered "这个提示词只有 0 行可以比较 …
+// 样本太少 … 多打几个字再看" — a sentence that reports a measurement of nothing and tells the
+// reader to add to text that is not there.
+//
+// The stage area already short-circuits to the empty-state card when there are no tokens, so this
+// is the one surface where the empty prompt still reached a body written for a real one. The
+// check walks every bodyFn with an empty trace and looks for the phrasings that presuppose tokens.
+func TestNoLessonBodyDescribesAnEmptyTraceAsASmallOne(t *testing.T) {
+	empty := &model.Trace{Config: model.DefaultConfig}
+	presupposes := []string{"0 行", "0 个位置", "0/0", "0 对", "多打几个字", "这个提示词只有 0"}
+	checked := 0
+	for i, l := range lessons {
+		if l.bodyFn == nil {
+			continue
+		}
+		checked++
+		body := l.bodyFn(empty)
+		for _, bad := range presupposes {
+			if strings.Contains(body, bad) {
+				t.Fatalf("stage %d's body says %q when the prompt is empty, which reads as a "+
+					"measurement of something rather than as the empty state:\n%s", i+1, bad, body)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no lesson body was exercised; the check is verifying nothing")
+	}
+}

@@ -8571,8 +8571,10 @@ func TestSoftmaxBodyAdmitsWhenThereIsNothingToMeasure(t *testing.T) {
 		return "", 0
 	}
 
-	// Prompts with fewer than three measurable rows must not claim a pattern.
-	for _, prompt := range []string{"", "a", "hi", "abc"} {
+	// An empty prompt is not a short one. It used to be grouped with these, which forced the
+	// body to say "只有 0 行可以比较 … 多打几个字再看" — a measurement of nothing, with advice to
+	// add to text that is not there. The empty case is checked separately below.
+	for _, prompt := range []string{"a", "hi", "abc"} {
 		body, rows := bodyOf(prompt)
 		if body == "" {
 			t.Fatalf("prompt %q: the softmax body is missing", prompt)
@@ -8592,6 +8594,14 @@ func TestSoftmaxBodyAdmitsWhenThereIsNothingToMeasure(t *testing.T) {
 			t.Fatalf("prompt %q says %q, want the phrase %q", prompt,
 				truncateForTest(body, 160), want)
 		}
+	}
+
+	// The empty prompt must read as the empty state, not as a measurement.
+	if body, _ := bodyOf(""); strings.Contains(body, "只有 0 行") || strings.Contains(body, "多打几个字") {
+		t.Fatalf("an empty prompt is described as a small one: %q", truncateForTest(body, 160))
+	} else if !strings.Contains(body, "还没有提示词") {
+		t.Fatalf("an empty prompt does not say there is no prompt yet: %q",
+			truncateForTest(body, 160))
 	}
 
 	// A long prompt keeps the full description.

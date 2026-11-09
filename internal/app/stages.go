@@ -62,6 +62,14 @@ var lessons = []lesson{
 			if len(tr.Layers) > 0 && len(tr.Layers[0].Heads) > 0 {
 				prev, rows = previousTokenShare(tr.Layers[0].Heads[0].Attn, len(tr.Tokens))
 			}
+			// No prompt at all is not "too few rows"; there are no rows, and "多打几个字再看"
+			// tells the reader to add to text that is not there. Measured on an empty prompt:
+			// this branch rendered "这个提示词只有 0 行可以比较 … 多打几个字再看", which reads as a
+			// measurement of something rather than as the empty state.
+			if len(tr.Tokens) == 0 {
+				return base + "现在还没有提示词，所以没有哪一行可以看。在上方输入框写几个字，" +
+					"或者点「空」以外的任一预设，这一阶段就会用一个真实的提示词画出来。"
+			}
 			if rows < 3 {
 				return base + "多个头并行做同一件事，各自学到的模式不同。" +
 					fmt.Sprintf("这个提示词只有 %d 行可以比较（每个位置只看得到它自己和之前的 key），"+
