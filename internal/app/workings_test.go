@@ -587,58 +587,114 @@ func worstPrintedWeightedGap(t *testing.T) float64 {
 	return math.Abs(termSum + rest - shown)
 }
 
-// worstPrintedFFNGap and worstPrintedLNGap still compute from the model's own values rather than
-// from the rendered text, which is the flaw fixed in the three helpers above. They are recorded
-// here rather than silently left: the FFN block prints "out[d] 的三项最大贡献" plus a remainder and
-// a total, and the LayerNorm block prints "(x − μ) × invStd × γ + β ≈ out", so both are parseable
-// by the same approach. Until they are converted, a formatting change to either block can pass
-// this test unnoticed — the same way the score and weighted blocks did before this round.
+// worstPrintedFFNGap re-adds the terms the FFN output block prints.
+//
+// Like its siblings this used to re-round the model's own floats inside the helper and add
+// those — a second copy of the formatting, which can disagree with what the block draws. The
+// lines to parse are:
+//
+//	out[0] 的三项最大贡献：k29 +0.2388  k52 +0.2365  k326 +0.2354
+//	+ 其余 381 项 +1.8422 ≈ +2.5529
 func worstPrintedFFNGap(t *testing.T) float64 {
 	t.Helper()
 	a := newTestApp(t)
 	a.Step = 5
-	l := a.layer()
-	w2 := a.W.Layers[a.Layer].W2
-	dff, d := a.W.Config.DFF, a.W.Config.DModel
-	round := func(v float64) float64 {
-		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', 4, 64), 64)
-		return out
-	}
-	worst := 0.0
-	for j := 0; j < d; j++ {
-		p := computeFFN(l.Hidden[a.SelToken], w2, dff, d, j)
-		sum := 0.0
-		for _, tm := range p.Top {
-			sum += round(tm.V)
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 4000)
+	tr.Frame()
+
+	termsRe := regexp.MustCompile(`out\[\d+\] 的三项最大贡献：(.*)$`)
+	// The terms carry explicit signs, as in the weighted block: a pattern allowing only a leading
+	// minus matches one of three and turns "sum of three" into a sum of one without any error.
+	termRe := regexp.MustCompile(`k\d+ ([+-][0-9.]+)`)
+	restRe := regexp.MustCompile(`余 \d+ 项 ([+-][0-9.]+) ≈ ([+-][0-9.]+)$`)
+
+	var termSum, rest, shown float64
+	gotTerms, gotTotal := false, false
+	for _, s := range tr.Texts() {
+		if m := termsRe.FindStringSubmatch(s); m != nil {
+			if len(termRe.FindAllStringSubmatch(m[1], -1)) < 2 {
+				t.Fatalf("the FFN block lists fewer than two terms: %q", s)
+			}
+			for _, tm := range termRe.FindAllStringSubmatch(m[1], -1) {
+				v, err := strconv.ParseFloat(tm[1], 64)
+				if err != nil {
+					t.Fatalf("cannot parse %q in %q", tm[1], s)
+				}
+				termSum += v
+			}
+			gotTerms = true
+			continue
 		}
-		sum += round(p.Rest)
-		if gap := math.Abs(sum - p.Out); gap > worst {
-			worst = gap
+		if !gotTerms || gotTotal {
+			continue
+		}
+		if m := restRe.FindStringSubmatch(s); m != nil {
+			rest, _ = strconv.ParseFloat(m[1], 64)
+			shown, _ = strconv.ParseFloat(m[2], 64)
+			gotTotal = true
 		}
 	}
-	return worst
+	if !gotTerms || !gotTotal {
+		t.Fatal("the FFN output block did not render both its terms and its total")
+	}
+	return math.Abs(termSum + rest - shown)
 }
 
+// worstPrintedLNGap redoes the LayerNorm line from the digits it prints.
+//
+// The old version re-rounded the model's floats itself, at the same precisions the block happens
+// to use. That is a copy of the formatting inside the test: it stays correct when the block's
+// format changes, which is precisely the change that can make the line uncheckable. The lines to
+// parse are:
+//
+//	LayerNorm d0：μ = -0.1948，σ = 2.0207，1/√(σ²+ε) = 0.4949
+//	(-1.9107 − (-0.1948)) × 0.4949 × γ 1.15368 + β 0.00945 ≈ -0.9702
 func worstPrintedLNGap(t *testing.T) float64 {
 	t.Helper()
 	a := newTestApp(t)
 	a.Step = 4
-	l := a.layer()
-	w := a.W.Layers[a.Layer]
-	round := func(v float64, dp int) float64 {
-		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
-		return out
-	}
-	worst := 0.0
-	for dim := 0; dim < a.Trace.Config.DModel; dim++ {
-		p := computeLN(l.AfterAttn[a.SelToken], w.LN2G, w.LN2B, dim)
-		hand := (round(p.x, 4)-round(p.mean, 4))*round(p.invStd, 4)*
-			round(p.gamma, 5) + round(p.beta, 5)
-		if gap := math.Abs(hand - p.out); gap > worst {
-			worst = gap
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 4000)
+	tr.Frame()
+
+	subRe := regexp.MustCompile(`1/√\(σ²\+ε\) = ([0-9.]+)`)
+	// The subtrahend is parenthesised when the mean is negative — "\(x − (-0.1948)\)" — which
+	// happens for many dimensions, so both shapes have to parse.
+	lineRe := regexp.MustCompile(`\(([+-]?[0-9.]+) − \(?([+-]?[0-9.]+)\)?\) × ([0-9.]+) × γ ([0-9.]+) \+ β ([0-9.]+) ≈ ([+-][0-9.]+)`)
+
+	invStd, gotSub := 0.0, false
+	for _, s := range tr.Texts() {
+		if m := subRe.FindStringSubmatch(s); m != nil {
+			invStd, _ = strconv.ParseFloat(m[1], 64)
+			gotSub = true
+			break
 		}
 	}
-	return worst
+	if !gotSub {
+		t.Fatal("the LayerNorm block did not print its scale factor")
+	}
+	for _, s := range tr.Texts() {
+		m := lineRe.FindStringSubmatch(s)
+		if m == nil {
+			continue
+		}
+		nums := make([]float64, 0, 6)
+		for _, g := range m[1:] {
+			v, err := strconv.ParseFloat(g, 64)
+			if err != nil {
+				t.Fatalf("cannot parse %q in %q", g, s)
+			}
+			nums = append(nums, v)
+		}
+		// nums: x, mean, invStd-in-line, gamma, beta, out. The scale is taken from the line
+		// preceding this one, which is where the block states it.
+		x, mean, _, gamma, beta, out := nums[0], nums[1], nums[2], nums[3], nums[4], nums[5]
+		hand := (x-mean)*invStd*gamma + beta
+		return math.Abs(math.Abs(hand) - math.Abs(out))
+	}
+	t.Fatal("the LayerNorm arithmetic line did not render")
+	return 0
 }
 
 // TestWorkingsComputersRejectOutOfRangeInput covers the guard clauses.
