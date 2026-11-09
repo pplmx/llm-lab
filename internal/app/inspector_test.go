@@ -176,3 +176,39 @@ func TestByteCardFollowsThePrompt(t *testing.T) {
 			"branch this test is about")
 	}
 }
+
+// TestDistributionCardNamesItsPosition keeps the inspector's distribution distinguishable from
+// the per-position card below it.
+//
+// Both quote a top-1 probability, and they are different rows: this one always the last position,
+// the other whichever t the reader pinned. With t=8 pinned the two read 96.95% and 93.76%, side by
+// side, and only one of them named its position — a reader comparing them has no way to tell the
+// numbers are about different rows.
+//
+// The assertion is on the subtitle, because that is the only thing on the card that could carry
+// the position.
+func TestDistributionCardNamesItsPosition(t *testing.T) {
+	for _, pinned := range []int{-1, 8} {
+		a := newTestApp(t)
+		a.Step = 6
+		a.PredSel = pinned
+		tr := ui.NewTester(a.View, 1500, 4000)
+		tr.Frame()
+
+		var subtitle string
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "最后一个位置 t=") {
+				subtitle = s
+			}
+		}
+		if subtitle == "" {
+			t.Fatalf("pinned=%d: the distribution card does not say which position it is for, "+
+				"so its top-1 is indistinguishable from the pinned prediction's top-1", pinned)
+		}
+		want := fmt.Sprintf("t=%d", len(a.Trace.Tokens)-1)
+		if !strings.Contains(subtitle, want) {
+			t.Fatalf("pinned=%d: the distribution subtitle reads %q, not the last position %s",
+				pinned, subtitle, want)
+		}
+	}
+}

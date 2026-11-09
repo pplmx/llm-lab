@@ -2072,8 +2072,13 @@ func (a *App) inspectorFFN(c *ui.Context) {
 func (a *App) inspectorLogits(c *ui.Context, tr *model.Trace) {
 	probs := tr.Probabilities(a.Temp)
 	top := model.TopK(probs, 2)
+	// The subtitle names the position, because this card is not the only distribution on the
+	// stage. "每个位置都在预测" pins an arbitrary t and the card below it quotes that row's
+	// top-1; this card always quotes the last row's. Measured with t=8 pinned: 96.95% here and
+	// 93.76% below, two unlabelled-looking numbers for what a reader reasonably takes to be the
+	// same quantity.
 	card(c, func() {
-		sectionTitle(c, "分布统计", fmt.Sprintf("温度 %.2f", a.Temp))
+		sectionTitle(c, "分布统计", fmt.Sprintf("温度 %.2f · 最后一个位置 t=%d", a.Temp, len(tr.Tokens)-1))
 		if len(top) > 0 {
 			kv(c, "top-1", fmt.Sprintf("%q · %.1f%%", byteText(top[0]), probs[top[0]]*100))
 		}
