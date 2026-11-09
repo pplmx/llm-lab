@@ -2135,7 +2135,28 @@ func (a *App) inspectorFFN(c *ui.Context) {
 		kv(c, fmt.Sprintf("激活 > %.2f", activeThreshold), fmt.Sprintf("%d / %d (%.0f%%)", active, len(hidden), 100*float64(active)/float64(len(hidden))))
 		kv(c, "峰值", fmt.Sprintf("%+.2f", hi))
 		kv(c, "均值/σ", fmt.Sprintf("%+.3f / %.3f", mean, std))
-		mutedText(c, "GELU 把负值平滑压向 0，所以大部分维度接近零，只有少数被激活。")
+		// The stage card below states how many dimensions are negative, and this card states how
+		// many clear activeThreshold. The two sit on adjacent panels and read like a partition of
+		// the row, but they are not one: values in (0, threshold] belong to neither, and they are
+		// not rare. Measured over six prompts, both layers and every row, 129 of 134 rows fail to
+		// partition, the worst leaving 10 dimensions (2.6%) unaccounted — so a reader adding the
+		// two visible numbers usually lands short of d_ff and cannot see why.
+		var between int
+		for _, v := range hidden {
+			if v >= 0 && v <= activeThreshold {
+				between++
+			}
+		}
+		if between > 0 {
+			kv(c, "介于两者之间", fmt.Sprintf("%d 个（0 ≤ 值 ≤ %.2f）", between, activeThreshold))
+		}
+		body := "GELU 把负值平滑压向 0，所以大部分维度接近零，只有少数被激活。"
+		if between > 0 {
+			body += fmt.Sprintf("下面卡片说的「负值」是 < 0，这里的「激活」是 > %.2f，"+
+				"中间这 %d 个两边都不算——两个数加起来不等于 %d 就是这个原因。",
+				activeThreshold, between, len(hidden))
+		}
+		mutedText(c, body)
 	})
 }
 

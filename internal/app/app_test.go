@@ -8444,7 +8444,11 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 		// the GELU squeeze note, the FFN concentration comparison, and the answer-direction
 		// callout: whether the FFN writes the answer direction is a property of the weights,
 		// so with random ones the sentence is absent rather than false
-		5: {"只剩一根柱子", "还能看出分布的形状", "两层的用法很不一样", "方向不是注意力定的"},
+		5: {"只剩一根柱子", "还能看出分布的形状", "两层的用法很不一样", "方向不是注意力定的",
+			// The inspector explains the gap between its active count and the stage's negative
+			// count. How many dimensions sit in (0, threshold] is a property of the weights, so
+			// the sentence appears at all only when that count is non-zero.
+			"两边都不算"},
 		// the confidence note, plus the word-boundary sentence: whether the gap it
 		// describes exists is a property of the weights, so with random ones it is
 		// absent rather than false

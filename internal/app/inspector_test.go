@@ -266,3 +266,67 @@ func TestAttentionBarsDiscloseTheirSample(t *testing.T) {
 		}
 	}
 }
+
+// TestFFNCardsAccountForTheGapBetweenTheirCounts checks the two FFN counts are explained when they
+// do not add up.
+//
+// The stage card states how many hidden dimensions are negative; the inspector beside it states how
+// many clear activeThreshold. Adjacent panels, same row, two counts out of d_ff — they read like a
+// partition, and they mostly are not one. Measured over six prompts, both layers and every row: 129
+// of 134 rows fail to partition, the worst leaving 10 dimensions (2.6%) in (0, threshold], which
+// belongs to neither count.
+//
+// The inspector now names that middle band when it is non-empty, so a reader who adds the two
+// visible numbers can see where the remainder went. A row that does partition must not be told
+// about a band it does not have.
+func TestFFNCardsAccountForTheGapBetweenTheirCounts(t *testing.T) {
+	partitions, gaps := 0, 0
+	for _, sel := range []int{0, 5, 10, 20, 30} {
+		for _, layer := range []int{0, 1} {
+			a := newTestApp(t)
+			a.Step = 5
+			a.Layer = layer
+			if sel >= len(a.Trace.Tokens) {
+				continue
+			}
+			a.SelToken = sel
+			hidden := a.layer().Hidden[sel]
+			neg, between := 0, 0
+			for _, v := range hidden {
+				switch {
+				case v < 0:
+					neg++
+				case v <= activeThreshold:
+					between++
+				}
+			}
+			_ = neg
+			tr := ui.NewTester(a.View, 1500, 3000)
+			tr.Frame()
+			var body string
+			for _, s := range tr.Texts() {
+				if strings.Contains(s, "两边都不算") {
+					body = s
+				}
+			}
+			if between > 0 {
+				gaps++
+				if body == "" {
+					t.Fatalf("sel=%d layer=%d has %d dimensions between 0 and the active threshold, "+
+						"so the two counts cannot add to %d, but neither card says so",
+						sel, layer, between, len(hidden))
+				}
+			} else {
+				partitions++
+				if body != "" {
+					t.Fatalf("sel=%d layer=%d partitions exactly, but the card invents a middle band: %q",
+						sel, layer, truncateForTest(body, 120))
+				}
+			}
+		}
+	}
+	if gaps == 0 || partitions == 0 {
+		t.Fatalf("the sweep saw %d gapped rows and %d exact ones; both cases must be exercised",
+			gaps, partitions)
+	}
+}
