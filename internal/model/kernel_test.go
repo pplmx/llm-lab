@@ -149,3 +149,134 @@ func TestMatMulRowsCoversEveryRemainder(t *testing.T) {
 		}
 	}
 }
+
+// TestMatMulRowsBiasShapes pins what the bias parameter accepts.
+//
+// The signature takes a plain slice, so a caller can pass one shorter or longer than outDim,
+// and the contract is not obvious from the types. It is: the first min(len(b), outDim) entries
+// are added, anything beyond is ignored. That is what the old implementation did too, by way of
+// copy() into the destination rows, and the fix that moved the bias after the multiply had to
+// preserve it — a shape mismatch that used to be a silent truncation must not become a panic or
+// a misaligned output.
+//
+// Worth a test because nothing in this model passes a non-nil bias: every call site in gpt.go
+// uses nil, so these branches are reachable only from outside, and the behaviour there is a
+// promise the signature makes rather than one the app depends on.
+func TestMatMulRowsBiasShapes(t *testing.T) {
+	const in, out = 2, 2
+	x := [][]float32{{1, 2}, {3, 4}}
+	// Identity product: w is in×out row-major, so this doubles nothing and passes x through.
+	w := []float32{1, 0, 0, 1}
+	base := matMulRows(x, w, nil, out)
+	if base[0][0] != 1 || base[0][1] != 2 || base[1][0] != 3 || base[1][1] != 4 {
+		t.Fatalf("the identity product is wrong before any bias: %v", base)
+	}
+
+	for _, c := range []struct {
+		name string
+		bias []float32
+		want [][]float32
+	}{
+		{"nil", nil, [][]float32{{1, 2}, {3, 4}}},
+		{"empty", []float32{}, [][]float32{{1, 2}, {3, 4}}},
+		{"exact length", []float32{10, 20}, [][]float32{{11, 22}, {13, 24}}},
+		{"shorter than outDim", []float32{10}, [][]float32{{11, 2}, {13, 4}}},
+		// Longer is truncated, not applied shifted and not a panic.
+		{"longer than outDim", []float32{10, 20, 30}, [][]float32{{11, 22}, {13, 24}}},
+	} {
+		got := matMulRows(x, w, c.bias, out)
+		for i := range c.want {
+			for j := range c.want[i] {
+				if got[i][j] != c.want[i][j] {
+					t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+				}
+			}
+		}
+	}
+}
+
+// TestSoftmaxCausalMatchesTheDefinition pins the causal softmax against a direct computation
+// from its definition.
+//
+// It is the one math helper in this package with no accuracy test of its own. TestCausalMask
+// reaches it through Forward and checks the properties a reader would notice — the row sums to
+// 1, the future entries are zero — but those hold for any correctly shaped distribution, so a
+// defect that produced a plausible-looking row in the wrong order would pass. This compares
+// the actual values.
+//
+// Three things the indirect test cannot see are checked here: that dst beyond n is zeroed
+// rather than left holding whatever the caller's buffer contained, that a row of one entry
+// comes out as exactly 1, and that the biggest score gets the biggest weight — the ordering,
+// which is the whole point of a softmax and which a sum-to-1 check says nothing about.
+func TestSoftmaxCausalMatchesTheDefinition(t *testing.T) {
+	rows := [][]float32{
+		{0},
+		{2.5},
+		{1, -1},
+		{0, 0, 0},
+		{5, 4, 3, 2, 1},
+		{-3.25, -3.5, 7.75},
+		{100, 100, 100}, // large enough that exp overflows without the max subtraction
+	}
+	for _, scores := range rows {
+		n := len(scores)
+		// A destination longer than n, pre-filled with a sentinel: the masked tail must be
+		// overwritten with zero, not left alone.
+		dst := make([]float32, n+3)
+		for i := range dst {
+			dst[i] = -12345
+		}
+		softmaxCausal(dst, scores, n)
+
+		var max float64 = math.Inf(-1)
+		for _, v := range scores {
+			if f := float64(v); f > max {
+				max = f
+			}
+		}
+		var sum float64
+		for _, v := range scores {
+			sum += math.Exp(float64(v) - max)
+		}
+		var worst float64
+		for i, v := range scores {
+			want := math.Exp(float64(v)-max) / sum
+			if d := math.Abs(float64(dst[i]) - want); d > worst {
+				worst = d
+			}
+		}
+		if worst > 1e-6 {
+			t.Fatalf("scores %v: worst deviation from the definition is %.3e", scores, worst)
+		}
+		// The masked tail.
+		for i := n; i < len(dst); i++ {
+			if dst[i] != 0 {
+				t.Fatalf("scores %v: dst[%d] = %v, want 0 — the masked tail must be cleared",
+					scores, i, dst[i])
+			}
+		}
+		// A single-entry row is a certainty.
+		if n == 1 && dst[0] != 1 {
+			t.Fatalf("a one-entry row gave %v, want exactly 1", dst[0])
+		}
+		// Ordering: the largest score must hold the largest weight. Distinct maximum only,
+		// or the assertion would depend on tie-breaking.
+		best, ties := 0, 0
+		for i := range scores {
+			if scores[i] > scores[best] {
+				best = i
+			}
+			if i > 0 && scores[i] == scores[0] {
+				ties++
+			}
+		}
+		if ties == 0 {
+			for i := range scores {
+				if i != best && dst[i] > dst[best] {
+					t.Fatalf("scores %v: entry %d outweighs the largest score's entry %d (%v < %v)",
+						scores, i, best, dst[best], dst[i])
+				}
+			}
+		}
+	}
+}

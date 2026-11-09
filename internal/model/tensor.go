@@ -88,6 +88,13 @@ func matMulRows(x [][]float32, w []float32, b []float32, outDim int) [][]float32
 // multiply: the kernels must be free to overwrite their destination, which is what lets them
 // use vector stores, and a bias applied afterwards is the only arrangement that works for
 // both the accumulating scalar loop and the overwriting vector ones.
+//
+// A b shorter than outDim contributes only its own entries, and a longer one is truncated.
+// That shape tolerance is deliberate and inherited: the pre-fix code copied b into the
+// destination rows, which behaved the same way. TestMatMulRowsBiasShapes pins it, because
+// nothing in this model passes a non-nil bias, so these are branches no internal caller can
+// reach — the promise is the signature's, and a rewrite of this function would not otherwise
+// know it had one.
 func addBias(out [][]float32, b []float32) {
 	if b == nil {
 		return
