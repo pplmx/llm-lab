@@ -3065,7 +3065,30 @@ func (a *App) stageEmbeddingStructure(c *ui.Context) {
 	// needs adjacent pairs to compare. A one-token prompt has none, and the first version
 	// rendered the comparison anyway with a mean of "+0.0000" — a number with an empty
 	// denominator, which is what TestNoMalformedTextAcrossTheSweep exists to catch.
+	// The card's chip stays present and says why it has nothing to measure. Returning here
+	// silently made the chip vanish, which reads as a bug: every other card in this stage
+	// remains, so the reader has no way to tell a missing measurement from a missing feature.
+	// The per-position card on the output stage already handles its own short-prompt case by
+	// keeping the card and explaining it (0, "需要至少两个 token"); this was the one place that
+	// disappeared instead.
 	if !e.OK || e.AdjacentPairs < 3 {
+		a.cardNamed(c, "嵌入有含义吗", func() {
+			pairs := 0
+			if e.OK {
+				pairs = e.AdjacentPairs
+			}
+			// sectionTitle takes an already-formatted string, so the width has to be
+			// spliced in here; passing the format verb through printed a literal "%d".
+			dims := a.W.Config.DModel
+			if e.OK && e.Dims > 0 {
+				dims = e.Dims
+			}
+			sectionTitle(c, fmt.Sprintf("这 %d 个维度里有「意思」吗", dims), "这个提示词太短")
+			mutedText(c, fmt.Sprintf("问「意思相近的字节，向量是不是也靠得近」，要比「文本里挨着出现的字节」和"+
+				"「随便两个字节」的余弦。这个提示词只有 %d 对相邻字节，样本太少，"+
+				"算出来的平均值会是一个看着像结论、其实什么都没有的数——所以这里先不算。"+
+				"多打几个字，这张卡片就会变成一张对比图。", pairs))
+		})
 		return
 	}
 	a.cardNamed(c, "嵌入有含义吗", func() {

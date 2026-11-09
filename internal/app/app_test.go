@@ -8714,7 +8714,10 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 		// (Fragments must come from strings over 40 runes; collect() drops shorter ones.)
 		// The embedding card names the most similar byte pairs, which need two tokens before
 		// there is an adjacent pair to compare at all; a one-token prompt renders none of it.
-		1: {"I-", "H-", "-\\x", "右边那条色带每一格是一个维度", "这张表里没有这回事"},
+		1: {"I-", "H-", "-\\x", "右边那条色带每一格是一个维度", "这张表里没有这回事",
+			// A prompt with too few adjacent pairs keeps the card and explains why it has
+			// nothing to draw, instead of letting the chip vanish.
+			"样本太少，算出来的平均值"},
 		2: {"所有分数都是负的", "去掉以后变化极大", "因果掩码不是提醒"},
 		// the short-sample branch, then the long one, then the four-head comparison,
 		// whose verdict depends on how many rows there are to average over

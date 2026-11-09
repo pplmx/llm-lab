@@ -855,3 +855,57 @@ func TestPromptTooWideForTheWindowIsNotReportedAsEmpty(t *testing.T) {
 		t.Fatalf("a 4-byte character in a 4-token window gave %d tokens", n)
 	}
 }
+
+// TestShortPromptEmbedCardExplainsItselfInsteadOfVanishing covers the card that disappeared.
+//
+// computeEmbeddingStructure needs adjacent pairs to compare, and below three of them the card
+// returned without drawing anything. Every other card on the stage stayed, so the chip vanishing
+// reads as a missing feature rather than a missing measurement — and the same stage already had
+// the right pattern next door: the per-position card keeps its card and explains the shortfall
+// ("0（需要至少两个 token）").
+//
+// The card now stays and says why it has nothing to measure. Both the short and long forms are
+// checked, since a fix that always showed the explanation would be wrong once the prompt is long.
+func TestShortPromptEmbedCardExplainsItselfInsteadOfVanishing(t *testing.T) {
+	short := newTestApp(t)
+	short.Prompt = "a"
+	short.recompute()
+	short.Step = 1
+	if pairs := computeEmbeddingStructure(short.W, short.Prompt).AdjacentPairs; pairs >= 3 {
+		t.Fatalf("a one-byte prompt gives %d adjacent pairs, so this no longer exercises the "+
+			"short case", pairs)
+	}
+	tr := ui.NewTester(short.View, 1500, 3400)
+	tr.Frame()
+	var title, body string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "维度里有") {
+			title = s
+		}
+		if strings.Contains(s, "样本太少") {
+			body = s
+		}
+	}
+	if title == "" {
+		t.Fatal("the embed structure card is still missing on a short prompt; the chip vanishes " +
+			"and nothing tells the reader why")
+	}
+	if strings.Contains(title, "%d") {
+		t.Fatalf("the card title was not formatted: %q", title)
+	}
+	if body == "" {
+		t.Fatal("the card is present but does not explain why it has no comparison to draw")
+	}
+
+	long := newTestApp(t)
+	long.Prompt = "attention is all you need"
+	long.recompute()
+	long.Step = 1
+	tr2 := ui.NewTester(long.View, 1500, 3400)
+	tr2.Frame()
+	for _, s := range tr2.Texts() {
+		if strings.Contains(s, "样本太少") {
+			t.Fatalf("a long prompt still gets the short-sample explanation: %q", s)
+		}
+	}
+}
