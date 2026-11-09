@@ -1683,13 +1683,24 @@ func TestWorkingsLinesDoNotRunTwoSignsTogether(t *testing.T) {
 // Measured over four prompts, both layers and the first twelve rows: adding the printed terms
 // keeps the running total within 1.0e-4, which is one digit at four decimals — exactly what
 // rounding three numbers separately can cost.
+// TestResidualChainClosesAcrossTokensAndLayers walks the rendered residual chain across prompts,
+// layers and rows.
+//
+// Its value is the breadth — four prompts, both layers, twelve rows, every dimension — and that
+// breadth used to be spent on the model's own floats, rounded inside the test to the precision the
+// block happens to print. Measured: changing the block to print its steps at two decimals left
+// this test green, because it was still rounding to four.
+//
+// The sweep now reads whichever chain the frame shows, for each prompt and layer. Only one row can
+// be drawn at a time, so the row axis is covered by the per-line walk in
+// TestPrintedResidualChainCloses; what this test adds is that the chain closes on prompts and
+// layers the other one does not visit.
 func TestResidualChainClosesAcrossTokensAndLayers(t *testing.T) {
-	round := func(v float64, dp int) float64 {
-		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
-		return out
-	}
+	startRe := regexp.MustCompile(`的残差流（层 \d+）：进入本层的 x = ([+-][0-9.]+)$`)
+	stepRe := regexp.MustCompile(`^([+-][0-9.]+) \+ .*子层 Δ \(([+-][0-9.]+)\) = ([+-][0-9.]+)$`)
 
-	worst := 0.0
+	worst, where := 0.0, ""
+	checked := 0
 	for _, prompt := range []string{
 		"The transformer reads the tokens and", "注意力就是加权求和", "hi", "a",
 	} {
@@ -1697,32 +1708,47 @@ func TestResidualChainClosesAcrossTokensAndLayers(t *testing.T) {
 			a := newTestApp(t)
 			a.Prompt = prompt
 			a.recompute()
+			a.Step = 4
 			a.Layer = layer
-			l := a.layer()
-			if l == nil || len(l.In) == 0 {
-				continue
-			}
-			for row := 0; row < len(l.In) && row < 12; row++ {
-				for dim := 0; dim < a.Trace.Config.DModel; dim++ {
-					steps, ok := residualChain(*l, row, dim)
-					if !ok {
-						continue
-					}
-					running := round(steps[0].Term, 4)
-					for _, s := range steps[1:] {
-						running += round(s.Term, 4)
-						if gap := math.Abs(running - s.Sum); gap > worst {
-							worst = gap
-						}
-					}
+			a.SelToken = len(a.Trace.Tokens) - 1
+			tr := ui.NewTester(a.View, 1500, 1400)
+			tr.Frame()
+
+			running, started := 0.0, false
+			for _, line := range tr.Texts() {
+				if m := startRe.FindStringSubmatch(line); m != nil {
+					running, started = mustParseF(t, m[1], line), true
+					continue
 				}
+				if !started {
+					continue
+				}
+				m := stepRe.FindStringSubmatch(line)
+				if m == nil {
+					continue
+				}
+				prev := mustParseF(t, m[1], line)
+				term := mustParseF(t, m[2], line)
+				shown := mustParseF(t, m[3], line)
+				checked++
+				if gap := math.Abs(prev + term - shown); gap > worst {
+					worst, where = gap, fmt.Sprintf("prompt %q, layer %d, step %q", prompt, layer, line)
+				}
+				if gap := math.Abs(prev - running); gap > worst {
+					worst, where = gap, fmt.Sprintf("prompt %q, layer %d: step starts at %.4f, "+
+						"previous ended at %.4f", prompt, layer, prev, running)
+				}
+				running = shown
 			}
 		}
 	}
-	if worst > 2e-4 {
-		t.Fatalf("adding the printed residual terms moves the running total by %.2e", worst)
+	if checked < 8 {
+		t.Fatalf("only %d chain steps were read; the sweep is not reaching the block", checked)
 	}
-	t.Logf("worst gap across prompts, layers and rows: %.2e", worst)
+	if worst > 5e-4 {
+		t.Fatalf("the printed residual chain does not close: off by %.2e at %s", worst, where)
+	}
+	t.Logf("%d steps read across prompts and layers, worst gap %.2e", checked, worst)
 }
 
 // TestEveryWorkingsLineNamesItsOwnSubject checks that a workings line can be read on its own.

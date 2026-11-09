@@ -6,6 +6,12 @@
 
 ### Added
 
+- **上一轮扫出的三个「测试里自带格式化」函数，逐个查完：一个要改，一个不用改，一个只需改注释。**
+  - `TestResidualChainClosesAcrossTokensAndLayers` **要改**：它的价值在广度（4 提示词 × 2 层 × 12 行 × 96 维），但广度全花在模型浮点上，测试里硬编码 `round(..., 4)`。实测块改成两位小数它照样绿。改成解析渲染帧后，破坏性验证报 `off by 7.90e-03 at prompt "a", layer 1, step "+10.89 + FFN 子层 Δ (+2.6179) = +13.50"`。**读 16 步，最坏差 1e-4**（四位小数的合法舍入）
+  - `TestHeadEntropyBarsMatchTheHeads` **不用改**：它确实渲染并检查条形图上的数字，注释里还写着「Checking the trace alone would pass even if every bar were built from the same head」——正是本系列要防的事，早做对了
+  - `TestSoftmaxWorkingsAddUp` **只需改注释**：它的 `Sprintf` 比较的是同两个值的格式化结果，而上一行已经断言两者相差 ≤1e-6，所以这个比较**恒真**、不增加信息。问题在于注释说它检查「what the card prints」，实际没读面板。把注释改成如实描述，并指向真正覆盖渲染的那两个测试
+  - 这三种结论（要改 / 不用改 / 只是说错了）说明：**扫描器给的是线索，不是判决**。前两轮把扫描命中一律当缺陷，这次有一条其实是文档错误
+
 - **四个 `TestPrinted*StaysClose/Closes` 也在测试里自带一份格式化，改块的精度它们照样绿。** 上一轮改的是 `worstPrinted*Gap` 系列，这四条是它们的**独立测试**，同一个病还在
   - 实测：把 LayerNorm 块的 γ/β 从五位改成两位，`TestPrintedLNLineStaysClose` **仍然通过**——因为它自己 `round(p.gamma, 5)`，比的是块已经不再显示的值
   - 四条全部改成从渲染帧解析：LN 解析 `1/√(σ²+ε) = …` 与 `(x − (μ)) × … × γ … + β … ≈ …` 两行（减数为负时带括号）；weighted 与 ffn 解析项行 + 余项行；残差链解析 `进入本层的 x = …` 起始行与每一行 `prev + Δ = sum`，并**额外校验每步的起点等于上一步的终点**

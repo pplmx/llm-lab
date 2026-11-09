@@ -1375,9 +1375,17 @@ func TestSoftmaxWorkingsAddUp(t *testing.T) {
 			t.Fatalf("cell %d,%d: computeSoftmaxParts gives %.6f, the trace holds %.6f",
 				q, k, p.weight, want)
 		}
-		// And what the card prints must round-trip to the weight line above it.
+		// The weight line and the formula must agree to four decimals — which they do by
+		// construction, since the check above already holds p.weight within 1e-6 of the trace and
+		// a 1e-6 difference cannot move the fourth decimal. This used to be described as "what
+		// the card prints", but it formats both numbers itself rather than reading the panel; the
+		// claim was the thing that was wrong, not the arithmetic.
+		//
+		// The rendered card is covered by TestEveryCardChipJumpsToItsCard and the per-block
+		// workings tests, which parse the drawn lines rather than formatting their own copies.
 		if printed, recomputed := fmt.Sprintf("%.4f", h.Attn[q][k]), fmt.Sprintf("%.4f", p.weight); printed != recomputed {
-			t.Fatalf("cell %d,%d: card prints %s, the formula prints %s", q, k, printed, recomputed)
+			t.Fatalf("cell %d,%d: weight line %s disagrees with the formula %s",
+				q, k, printed, recomputed)
 		}
 	}
 }
