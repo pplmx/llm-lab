@@ -6,6 +6,12 @@
 
 ### Added
 
+- **嵌入卡片的标题也把维度写死了：`这 96 个维度里有「意思」吗`。** 同一张卡片里副标题已经用 `e.Vocab`、正文用 `e.Dims`，唯独标题是字面量
+  - 这一轮换了做法：不用逐个读代码，而是**渲染两遍再比**——一份内置权重、一份把 `d_model` 减半的副本，收集七个阶段的全部文本，找**提到旧数字且两次渲染一字未变**的字符串。只剩一条，就是这个标题
+  - 同一轮还用同样的比对确认了另外两件事：把 `ctx` 减半后，提到 `64` 而没变的只剩「U+0064 的字节值是 64」这类巧合，没有残留的 ctx 常量；`vocab` 则被 `validate` 钉死为 256（`vocab is 128, want 256 for byte-level tokens` 直接拒绝加载），所以正文里那个 256 本来就不可能错，但顺手也改成 `e.Vocab` 了
+  - **额外验证了 `n_layer: 1` 的权重文件**：七个阶段全部正常渲染，无 panic、无 `NaN`/`%!`，`层 0 的输出完整送入最终 LayerNorm` 那句因为 `isLast` 判断而正确，「两两」类措辞也都指配对而非层
+  - `TestWeightDerivedTitlesFollowTheLoadedConfig` 加载减半副本再读渲染文本，并**额外断言旧常量整串消失**，而不只是新串出现——否则两个标题同时画出来也能通过。破坏性验证：写回 96 → `with d_model=48 the card is not titled "这 48 个维度里有「意思」吗"; it is still naming the bundle's width`
+
 - **两句引用「加载进来的权重」的话被写成了常量，而包自己的注释就写着不能这样。** `lesson.bodyFn` 的文档注释原文：「A sentence that quotes a number from the loaded weights … cannot be a constant: change the checkpoint and the prose would keep claiming the old figures」。两处违反了它
   - 位置编码卡片：「它把 **64** 个位置放成了 64 个几乎互不相干的地址」——同一行里 `Dim` 是推导的，`64` 不是。`validate` 对 `ctx` 只要求 > 0，所以 `ctx: 32` 的文件能正常加载，而卡片照样说 64。**实测 ctx=32：卡片仍是「64 个位置」**
   - 输出阶段课文：「形状从 **[T, 96] 变成 [1, 256]**」——`d_model` 同样只要求 > 0，`d_model: 48` 的文件能加载。**实测 d_model=48：课文仍写 [T, 96]**

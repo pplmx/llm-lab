@@ -2899,9 +2899,16 @@ func (a *App) stageEmbeddingStructure(c *ui.Context) {
 		return
 	}
 	a.cardNamed(c, "嵌入有含义吗", func() {
-		sectionTitle(c, "这 96 个维度里有「意思」吗", fmt.Sprintf("%d 个字节两两比较", e.Vocab))
-		mutedText(c, "右边那条色带每一格是一个维度。很自然会想：意思相近的字节，向量是不是也靠得近？"+
-			"这个问题可以量——把 256 个字节的嵌入两两算余弦，看「文本里挨着出现的字节」是不是比随便两个更像。")
+		// Both numbers in these two lines come from the loaded weights — the embedding width is
+		// d_model and the table has one row per byte. They were typed in as 96 and 256, which is
+		// right for the bundled file and wrong for any other: validate requires only that d_model
+		// and vocab are positive, so a narrower file loads and this card would describe a model
+		// it is not showing. Measured with d_model=48: the title still read "这 96 个维度".
+		sectionTitle(c, fmt.Sprintf("这 %d 个维度里有「意思」吗", e.Dims),
+			fmt.Sprintf("%d 个字节两两比较", e.Vocab))
+		mutedText(c, fmt.Sprintf("右边那条色带每一格是一个维度。很自然会想：意思相近的字节，向量是不是也靠得近？"+
+			"这个问题可以量——把 %d 个字节的嵌入两两算余弦，看「文本里挨着出现的字节」是不是比随便两个更像。",
+			e.Vocab))
 		// The comparison the reader needs: adjacent pairs against the random reference,
 		// on one axis so the near-equality is a shape rather than two numbers.
 		out := []barRow{

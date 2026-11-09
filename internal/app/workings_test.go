@@ -4313,3 +4313,62 @@ func TestWeightDerivedProseFollowsTheLoadedConfig(t *testing.T) {
 			narrow.Config.DModel, wantShape, lessonBody)
 	}
 }
+
+// TestWeightDerivedTitlesFollowTheLoadedConfig extends the check from the sentences to the card
+// titles.
+//
+// The embedding card was headed "这 96 个维度里有「意思」吗" — 96 typed in, while the same card
+// already carried e.Dims from the loaded weights and used e.Vocab in the subtitle beside it. The
+// body beneath the title said "把 256 个字节的嵌入两两算余弦", likewise typed.
+//
+// Measured with a d_model=48 copy of the bundled weights: the title still read "这 96 个维度".
+// Nothing caught it because every test loaded the bundled file, where 96 is correct — the same
+// blind spot as the two sentences fixed alongside this.
+//
+// The vocab half of the subtitle is a different matter: validate requires vocab == ByteVocab
+// (256) for a byte-level tokenizer, so 256 there could not be wrong. It is derived anyway, so
+// that a future tokenizer is not silently described by an old constant.
+func TestWeightDerivedTitlesFollowTheLoadedConfig(t *testing.T) {
+	base, err := model.Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	d := base.Config.DModel / 2
+	narrow := *base
+	narrow.Config = base.Config
+	narrow.Config.DModel = d
+	narrow.TokEmbed = base.TokEmbed[:base.Config.Vocab*d]
+	narrow.PosEmbed = base.PosEmbed[:base.Config.Ctx*d]
+	narrow.LNFG = base.LNFG[:d]
+	narrow.LNFB = base.LNFB[:d]
+	narrow.Layers = nil
+	for _, l := range base.Layers {
+		narrow.Layers = append(narrow.Layers, model.LayerWeights{
+			LN1G: l.LN1G[:d], LN1B: l.LN1B[:d], LN2G: l.LN2G[:d], LN2B: l.LN2B[:d],
+			WQ: l.WQ[:d*d], WK: l.WK[:d*d], WV: l.WV[:d*d], WO: l.WO[:d*d],
+			W1: l.W1[:d*base.Config.DFF], W2: l.W2[:base.Config.DFF*d],
+		})
+	}
+	if narrow.Config.DModel == base.Config.DModel {
+		t.Fatal("the copy has the bundle's width, so this test proves nothing")
+	}
+
+	a := New(&narrow)
+	a.Step = 1
+	tr := ui.NewTester(a.View, 1500, 4000)
+	tr.Frame()
+	joined := strings.Join(tr.Texts(), "\n")
+	if !strings.Contains(joined, "这 ") {
+		t.Fatal("the embedding card is missing")
+	}
+	wantTitle := fmt.Sprintf("这 %d 个维度里有「意思」吗", narrow.Config.DModel)
+	if !strings.Contains(joined, wantTitle) {
+		t.Fatalf("with d_model=%d the card is not titled %q; it is still naming the bundle's width",
+			narrow.Config.DModel, wantTitle)
+	}
+	// The stale constant must be gone entirely, not merely accompanied by a corrected string.
+	if strings.Contains(joined, fmt.Sprintf("这 %d 个维度", base.Config.DModel)) {
+		t.Fatalf("the card still renders the bundle's width %d for a model %d wide",
+			base.Config.DModel, narrow.Config.DModel)
+	}
+}
