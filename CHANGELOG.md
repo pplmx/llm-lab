@@ -6,6 +6,16 @@
 
 ### Added
 
+- **矩阵乘的 SIMD 内核会把偏置项整个丢掉，而没有任何测试发现过——因为本仓库所有调用方都传 `nil`。** 新增 `TestMatMulRowsMatchesANaiveReference`（拿三重循环当参照，覆盖四行分块的边界、向量宽度的上下、以及 FFN 的 96×384）第一次在 `GOEXPERIMENT=simd` 下跑就报 `worst deviation 4.000e+00`
+  - 根因：`matMulRows` 先把 `b` `copy` 进 `out` 当初始值，然后 `matMulRowsRange` 的**向量路径用 `Store` 覆盖**目标行，只有标量尾循环用 `+=`。于是「向量宽度覆盖到的列」偏置全丢、「标量尾处理的列」偏置保留——实测同一个 4×3×8 的乘法里，col 5 与 col 8（宽 8 的整数倍之外）是对的，其余全错
+  - 这不是舍入误差：偏差是 **4.0**，因为偏置本身是 −4
+  - 影响面：`internal/model/gpt.go` 的六个调用点**全部传 `nil`**，所以本模型的输出一直是对的——**这不是一个正在发生的 bug，是一个正确的巧合**。但 `matMulRows` 的签名公开接受 bias，两个 SIMD 内核（amd64 与 generic）都有这个问题，generic 那个在 CI 里连编译都不会发生
+  - 修法：把加偏置从 `matMulRows` 的「预填」改成「事后 `addBias`」。内核必须能覆盖目标行（这正是它能用向量 store 的原因），所以偏置只能在乘完之后加——这对累加型的标量循环和覆盖型的向量路径都成立
+  - 验证：修完同一个复现在标量与 SIMD 下 mismatch 都是 0；`TestBundledParity` 与 `TestParityEveryTensor` 仍通过，说明模型输出没变
+  - 顺带补上 `TestMatMulRowsCoversEveryRemainder`：断言**最后不足四行的尾部行也被算了**。只查「输出形状对不对」抓不到这个——没写完的尾部行是零，而零的形状是对的
+- **补上三个内核里唯一没有对照测试的那一类**：`matmul_kernel_scalar.go`、`matmul_kernel_simd_amd64.go`、`matmul_kernel_simd_generic.go` 共用签名、实现完全不同，而 CI 只跑前两个（默认 amd64 与 `GOEXPERIMENT=simd` amd64）。**arm64 的 SIMD 内核是唯一一个「会编译但永远不会运行」的配置**
+  - 新测试在每种配置下都跑，因此覆盖的是「当前编译进来的那个内核」，而不是 CI 恰好会构建的那两个。这台机器没有 arm64 模拟器，跑不了那个内核，这一点已写进测试注释而不是假装覆盖了
+
 - **又一条「测试名和注释声称的事，函数体从没验证」：`TestNextByteSkillIsCalibratedAtTOne` 名字里就写着最低点在 T=1，而实测是 1.25 / 1.50 / 2.00。** 卡片在更早一轮已经改成现算真实最低点，README 那句话和这条测试的前提都被落下了
   - 为什么它一直绿：它只比较 `loss(0.5) > loss(1.0)` 和 `loss(2.0) > loss(1.0)` 这两个**单边不等式**。谷底在 1.25 的曲线同样满足这两条——所以「最低点在 T=1」这个断言从来没被执行过，执行的是「T=1 不在单调坡上」
   - 实测三个提示词的最低点：默认 **1.25**、`attention is all you need` **1.50**、`hi` **2.00**，**没有一个在 1.0**

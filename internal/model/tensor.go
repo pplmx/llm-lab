@@ -33,17 +33,20 @@ const parallelWork = 1 << 18
 // major) and adds bias b, returning rows×outDim. Large products are split
 // across rows: every row is an independent dot product, so the split is
 // exact and needs no synchronization beyond waiting for the workers.
+//
+// The bias is added after the multiply, not written into out beforehand, because the kernels
+// overwrite their rows rather than accumulating into them: matMulRowsRange's vector paths end
+// with Store, which replaces the destination, while only their scalar tail loops use +=.
+// Seeding out with the bias therefore survived for the columns the scalar tail handled and
+// vanished for every column a vector wrote — a bug that no caller could see, because every
+// call site in this model passes a nil bias. TestMatMulRowsMatchesANaiveReference caught it
+// on the first run of the amd64 SIMD build.
 func matMulRows(x [][]float32, w []float32, b []float32, outDim int) [][]float32 {
 	if len(x) == 0 {
 		return nil
 	}
 	inDim := len(x[0])
 	out := newMatrix(len(x), outDim)
-	if b != nil {
-		for i := range out {
-			copy(out[i], b)
-		}
-	}
 	rows := len(x)
 	workers := 1
 	if rows*inDim*outDim >= parallelWork {
@@ -59,6 +62,7 @@ func matMulRows(x [][]float32, w []float32, b []float32, outDim int) [][]float32
 	}
 	if workers <= 1 {
 		matMulRowsRange(out, x, w, outDim, 0, rows)
+		addBias(out, b)
 		return out
 	}
 	chunk := (rows + workers - 1) / workers
@@ -76,7 +80,25 @@ func matMulRows(x [][]float32, w []float32, b []float32, outDim int) [][]float32
 		}(start, end)
 	}
 	wg.Wait()
+	addBias(out, b)
 	return out
+}
+
+// addBias adds b to every row of out. Separate from matMulRows so the multiply stays a
+// multiply: the kernels must be free to overwrite their destination, which is what lets them
+// use vector stores, and a bias applied afterwards is the only arrangement that works for
+// both the accumulating scalar loop and the overwriting vector ones.
+func addBias(out [][]float32, b []float32) {
+	if b == nil {
+		return
+	}
+	for _, row := range out {
+		for j := range b {
+			if j < len(row) {
+				row[j] += b[j]
+			}
+		}
+	}
 }
 
 // layerNorm normalizes each row to zero mean and unit variance, then scales
