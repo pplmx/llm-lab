@@ -8907,45 +8907,105 @@ func TestOutputCardSaysWhenItIgnoresTheSelection(t *testing.T) {
 	}
 }
 
-// TestHoverFeedbackIsWhereItCarriesInformation records which stages highlight on hover and why the rest do not.
+// TestHoverFeedbackIsWhereItCarriesInformation records which stages carry hover feedback, and
+// checks it per element rather than per region.
 //
-// Sweeping a hover grid over the stage column shows the picture changing on stages 2 to 5 (the embedding strips,
-// the QKV vectors, the score matrix, the softmax matrix and the residual strips) and not changing on 1, 6 and 7.
-// That difference is deliberate rather than a gap.
+// The original form of this test swept a grid across the stage column and asked whether *any*
+// text changed anywhere. That question is answered by any hoverable thing on the page, so it
+// could not fail for the reason it was written: breaking the vector strips' readouts left it
+// green, because the FFN stage also reacts at y>=720 (measured: 3 texts change there even with
+// every strip's readout disabled). The gap was recorded in the changelog two rounds ago and is
+// what this version closes.
 //
-// The elements that do highlight expose one value out of many — a single dimension of a 96-long vector, a single
-// cell of a 36×36 matrix — so pointing at one has to change something or the reader cannot tell which they are
-// on. The elements on stages 1, 6 and 7 label themselves: a token chip shows its glyph and id, a Top-12 bar shows
-// its byte and percentage, and a GELU histogram bar is read against the axis printed beneath it. Highlighting
-// those would add colour without adding information, and tooltips already carry the detail.
-//
-// Recorded so a later pass does not read the three zeroes as three bugs.
+// The distinction that matters is which stages expose one value out of many — a single
+// dimension of a 96-long vector, a single cell of a 36x36 matrix — where pointing at an element
+// has to name it or the reader cannot tell which they are on. That is six of the seven stages:
+// the embedding strips are the first element in the app that needs it, so the list starts at
+// stage 2 and runs to stage 7. Only stage 1 has none, because a token chip labels itself with a
+// glyph and an id — highlighting it would add colour without adding information.
 func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
-	hoverChanges := func(step int) int {
+	// stagesWithHover names, for each stage that must carry hover feedback, the hover field
+	// its own elements write. Asserting on the field rather than on "some text changed" is
+	// what makes the check element-specific: a stage cannot satisfy it with somebody else's
+	// highlight, and the failure names the missing element instead of a count.
+	// The fields here were measured, not guessed: each was found by sweeping the stage's
+	// column and recording which field first goes non-negative. An earlier draft listed the
+	// stage names from the comment above instead, and reported stage 5 (the residual stage)
+	// as having no hover feedback — it writes HoverDimIn, and the guess had put the matrix
+	// stages one step too high.
+	stagesWithHover := []struct {
+		step int
+		name string
+		read func(*App) int
+	}{
+		{1, "嵌入向量色带", func(a *App) int { return a.HoverDimIn }},
+		{2, "分数矩阵", func(a *App) int { return a.HoverQ }},
+		{3, "注意力矩阵", func(a *App) int { return a.HoverQ }},
+		{4, "残差色带", func(a *App) int { return a.HoverDimIn }},
+		{5, "FFN 隐藏层 / 输出色带", func(a *App) int { return a.HoverDimH }},
+		{6, "逐位置条带", func(a *App) int { return a.PredHover }},
+	}
+	// reaches requires the element to react *visibly*: the hover field is set AND the frame's
+	// text changed. Checking only the field is not enough, and that is the lesson from this
+	// test's own history — disabling every strip's readout leaves the fields set to the right
+	// dimension while the reader sees nothing change, and a field-only assertion stays green
+	// (verified by mutation). The two together are what "pointing at an element names it" means.
+	//
+	// The pointer has to land on the element and the elements sit at different heights per
+	// stage, so the probe sweeps. It stops at the first hit that satisfies both conditions.
+	reaches := func(step int, read func(*App) int) (bool, string) {
 		a := newTestApp(t)
 		a.Step = step
 		a.SelToken = 20
 		tr := ui.NewTester(a.View, 1500, 2300)
 		tr.Frame()
 		base := tr.Texts()
-		best := 0
-		// A finer grid than the original 100-DIP steps. Those were coarse enough that whether the
-		// probe hit a strip depended on where the cards happened to sit — adding a card above the
-		// strips moved them and the sweep started reporting "no hover feedback" for a stage whose
-		// strips were still perfectly hoverable (measured: the residual strips write HoverDimIn at
-		// y=1058, between the old probe's 1000 and 1100 rows). The question this test asks is
-		// whether a stage has hover feedback at all, so the probe has to be able to find it.
-		//
-		// The sweep stops at the first hit. The question is whether the stage has hover
-		// feedback at all, and one hit answers it; continuing to the end cost 4,500 frame
-		// renders across the seven stages and made this the slowest test in the repository
-		// by a wide margin — measured at 133s of a 310s suite, which pushed `go test` past
-		// its 300s timeout under -timeout and turned CI red while every assertion was green.
-		// Start below the card-row chips (they end near y=235 at this window size) so a
-		// tooltip on a chip cannot be mistaken for a strip highlight, but above the first
-		// card's contents: measured, the residual stage's first strip sits at y=400-419, so
-		// starting at 420 skipped the very thing this sweep is looking for.
-		for y := 320; y < 2200 && best == 0; y += 25 {
+		// Start below the card-row chips (they end near y=235 at this size) so a chip tooltip
+		// is never mistaken for the element, and above the first card's contents.
+		for y := 320; y < 2200; y += 25 {
+			for x := 300; x < 1150; x += 100 {
+				tr.Move(float32(x), float32(y))
+				tr.Frame()
+				if read(a) < 0 {
+					continue
+				}
+				now := tr.Texts()
+				n := len(base)
+				if len(now) < n {
+					n = len(now)
+				}
+				for i := 0; i < n; i++ {
+					if base[i] != now[i] {
+						return true, ""
+					}
+				}
+				// The field was written but nothing on screen moved: the readout that names
+				// the hovered element is missing or not rendered.
+				return false, fmt.Sprintf("the field was set at (%d,%d) but no text changed", x, y)
+			}
+		}
+		return false, "the pointer never reached it"
+	}
+	for _, stage := range stagesWithHover {
+		ok, why := reaches(stage.step, stage.read)
+		if !ok {
+			t.Fatalf("stage %d no longer carries hover feedback for %s (%s); those elements expose "+
+				"one value out of many and the reader needs the pointer to name which",
+				stage.step+1, stage.name, why)
+		}
+	}
+
+	// Stage 1 must stay without one: its token chips label themselves with a glyph and an id,
+	// so a highlight would add colour without adding information. If it gains one, this record
+	// is stale rather than the app being wrong — the reasoning above needs revisiting.
+	for _, step := range []int{0} {
+		a := newTestApp(t)
+		a.Step = step
+		a.SelToken = 20
+		tr := ui.NewTester(a.View, 1500, 2300)
+		tr.Frame()
+		base := tr.Texts()
+		for y := 320; y < 2200; y += 25 {
 			for x := 300; x < 1150; x += 100 {
 				tr.Move(float32(x), float32(y))
 				tr.Frame()
@@ -8960,42 +9020,11 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 						d++
 					}
 				}
-				if d > best {
-					best = d
-					break
+				if d > 0 {
+					t.Fatalf("stage %d now changes on hover (%d texts at (%d,%d)); update this "+
+						"record's reasoning", step+1, d, x, y)
 				}
 			}
-		}
-		return best
-	}
-
-	// The stages that highlight must keep doing so.
-	//
-	// Stage 7 joined this list when the per-position strip was added: it is one cell per
-	// position, seven cells wide of prose either side, so pointing at one has to say
-	// which — the same reason the matrices and vector strips highlight. The record below
-	// still listed it as inert, which this test caught once its probe was fine enough to
-	// reach the strip (the old 100-DIP grid stepped over it at (300,525)).
-	//
-	// The FFN stage joined this list for the same reason, and its record was stale in the
-	// same way: the stage draws the hidden-layer vector strip and the FFN-output strip,
-	// both with hover readouts (measured: 41 texts change under the pointer at (300,700)).
-	// It was listed as inert because the coarse grid never landed on either strip, and the
-	// concentration card added this round moved them into reach.
-	for _, step := range []int{1, 2, 3, 4, 5, 6} {
-		if n := hoverChanges(step); n == 0 {
-			t.Fatalf("stage %d no longer changes on hover; the strips, matrices and the per-position "+
-				"strip there carry one value per element and the reader needs the highlight to know which", step)
-		}
-	}
-	// The stages that do not must not start: if one of them gains a highlight, this record is stale and the
-	// comment above needs revisiting rather than silently disagreeing.
-	//
-	// Only stage 1 remains. Its token chips label themselves with a glyph and an id, so a
-	// highlight would add colour without adding information.
-	for _, step := range []int{0} {
-		if n := hoverChanges(step); n != 0 {
-			t.Fatalf("stage %d now changes on hover (%d texts); update this record's reasoning", step, n)
 		}
 	}
 }
