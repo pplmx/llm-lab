@@ -1,6 +1,10 @@
 package app
 
 import (
+	"bytes"
+	"compress/gzip"
+	"encoding/json"
+	"fmt"
 	"image"
 	"os"
 	"path/filepath"
@@ -50,34 +54,124 @@ func TestReadmeCalloutCountMatchesTheStages(t *testing.T) {
 	if total != 15 {
 		t.Fatalf("the README says 共十五条, the app renders %d", total)
 	}
-	// And they are on stages 3-7, with two callouts on step 4 (Softmax) and on
-	// step 5 (residual: the stream-grows rebuttal and the logit-lens one).
+	// And the README's own sentence about the distribution has to be the one the app renders.
 	//
-	// Written with the stage's zero-based index in the switch and its one-based
-	// number in the message, which is how the rest of the app talks; the mismatch
-	// between the two is what made this map read as "one extra on the fourth" while
-	// the numbers wanted a different stage.
+	// This check used to be a second hard-coded map — "step 4 has 3" written here, "第 3、4、5 步
+	// 各两条" written in the README — so the two copies could disagree while this test passed.
+	// They did: measured, the app renders 2/2/3/3/3/2 across steps 2-7, and the README said
+	// steps 3, 4 and 5 each had two. The map was right and the prose was wrong, and nothing
+	// compared them. The distribution is now parsed out of the sentence the reader actually
+	// sees, so the two cannot drift apart: a third copy of the numbers is what created the bug.
+	stated := statedCalloutDistribution(t, doc)
 	for step := 0; step < 7; step++ {
-		want := 0
-		switch step {
-		case 1:
-			want = 2 // embeddings are not a geometry + sin/cos is not the only option
-		case 2:
-			want = 2 // sign is not a switch + mask counterfactual
-		case 3:
-			want = 3 // rows vs columns + heads cancel + heads are not copies
-		case 4:
-			want = 3 // stream grows + logit lens + layer rewrite
-		case 5:
-			want = 3 // GELU is not ReLU + FFN writes the answer + the concentration comparison
-		case 6:
-			want = 2 // 97% is not correctness + weight tying is not just cheaper
-		}
-		if counts[step] != want {
-			t.Fatalf("step %d (index %d) renders %d callouts, want %d",
-				step+1, step, counts[step], want)
+		if got, ok := stated[step+1]; ok && counts[step] != got {
+			t.Fatalf("the README says step %d carries %d callouts, the app renders %d",
+				step+1, got, counts[step])
 		}
 	}
+	// Every stage that renders callouts must be mentioned in the sentence, or the README is
+	// silently describing a subset — which is how "第 3、4、5 步各两条" read as complete while
+	// omitting steps 2, 6 and 7 entirely.
+	for step := 0; step < 7; step++ {
+		if counts[step] == 0 {
+			continue
+		}
+		if _, ok := stated[step+1]; !ok {
+			t.Fatalf("the README's 常见误解 sentence does not state how many callouts step %d "+
+				"carries, and it renders %d", step+1, counts[step])
+		}
+	}
+
+	// And the callouts the sentence names by title have to be the ones those stages render.
+	//
+	// The sentence quotes four titles by way of illustration. They were retyped from memory
+	// when the count was fixed, and a quote that drifts from the rendered string is the same
+	// defect one level down: a claim in prose that nothing compares to the app. Only quoted
+	// strings are checked, and only for presence on the stage the sentence attributes them to.
+	a := newTestApp(t)
+	for _, c := range []struct {
+		step  int // one-based, as the README writes it
+		quote string
+	}{
+		{4, "四个头各写一块，加起来就是它们长度的和"},
+		{5, "每一层做同样多的活，层数加倍的模型就是把同一个变换做两遍"},
+		{5, "残差是加法，所以每加一次，数值就更大一点"},
+		{5, "logit lens 能说明模型是一层一层把答案想清楚的"},
+	} {
+		if !strings.Contains(doc, "「"+c.quote+"」") {
+			t.Fatalf("the README no longer quotes %q on step %d", c.quote, c.step)
+		}
+		a.Step = c.step - 1
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		rendered := false
+		for _, t := range tr.Texts() {
+			if t == "「"+c.quote+"」" {
+				rendered = true
+				break
+			}
+		}
+		if !rendered {
+			t.Fatalf("the README quotes %q as a callout on step %d, which no longer renders it",
+				c.quote, c.step)
+		}
+	}
+}
+
+// statedCalloutDistribution parses the callout counts out of the README's sentence about them.
+//
+// It understands the two forms the sentence uses: "第 N 步X条" for one stage and "第 A、B、C 步各
+// 三条" for a run of stages sharing a count, where X is a Chinese numeral. The point is not to
+// accept every possible phrasing — it is to read the numbers the way a reader does, so a claim
+// in the prose is compared against the render instead of against a second copy in this file.
+func statedCalloutDistribution(t *testing.T, doc string) map[int]int {
+	t.Helper()
+	// Isolate the sentence so a numeral from a neighbouring paragraph cannot be matched.
+	start := strings.Index(doc, "各带「常见误解」卡片")
+	if start < 0 {
+		t.Fatal("the README no longer describes the 常见误解 cards; update or remove this test")
+	}
+	end := strings.Index(doc[start:], "；第 1 步")
+	if end < 0 {
+		t.Fatal("the README's 常见误解 sentence no longer ends before the step-1 clause")
+	}
+	sentence := doc[start : start+end]
+
+	cn := map[string]int{"一": 1, "两": 2, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6}
+	out := map[int]int{}
+	// "第 A、B、C 步各 N 条" — a shared count. Parsed first so the more specific pattern below
+	// cannot consume a single-stage prefix of it.
+	shared := regexp.MustCompile(`第 ((?:[0-9]+、)+[0-9]+) 步各([一两二三四五六])条`)
+	for _, m := range shared.FindAllStringSubmatch(sentence, -1) {
+		n, ok := cn[m[2]]
+		if !ok {
+			t.Fatalf("unrecognised numeral %q in the callout sentence", m[2])
+		}
+		for _, part := range strings.Split(m[1], "、") {
+			var step int
+			if _, err := fmt.Sscanf(part, "%d", &step); err != nil {
+				t.Fatalf("unrecognised stage number %q in the callout sentence", part)
+			}
+			out[step] = n
+		}
+	}
+	// "第 N 步X条" — one stage on its own.
+	one := regexp.MustCompile(`第 ([0-9]+) 步([一两二三四五六])条`)
+	for _, m := range one.FindAllStringSubmatch(sentence, -1) {
+		var step int
+		if _, err := fmt.Sscanf(m[1], "%d", &step); err != nil {
+			t.Fatalf("unrecognised stage number %q in the callout sentence", m[1])
+		}
+		n, ok := cn[m[2]]
+		if !ok {
+			t.Fatalf("unrecognised numeral %q in the callout sentence", m[2])
+		}
+		out[step] = n
+	}
+	if len(out) == 0 {
+		t.Fatalf("no callout counts could be read out of the README's sentence: %q", sentence)
+	}
+	return out
 }
 
 // TestReadmeModelBlockMatchesTheWeights: the model paragraph quotes the
@@ -370,11 +464,31 @@ func TestReadmeExplainsTheStripColour(t *testing.T) {
 // parameters. Each is true today — measured 46, capped at 8 in tensor.go, and 252864 which
 // rounds to 25.3万 — but a regenerated fixture, a changed worker cap or a retrained model
 // would leave the prose stale with nothing to notice.
+//
+// The parameter count and the worker cap were checked here; the parity prompt's length was
+// named in this comment for as long as the comment has existed and was never checked at all.
+// It is now, against the fixture itself. That is the same shape as the defect the callout test
+// had: a claim asserted in prose (here, a doc comment) that no code compared to reality.
 func TestReadmeNumbersMatchTheCode(t *testing.T) {
 	doc := readREADME(t)
 
 	// The parameter count is already covered by the test above (a.paramCount() against
 	// "参数量 25.3 万"), so this only adds the two claims nothing checked.
+
+	// The parity fixture's prompt length. The README quotes "46 token" as the size of the
+	// comparison, and the number is the reader's only sense of how much of the network was
+	// checked; regenerating tools/parity.py with a different prompt would leave the prose
+	// describing a fixture that no longer exists.
+	if !strings.Contains(doc, "46 token") {
+		t.Fatal("the README no longer states the parity prompt's length")
+	}
+	fixture, err := os.ReadFile(filepath.Join("..", "model", "testdata", "parity.json.gz"))
+	if err != nil {
+		t.Fatalf("read the parity fixture: %v", err)
+	}
+	if n := parityFixtureIDs(t, fixture); n != 46 {
+		t.Fatalf("the README says the parity prompt is 46 tokens; the fixture has %d", n)
+	}
 
 	// The worker cap.
 	src, err := os.ReadFile(filepath.Join("..", "model", "tensor.go"))
@@ -552,4 +666,28 @@ func TestReadmeSectionsStayUnderTheRightParent(t *testing.T) {
 			"teaching material should not be filed behind the appendices",
 			parent, parentAt, level2[appendixAt], appendixAt)
 	}
+}
+
+// parityFixtureIDs returns the token count of the recorded parity prompt.
+//
+// The fixture is gzipped JSON from tools/parity.py; only the ids are needed, and they are
+// decoded through the same struct shape internal/model uses so a field rename shows up here
+// as a decode failure rather than as a silently wrong zero.
+func parityFixtureIDs(t *testing.T, gz []byte) int {
+	t.Helper()
+	zr, err := gzip.NewReader(bytes.NewReader(gz))
+	if err != nil {
+		t.Fatalf("the parity fixture is not gzip: %v", err)
+	}
+	defer zr.Close()
+	var f struct {
+		IDs []int `json:"ids"`
+	}
+	if err := json.NewDecoder(zr).Decode(&f); err != nil {
+		t.Fatalf("decode the parity fixture: %v", err)
+	}
+	if len(f.IDs) == 0 {
+		t.Fatal("the parity fixture records no ids")
+	}
+	return len(f.IDs)
 }
