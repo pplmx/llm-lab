@@ -964,7 +964,13 @@ func shortPath(p string, n int) string {
 }
 
 func humanCount(n int) string {
-	if n >= 1000000 {
+	// The thresholds sit just below the point where rounding would carry into the next unit, so a
+	// count never prints as "1000.0K". Measured before this: 999999 rendered as "1000.0K" and
+	// 999999999 as "1000.00M" — numbers that read as belonging to a unit their own label denies.
+	// 999950 is the smallest count whose one-decimal form rounds up to 1000.0K, so it and above
+	// take the M branch. There is no unit past M, so a larger count keeps that label and grows.
+	const kmax = 999950
+	if n >= kmax {
 		return fmt.Sprintf("%.2fM", float64(n)/1e6)
 	}
 	if n >= 1000 {

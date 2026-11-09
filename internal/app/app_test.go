@@ -10015,3 +10015,41 @@ func TestSamplingAtTheContextLimitSaysTheByteIsInvisible(t *testing.T) {
 		t.Fatalf("a prompt with room reported the byte as invisible: %q", b.LastSample)
 	}
 }
+
+// TestHumanCountNeverPrintsAUnitItsLabelDenies checks the parameter count's formatter at the
+// boundaries between units.
+//
+// The thresholds were compared against the raw value, so 999999 took the K branch, divided to
+// 999.999, and printed "1000.0K" — a number that reads as belonging to the next unit while
+// carrying the current unit's label. Measured before this fix: 999999 rendered "1000.0K".
+//
+// The sidebar's only use is the parameter count of a loaded weights file, and the bundled file
+// gives 252864, far from any boundary. The fault therefore needs a hand-built config to appear, but
+// the formatter is a general helper and the failure is glaring when it happens.
+func TestHumanCountNeverPrintsAUnitItsLabelDenies(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want string
+	}{
+		{999, "999"},
+		{1000, "1.0K"},
+		{1049, "1.0K"},
+		{252864, "252.9K"},
+		{999949, "999.9K"},
+		{999951, "1.00M"},
+		{999999, "1.00M"},
+		{1000000, "1.00M"},
+		{1500000, "1.50M"},
+	} {
+		if got := humanCount(tc.n); got != tc.want {
+			t.Errorf("humanCount(%d) = %q, want %q", tc.n, got, tc.want)
+		}
+	}
+	// The general form of the rule: no output may pair a unit suffix with a value that has
+	// carried into the next one.
+	for n := 999900; n < 1000100; n++ {
+		if got := humanCount(n); got == "1000.0K" {
+			t.Fatalf("humanCount(%d) = %q; a count that rounds to 1000 K belongs in M", n, got)
+		}
+	}
+}
