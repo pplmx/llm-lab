@@ -78,6 +78,20 @@ fmt:
 bench:
     go test ./internal/model ./internal/app -run '^$' -bench . -benchmem -count 5
 
+# 复现 README「性能」一节引用的数字（单核 / 4 核，标量与 SIMD）。
+# 上面那个 bench 用机器默认 GOMAXPROCS（这台 128），量与 README 引用的不是同一组条件。
+bench-cores:
+    just _bench-cores ""
+    just _bench-cores "GOEXPERIMENT=simd"
+
+# 参数是环境变量前缀，空串表示标量构建。
+_bench-cores envprefix:
+    @echo "→ 前向基准（{{ if envprefix == "" { "标量" } else { "SIMD" } }}），单核与 4 核"
+    {{ envprefix }} GOMAXPROCS=1 go test ./internal/model -run '^$' -bench BenchmarkForward -count 5
+    {{ envprefix }} GOMAXPROCS=4 go test ./internal/model -run '^$' -bench BenchmarkForward -count 5
+    @echo "→ 整帧渲染 1500×940（4 核，与 README 那个数字同一条件）"
+    GOMAXPROCS=4 go test ./internal/app -run '^$' -bench BenchmarkView -count 5
+
 # 用实验性 SIMD 跑测试（Go 1.27+，amd64 走 AVX，arm64 走 NEON；见 README 性能一节）
 test-simd:
     GOEXPERIMENT=simd go test ./...

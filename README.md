@@ -335,7 +335,7 @@ go run . -weights /path/to/other.json  # 换一份权重（需为 vocab 256 的 
 
 界面本身也能在没有窗口的情况下渲染成 PNG（`ui.Render`）：`RENDER=1 go test ./internal/app -run 'TestRenderSteps|TestRenderSizes'` 会把七个阶段、1180/1500/1920 三种窗口宽度、以及 64 token 长提示词的截图写到 `/tmp`，用于回归检查布局与溢出。加 `RENDER_DIR=<目录>` 可改输出位置（目录不存在会自动创建）——对比改动前后时把它指向两个目录，否则两次渲染会覆盖同一批文件。
 
-性能（AMD EPYC 7742，Go 1.27，单核 / 4 核）：前向 16 token 1.4 / 1.2 ms、64 token 6.2 / 2.4 ms；用实验性 SIMD 构建（`just build-simd`，Go 1.27 的 `simd` 包，amd64 走 AVX、arm64 走 NEON）后 16 token 0.53 / 0.46 ms、64 token 2.5 / 1.4 ms。矩阵乘按行、注意力按头并行，最多 8 个 worker；整帧 `ui.Render` 1500×940 ≈ 9.4 ms（CPU 光栅化，热力图只画因果掩码内的格子）。基准：`just bench`、`just bench-simd`。
+性能（AMD EPYC 7742，Go 1.27，单核 / 4 核）：前向 16 token 1.4 / 1.2 ms、64 token 6.2 / 2.6 ms；用实验性 SIMD 构建（`just build-simd`，Go 1.27 的 `simd` 包，amd64 走 AVX、arm64 走 NEON）后 16 token 0.52 / 0.51 ms、64 token 2.5 / 1.6 ms。矩阵乘按行、注意力按头并行，最多 8 个 worker；整帧 `ui.Render` 1500×940 ≈ 13.6 ms（CPU 光栅化，热力图只画因果掩码内的格子）。基准：`just bench-cores` 按这一节的「单核 / 4 核」条件重量（标量与 SIMD 都跑一遍）；`just bench` / `just bench-simd` 用机器默认 GOMAXPROCS，适合和自己改动的前后做对比，数值不能直接和这里引用的比。
 
 ## 已知限制
 

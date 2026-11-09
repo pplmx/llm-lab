@@ -16,7 +16,8 @@ just test         # go vet + go test
 just check        # gofmt 检查 + vet + test（CI 的主要门槛）
 just build        # 三端构建
 just fmt          # gofmt -w
-just bench        # 基准测试（前向 + 整帧渲染，多轮）
+just bench        # 基准测试（前向 + 整帧渲染，多轮；用机器默认 GOMAXPROCS，适合前后对比）
+just bench-cores  # 按 README 性能一节的「单核 / 4 核」条件量（标量与 SIMD 各一遍）
 just test-simd    # 用实验性 SIMD 跑测试（GOEXPERIMENT=simd）
 just bench-simd   # 用实验性 SIMD 跑前向基准
 just build-simd   # 用实验性 SIMD 构建（可加平台参数）
