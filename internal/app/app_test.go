@@ -2461,7 +2461,13 @@ func stripPoint(t *testing.T, a *App, tr *ui.Tester, sweepTo float32, kind strin
 	// helper reported "no strip writing head found" after a card was added above the strips:
 	// the caller grew the window to fit the stage, but the sweep never looked past its old
 	// bound. The height comes from the caller because Tester exposes no size accessor.
-	for probe := float32(250); probe < sweepTo; probe += 3 {
+	//
+	// The stride is 9 DIP, not 3. The strips it looks for are 16–22 DIP tall, so 9 cannot step
+	// over one, and it was measured to find every kind at the same y as a 3-DIP sweep (hidden
+	// y=385, out y=709 on the FFN stage). At 3 DIP this helper rendered up to 450 frames per
+	// call, which is why TestEachStripWidthHasItsOwnCursor alone took 29 seconds — 14% of a
+	// 206-second suite that CI bounds at 300.
+	for probe := float32(250); probe < sweepTo; probe += 9 {
 		tr.Move(400, probe)
 		tr.Frame()
 		var got int

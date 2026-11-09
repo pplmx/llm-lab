@@ -28,7 +28,13 @@ func TestEveryStageCanBeScrolledToItsEnd(t *testing.T) {
 			tr.Frame()
 			tr.Move(600, 400)
 			tr.Frame()
-			for i := 0; i < 12; i++ {
+			// Eight wheels, not twelve: measured, the tallest stage at the smallest window
+			// needs six 400-DIP steps to reach MaxY (stage 5, MaxY 1777), so eight clears it
+			// on every stage at both sizes with margin. Twelve was a round number that
+			// happened to work. The saving here is small — the scroll animation, not the
+			// wheel count, is what this test spends its time on — but it is nine fewer frame
+			// renders per stage per size for the same assertion.
+			for i := 0; i < 8; i++ {
 				tr.Wheel(600, 400, 0, 400)
 				tr.Advance(2e9)
 			}
@@ -39,7 +45,7 @@ func TestEveryStageCanBeScrolledToItsEnd(t *testing.T) {
 			}
 			// Scrolling back up returns to the top, so the offset is a real
 			// position and not a one-way ratchet.
-			for i := 0; i < 12; i++ {
+			for i := 0; i < 8; i++ {
 				tr.Wheel(600, 400, 0, -400)
 				tr.Advance(2e9)
 			}
