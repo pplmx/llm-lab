@@ -187,45 +187,54 @@ func TestPrintedSoftmaxLineRecomputes(t *testing.T) {
 	}
 }
 
-// TestPrintedLNLineStaysClose checks the LayerNorm line a reader is asked to verify
-// by hand stays within the precision it advertises.
+// TestPrintedLNLineStaysClose redoes the LayerNorm line from the digits it prints.
 //
-// The line prints μ, σ, 1/√(σ²+ε), γ and β, then the result. With γ and β at three
-// decimals the round-off was 3e-4, and 90 of 96 dimensions disagreed with the
-// printed result in the fourth decimal — a reader redoing the arithmetic would
-// find the line wrong. Five decimals for γ/β cut that; the block marks the result
-// "≈" and says the last digits may move, because rounding five factors cannot
-// close exactly.
+// The previous version rounded the model's own floats to the panel's precisions inside the test
+// — round(p.gamma, 5) and so on — so it carried a copy of the formatting. Measured: changing the
+// block to print γ and β at two decimals left this test green, because it was still rounding to
+// five and comparing against values the block no longer displayed.
 func TestPrintedLNLineStaysClose(t *testing.T) {
 	a := newTestApp(t)
 	a.Step = 4
-	l := a.layer()
-	w := a.W.Layers[a.Layer]
-	row := l.AfterAttn[a.SelToken]
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 4000)
+	tr.Frame()
 
-	round := func(v float64, dp int) float64 {
-		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
-		return out
-	}
+	subRe := regexp.MustCompile(`1/√\(σ²\+ε\) = ([0-9.]+)`)
+	lineRe := regexp.MustCompile(`\(([+-]?[0-9.]+) − \(?([+-]?[0-9.]+)\)?\) × ([0-9.]+) × γ ([0-9.]+) \+ β ([0-9.]+) ≈ ([+-][0-9.]+)`)
 
-	worst := 0.0
-	for dim := 0; dim < len(row); dim++ {
-		p := computeLN(row, w.LN2G, w.LN2B, dim)
-		if !p.ok {
-			t.Fatalf("dim %d: computeLN declined", dim)
-		}
-		// Substitute exactly what the panel prints.
-		hand := (round(p.x, 4)-round(p.mean, 4))*round(p.invStd, 4)*
-			round(p.gamma, 5) + round(p.beta, 5)
-		if d := math.Abs(hand - p.out); d > worst {
-			worst = d
+	invStd := 0.0
+	found := false
+	for _, line := range tr.Texts() {
+		if m := subRe.FindStringSubmatch(line); m != nil {
+			invStd, _ = strconv.ParseFloat(m[1], 64)
+			found = true
+			break
 		}
 	}
-	if worst > 5e-4 {
-		t.Fatalf("rounding to the printed decimals moves the result by %.2e, which "+
-			"changes the fourth decimal the panel shows", worst)
+	if !found {
+		t.Fatal("the LayerNorm block did not print its scale factor")
 	}
-	t.Logf("worst gap between the printed line and its own arithmetic: %.2e", worst)
+	for _, line := range tr.Texts() {
+		m := lineRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		v := make([]float64, len(m)-1)
+		for i := range v {
+			f, err := strconv.ParseFloat(m[i+1], 64)
+			if err != nil {
+				t.Fatalf("cannot parse %q in %q", m[i+1], line)
+			}
+			v[i] = f
+		}
+		hand := (v[0]-v[1])*invStd*v[3] + v[4]
+		if gap := math.Abs(hand - v[5]); gap > 5e-4 {
+			t.Fatalf("the printed line %q re-substitutes to %.6f, off by %.2e", line, hand, gap)
+		}
+		return
+	}
+	t.Fatal("the LayerNorm arithmetic line did not render")
 }
 
 // TestPrintedLNActuallyMatchesTheTrace is the other half: whatever the line shows
@@ -245,46 +254,48 @@ func TestPrintedLNActuallyMatchesTheTrace(t *testing.T) {
 	}
 }
 
-// TestPrintedWeightedSumStaysClose checks the Σα·V line stays within the precision
-// it prints.
+// TestPrintedWeightedSumStaysClose re-adds the weighted-sum block's printed terms.
 //
-// The line lists the three largest terms, the remainder, and the total. At three
-// decimals for the terms — one less than the remainder and the total — each term
-// was rounded by up to 5e-4, and the reader's sum landed in the wrong fourth
-// decimal on all 24 dimensions of the row measured, worst gap 9.8e-4. The line
-// exists to be re-added, so the pieces are now printed at the same precision as
-// the total, which brings the worst gap to 7.9e-5.
+// It used to re-round the model's floats itself, keeping a copy of the block's precision.
 func TestPrintedWeightedSumStaysClose(t *testing.T) {
 	a := newTestApp(t)
 	a.Step = 3
-	h := a.layer().Heads[a.Head]
-	q := a.SelToken
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 10, 4
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
 
-	round := func(v float64, dp int) float64 {
-		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
-		return out
-	}
+	termsRe := regexp.MustCompile(`Out\[\d+\]\[d\d+\] = Σ α·V 的三项最大贡献：(.*)$`)
+	termRe := regexp.MustCompile(`k\d+ ([+-][0-9.]+)`)
+	restRe := regexp.MustCompile(`余 \d+ 项 ([+-][0-9.]+) ≈ ([+-][0-9.]+)$`)
 
-	worst := 0.0
-	for dim := 0; dim < a.Trace.Config.DHead(); dim++ {
-		p := computeWeighted(h.Attn[q], h.V, q, dim, len(a.Trace.Tokens))
-		if !p.OK {
-			t.Fatalf("dim %d: computeWeighted declined", dim)
+	var sum, rest, shown float64
+	gotTerms, gotTotal := false, false
+	for _, line := range tr.Texts() {
+		if m := termsRe.FindStringSubmatch(line); m != nil {
+			for _, tm := range termRe.FindAllStringSubmatch(m[1], -1) {
+				f, _ := strconv.ParseFloat(tm[1], 64)
+				sum += f
+			}
+			gotTerms = true
+			continue
 		}
-		sum := 0.0
-		for _, tm := range p.Top {
-			sum += round(tm.Val, 4)
+		if !gotTerms || gotTotal {
+			continue
 		}
-		sum += round(p.Rest, 4)
-		if d := math.Abs(sum - p.Out); d > worst {
-			worst = d
+		if m := restRe.FindStringSubmatch(line); m != nil {
+			rest, _ = strconv.ParseFloat(m[1], 64)
+			shown, _ = strconv.ParseFloat(m[2], 64)
+			gotTotal = true
 		}
 	}
-	if worst > 2e-4 {
-		t.Fatalf("adding the printed pieces moves the total by %.2e, more than a "+
-			"last-digit rounding", worst)
+	if !gotTerms || !gotTotal {
+		t.Fatal("the weighted-sum block did not render its terms and total")
 	}
-	t.Logf("worst gap between the printed terms and the printed total: %.2e", worst)
+	if gap := math.Abs(sum + rest - shown); gap > 5e-4 {
+		t.Fatalf("the printed terms plus the printed remainder come to %.6f, the block states "+
+			"%.6f, off by %.2e", sum+rest, shown, gap)
+	}
 }
 
 // TestPrintedWeightedSumMatchesTheTrace keeps the printed total equal to the
@@ -302,47 +313,47 @@ func TestPrintedWeightedSumMatchesTheTrace(t *testing.T) {
 	}
 }
 
-// TestPrintedFFNSumStaysClose checks the FFN line stays within the precision it
-// prints.
+// TestPrintedFFNSumStaysClose re-adds the FFN output block's printed terms.
 //
-// The line lists the three largest contributions, the exact remainder, and the
-// output. With the terms and the remainder at three decimals and the total at
-// four, the reader's sum missed the printed result on 88 of 96 dimensions, worst
-// 1.5e-3 — the widest of the arithmetic mismatches found so far. All four pieces
-// now share four decimals, which brings it to 1.5e-4 with the remaining
-// disagreements in the last digit only.
+// It used to re-round the model's floats itself, keeping a copy of the block's precision.
 func TestPrintedFFNSumStaysClose(t *testing.T) {
 	a := newTestApp(t)
 	a.Step = 5
-	l := a.layer()
-	w2 := a.W.Layers[a.Layer].W2
-	dff, d := a.W.Config.DFF, a.W.Config.DModel
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 4000)
+	tr.Frame()
 
-	round := func(v float64, dp int) float64 {
-		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
-		return out
-	}
+	termsRe := regexp.MustCompile(`out\[\d+\] 的三项最大贡献：(.*)$`)
+	termRe := regexp.MustCompile(`k\d+ ([+-][0-9.]+)`)
+	restRe := regexp.MustCompile(`余 \d+ 项 ([+-][0-9.]+) ≈ ([+-][0-9.]+)$`)
 
-	worst := 0.0
-	for j := 0; j < d; j++ {
-		p := computeFFN(l.Hidden[a.SelToken], w2, dff, d, j)
-		if !p.OK {
-			t.Fatalf("dim %d: computeFFN declined", j)
+	var sum, rest, shown float64
+	gotTerms, gotTotal := false, false
+	for _, line := range tr.Texts() {
+		if m := termsRe.FindStringSubmatch(line); m != nil {
+			for _, tm := range termRe.FindAllStringSubmatch(m[1], -1) {
+				f, _ := strconv.ParseFloat(tm[1], 64)
+				sum += f
+			}
+			gotTerms = true
+			continue
 		}
-		sum := 0.0
-		for _, tm := range p.Top {
-			sum += round(tm.V, 4)
+		if !gotTerms || gotTotal {
+			continue
 		}
-		sum += round(p.Rest, 4)
-		if gap := math.Abs(sum - p.Out); gap > worst {
-			worst = gap
+		if m := restRe.FindStringSubmatch(line); m != nil {
+			rest, _ = strconv.ParseFloat(m[1], 64)
+			shown, _ = strconv.ParseFloat(m[2], 64)
+			gotTotal = true
 		}
 	}
-	if worst > 3e-4 {
-		t.Fatalf("adding the printed pieces moves the output by %.2e, more than a "+
-			"last-digit rounding", worst)
+	if !gotTerms || !gotTotal {
+		t.Fatal("the FFN output block did not render its terms and total")
 	}
-	t.Logf("worst gap between the printed terms and the printed output: %.2e", worst)
+	if gap := math.Abs(sum + rest - shown); gap > 5e-4 {
+		t.Fatalf("the printed terms plus the printed remainder come to %.6f, the block states "+
+			"%.6f, off by %.2e", sum+rest, shown, gap)
+	}
 }
 
 // TestPrintedFFNSumMatchesTheTrace keeps the printed output equal to the model's.
@@ -360,43 +371,58 @@ func TestPrintedFFNSumMatchesTheTrace(t *testing.T) {
 	}
 }
 
-// TestPrintedResidualChainCloses checks the residual chain's lines add up.
+// TestPrintedResidualChainCloses walks the residual chain's printed additions.
 //
-// Unlike the three blocks fixed this and the two previous rounds, this one already
-// printed every term and every running total at four decimals, so the reader's
-// running sum stays within a last-digit rounding (worst 1.2e-4 across 96
-// dimensions). The test records that, so a future change to the printout cannot
-// quietly reintroduce the mismatch the others had.
+// It used to re-round the model's floats itself, keeping a copy of the block's precision.
 func TestPrintedResidualChainCloses(t *testing.T) {
 	a := newTestApp(t)
 	a.Step = 4
-	l := a.layer()
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 4000)
+	tr.Frame()
 
-	round := func(v float64, dp int) float64 {
-		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', dp, 64), 64)
-		return out
-	}
+	startRe := regexp.MustCompile(`的残差流（层 \d+）：进入本层的 x = ([+-][0-9.]+)$`)
+	stepRe := regexp.MustCompile(`^([+-][0-9.]+) \+ .*子层 Δ \(([+-][0-9.]+)\) = ([+-][0-9.]+)$`)
 
-	worst := 0.0
-	for dim := 0; dim < a.Trace.Config.DModel; dim++ {
-		steps, ok := residualChain(*l, a.SelToken, dim)
-		if !ok {
-			t.Fatalf("dim %d: residualChain declined", dim)
+	running, found := 0.0, false
+	for _, line := range tr.Texts() {
+		if m := startRe.FindStringSubmatch(line); m != nil {
+			running, found = mustParseF(t, m[1], line), true
+			continue
 		}
-		// The first line prints the starting value as both term and sum.
-		running := round(steps[0].Term, 4)
-		for _, s := range steps[1:] {
-			running += round(s.Term, 4)
-			if gap := math.Abs(running - s.Sum); gap > worst {
-				worst = gap
-			}
+		if !found {
+			continue
 		}
+		m := stepRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		prev := mustParseF(t, m[1], line)
+		term := mustParseF(t, m[2], line)
+		shown := mustParseF(t, m[3], line)
+		if gap := math.Abs(prev + term - shown); gap > 5e-4 {
+			t.Fatalf("the printed step %q does not close: %.4f + %.4f = %.4f, off by %.2e",
+				line, prev, term, shown, gap)
+		}
+		if gap := math.Abs(prev - running); gap > 5e-4 {
+			t.Fatalf("the printed step %q starts from %.4f, but the previous line ended at "+
+				"%.4f", line, prev, running)
+		}
+		running = shown
 	}
-	if worst > 2e-4 {
-		t.Fatalf("adding the printed residual terms moves the running total by %.2e",
-			worst)
+	if !found {
+		t.Fatal("the residual chain did not render")
 	}
-	t.Logf("worst gap in the printed residual chain: %.2e", worst)
+}
+
+// mustParseF reads a printed number, failing the test rather than returning zero.
+func mustParseF(t *testing.T, s, line string) float64 {
+	t.Helper()
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		t.Fatalf("cannot parse %q in %q", s, line)
+	}
+	return v
 }
 
 // TestEveryPrintedArithmeticBlockStaysClose is the closure check for the class of
