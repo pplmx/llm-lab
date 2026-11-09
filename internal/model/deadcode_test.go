@@ -25,8 +25,6 @@ func TestNoUnusedFunctionsInModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fset := token.NewFileSet()
-
 	declared := map[string]string{}
 	stripped := make([]string, 0, len(files))
 
@@ -35,11 +33,36 @@ func TestNoUnusedFunctionsInModel(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		text := string(src)
-		f, err := parser.ParseFile(fset, name, src, 0)
+		// Every file gets its own FileSet. Sharing one across the loop makes each
+		// later file's offsets cumulative, so the "blank this declaration's own name"
+		// edit below lands at the wrong place in all but the first file.
+		fileFset := token.NewFileSet()
+		f, err := parser.ParseFile(fileFset, name, src, parser.ParseComments)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
 		}
+
+		// Blank the comments from the parser's own ranges rather than scanning bytes.
+		// A hand-rolled scanner cannot tell a comment opener from the same two bytes
+		// inside a string literal, and this package's tests call filepath.Glob("*.go")
+		// — the "/*" in that literal starts a block comment as far as a byte scanner is
+		// concerned, which swallows the rest of the file and hides every declaration in
+		// it. The app package had exactly this defect and it was live: two files lost
+		// eight function declarations between them while the check stayed green.
+		// Nothing triggers it here yet, and this is why it will not.
+		out := []byte(src)
+		for _, group := range f.Comments {
+			for _, c := range group.List {
+				off := fileFset.Position(c.Pos()).Offset
+				end := fileFset.Position(c.End()).Offset
+				for i := off; i < end && i < len(out); i++ {
+					if out[i] != '\n' {
+						out[i] = ' '
+					}
+				}
+			}
+		}
+
 		for _, d := range f.Decls {
 			fd, ok := d.(*ast.FuncDecl)
 			if !ok || fd.Name == nil || fd.Name.IsExported() {
@@ -51,13 +74,13 @@ func TestNoUnusedFunctionsInModel(t *testing.T) {
 				continue // entry points, called by the testing package
 			}
 			declared[fd.Name.Name] = name
-			off := fset.Position(fd.Name.Pos()).Offset
-			if off >= 0 && off+len(fd.Name.Name) <= len(text) {
-				text = text[:off] + strings.Repeat(" ", len(fd.Name.Name)) +
-					text[off+len(fd.Name.Name):]
+			// Blank the declaration's own name, at the same length, so no offset moves.
+			off := fileFset.Position(fd.Name.Pos()).Offset
+			for i := off; i < off+len(fd.Name.Name) && i < len(out); i++ {
+				out[i] = ' '
 			}
 		}
-		stripped = append(stripped, stripGoComments(text))
+		stripped = append(stripped, string(out))
 	}
 
 	joined := strings.Join(stripped, "\n")
@@ -86,28 +109,4 @@ func hasIdent(s, name string) bool {
 
 func identByte(b byte) bool {
 	return b == '_' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
-}
-
-func stripGoComments(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		switch {
-		case i+1 < len(s) && s[i] == '/' && s[i+1] == '/':
-			for i < len(s) && s[i] != '\n' {
-				i++
-			}
-			b.WriteByte('\n')
-		case i+1 < len(s) && s[i] == '/' && s[i+1] == '*':
-			i += 2
-			for i+1 < len(s) && !(s[i] == '*' && s[i+1] == '/') {
-				i++
-			}
-			i++
-			b.WriteByte(' ')
-		default:
-			b.WriteByte(s[i])
-		}
-	}
-	return b.String()
 }

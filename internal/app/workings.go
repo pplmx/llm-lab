@@ -781,8 +781,9 @@ func predictEveryPosition(w *model.Weights, tr *model.Trace, temperature float64
 // scalar `+=` tail while the longer run's take the fused-multiply-add path. FMA rounds once
 // per term where `+=` rounds twice, so those rows differ in the last bits (measured worst
 // |Δp| = 1.8e-6 under GOEXPERIMENT=simd, over twelve prompts; the default build's is
-// exactly 0). A mask that actually leaked a future key moves a probability by ~3e-2 — four
-// orders of magnitude above that noise, and it is what the negative control below uses.
+// exactly 0). A mask that actually leaked a future key moves a probability by 2.7e-1 at the
+// worst affected row and 3.5e-2 at their median — four orders of magnitude above that noise,
+// and it is what the negative control below uses.
 //
 // So the bar is causalTolerance: tight enough that any real mask defect fails it, loose
 // enough that the two matmul kernels agree. Bit-exactness would have been a stronger claim
@@ -807,12 +808,29 @@ type causalComparison struct {
 	OK bool
 }
 
+// causalLeakMagnitude is, in one significant figure, how far a probability moves when the mask
+// actually leaks a future key — the scale the tolerance has to sit below.
+//
+// A constant rather than a live measurement, and that is a deliberate exception to this
+// project's rule that numbers on screen are computed. Measuring it means running a second
+// forward pass with a deliberately broken mask, on every frame, to print a figure describing a
+// defect nobody is looking at. The value is not left unchecked: TestCausalToleranceSeparatesNoise
+// FromDefects requires the tolerance to sit at least two orders below it, so a change that
+// invalidated the separation fails there instead of silently leaving the sentence wrong.
+//
+// Measured by leaking one future key into every row through Scores and comparing the resulting
+// distributions with the clean run's, on the default prompt: the worst affected row moves by
+// 2.71e-01 and the median affected row by 3.45e-02. An earlier version of this comment said
+// 3.16e-02 — that figure came from a probe that reported only the rows the clean run scores and
+// then took one of them, so the median was recorded as if it were the maximum.
+const causalLeakMagnitude = 3e-1
+
 // causalTolerance is how far a probability may move between the two runs and still count as
 // unchanged.
 //
 // Measured, not guessed: 1e-5 sits about five times above the worst deviation the two matmul
 // kernels produce (1.8e-6, GOEXPERIMENT=simd, twelve prompts up to the 64-token ceiling) and
-// about three orders of magnitude below what an actual mask defect does (3e-2, measured by
+// about four orders of magnitude below what an actual mask defect does (2.7e-1, measured by
 // leaking one future key into every row). Anything in between would work; the gap is wide
 // enough that the exact value does not need to be tuned.
 const causalTolerance = 1e-5

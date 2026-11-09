@@ -3781,7 +3781,7 @@ func TestCausalInvarianceHoldsOnEveryPrompt(t *testing.T) {
 // The negative control perturbs one row the way an off-by-one mask would and requires the
 // comparison to notice and to name the position. The size of the perturbation is not
 // arbitrary: leaking one future key into every row of the real forward pass moves a
-// probability by ~3e-2 (measured; see causalTolerance), so 1e-3 is a smaller defect than a
+// probability by ~2.7e-1 (measured; see causalTolerance), so 1e-3 is a far smaller defect than a
 // real leak and still has to be caught. Two mutations are checked — one that changes the
 // argmax and one that leaves it alone — because a comparison that only watched the argmax
 // would miss the second, which is precisely the shape a subtle mask bug has.
@@ -3852,9 +3852,13 @@ func TestCausalToleranceSeparatesNoiseFromDefects(t *testing.T) {
 	if causalTolerance <= 0 {
 		t.Fatalf("causalTolerance is %.0e", causalTolerance)
 	}
-	// The smallest defect the check must catch: perturbing a single non-max probability.
 	a := newTestApp(t)
 	rows := predictEveryPosition(a.W, a.Trace, causalReferenceTemperature)
+
+	// The smallest defect the check must catch: perturbing a single non-max probability. A
+	// mask bug that adjusts only the tail of a distribution — which is what an off-by-one
+	// mask does on a row whose top byte was never in doubt — looks like this, not like a
+	// changed argmax.
 	mutated := make([]positionPrediction, len(rows))
 	copy(mutated, rows)
 	mutated[3].Probs = append([]float32(nil), rows[3].Probs...)
@@ -3863,11 +3867,38 @@ func TestCausalToleranceSeparatesNoiseFromDefects(t *testing.T) {
 		t.Fatalf("a 1e-3 move in one probability was called unchanged at a tolerance of %.0e",
 			causalTolerance)
 	}
-	// And the largest thing that must be called unchanged: the two kernels' rounding gap,
-	// bounded by half the tolerance so the margin is not silently consumed.
-	if half := causalTolerance / 2; half <= 0 {
-		t.Fatalf("half the tolerance is %.0e", half)
+
+	// The largest thing that must still be called unchanged: a deviation at half the tolerance,
+	// which is where the SIMD kernel's rounding sits relative to the margin. If this stops
+	// being "unchanged", the margin has been consumed and the real comparison would start
+	// reporting the two kernels as a mask defect.
+	mutated[3].Probs = append([]float32(nil), rows[3].Probs...)
+	mutated[3].Probs[(rows[3].Guess+1)%len(rows[3].Probs)] += float32(causalTolerance / 2)
+	if _, same := comparePrediction(rows[3], mutated[3]); !same {
+		t.Fatalf("a %.0e deviation — half the tolerance, and the scale of the SIMD kernel's "+
+			"rounding — was called a change", causalTolerance/2)
 	}
+
+	// The separation the card relies on: the printed leak magnitude has to sit far above the
+	// tolerance. This is the property that makes the tolerance meaningful, and it is checkable
+	// without re-running a deliberately broken forward pass — the figure itself was measured
+	// once (2.71e-01, four orders above the SIMD gap) and is recorded on causalLeakMagnitude.
+	//
+	// What is verified here is the ordering, which is what a future edit could plausibly break:
+	// raising the tolerance to "stop the SIMD build flaking" would quietly make the check
+	// unable to see a real leak at all.
+	if causalLeakMagnitude <= causalTolerance {
+		t.Fatalf("the card prints %v as what a leak does while the tolerance is %.0e, so the "+
+			"comparison could not distinguish them", causalLeakMagnitude, causalTolerance)
+	}
+	// At least two orders of magnitude, not merely "bigger": one order would be inside the
+	// range a different checkpoint's rounding could wander into.
+	if causalLeakMagnitude/causalTolerance < 100 {
+		t.Fatalf("a leak (%.0e) is only %.0fx the tolerance (%.0e); the two need at least two "+
+			"orders of separation to be distinguishable on any prompt",
+			causalLeakMagnitude, causalLeakMagnitude/causalTolerance, causalTolerance)
+	}
+
 }
 
 // TestCausalInvariancePairsPositionsNotIndices pins the reason the comparison walks by

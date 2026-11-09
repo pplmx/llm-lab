@@ -2983,8 +2983,8 @@ func (a *App) causalInvarianceLine(c *ui.Context) {
 	// that. The measured deviation is still checked, in the tests, where a number that differs
 	// per build belongs.
 	line := fmt.Sprintf("因果掩码核对：窗口去掉最后一个字节重跑一遍，剩下 %d 个位置的预测没变"+
-		"（判据是每个概率的偏差 ≤ %.0e；掩码写错时实测差 3e-2 量级）",
-		cmp.Compared, causalTolerance)
+		"（判据是每个概率的偏差 ≤ %.0e；掩码写错时实测差 %.0e 量级）",
+		cmp.Compared, causalTolerance, causalLeakMagnitude)
 	if cmp.Identical < cmp.Compared {
 		line = fmt.Sprintf("因果掩码核对：窗口去掉最后一个字节重跑一遍，剩下的 %d 个位置里有 %d 个的预测变了",
 			cmp.Compared, cmp.Compared-cmp.Identical)
