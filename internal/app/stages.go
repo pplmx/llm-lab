@@ -857,7 +857,17 @@ func (a *App) stageSoftmax(c *ui.Context) {
 				a.heatmapAxed(c, h.Attn, "attn", true)
 			})
 			ui.Column(c).Gap(6).Grow(1).MaxWidth(480).Children(func() {
-				mutedText(c, "每一行加起来等于 1。颜色越深，这个 query 从那个 key 取走的信息越多。")
+				// The bars are a sample of the row, and the caption has to say so. topBars keeps
+				// the ten largest weights and restores their original order, so on a long prompt
+				// the list is neither the whole row nor sorted by size: measured with 35 keys, a
+				// reader counted ten bars against a 35-cell heatmap row and saw 0.073 above
+				// 0.419. Neither the truncation nor the ordering was stated.
+				rowCaption := "每一行加起来等于 1。颜色越深，这个 query 从那个 key 取走的信息越多。"
+				if i+1 > 10 {
+					rowCaption = fmt.Sprintf("每一行加起来等于 1。颜色越深，这个 query 从那个 key 取走的信息越多。"+
+						"下面的条是这 %d 个 key 里权重最大的 10 个，按 key 的先后排列，不是按大小排的。", i+1)
+				}
+				mutedText(c, rowCaption)
 				rows := make([]barRow, 0, 8)
 				var max float32
 				for j := 0; j <= i; j++ {

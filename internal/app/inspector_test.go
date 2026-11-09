@@ -212,3 +212,57 @@ func TestDistributionCardNamesItsPosition(t *testing.T) {
 		}
 	}
 }
+
+// TestAttentionBarsDiscloseTheirSample checks the bar list beside the attention heatmap says what it
+// is a sample of.
+//
+// The list shows at most ten bars, and topBars keeps the ten largest then restores key order — so
+// on a long prompt it is neither the whole row nor sorted by size. Measured with 35 keys: ten bars
+// against a 35-cell heatmap row, with 0.073 drawn above 0.419. Neither the truncation nor the
+// ordering was mentioned, which leaves a reader comparing the two views with no account of the
+// difference.
+//
+// The assertion is conditional on the row being long enough to truncate, and checks the short case
+// is left alone: a caption that always talks about "the ten largest" would be wrong on every row
+// short enough to be shown whole.
+func TestAttentionBarsDiscloseTheirSample(t *testing.T) {
+	long := newTestApp(t)
+	long.Step = 3
+	long.SelToken = len(long.Trace.Tokens) - 1
+	tr := ui.NewTester(long.View, 1500, 3000)
+	tr.Frame()
+
+	var caption string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "加起来等于 1") {
+			caption = s
+		}
+	}
+	if caption == "" {
+		t.Fatal("the attention row caption is missing")
+	}
+	if n := long.SelToken + 1; n > 10 {
+		for _, want := range []string{fmt.Sprintf("%d 个 key", n), "最大的 10 个", "不是按大小排"} {
+			if !strings.Contains(caption, want) {
+				t.Fatalf("a %d-key row draws only 10 bars but the caption does not say %q: %q",
+					n, want, caption)
+			}
+		}
+	}
+
+	// A short row shows every key, so it must not claim to be a sample.
+	short := newTestApp(t)
+	short.Step = 3
+	short.SelToken = 4
+	tr2 := ui.NewTester(short.View, 1500, 3000)
+	tr2.Frame()
+	for _, s := range tr2.Texts() {
+		if !strings.Contains(s, "加起来等于 1") {
+			continue
+		}
+		if strings.Contains(s, "最大的 10 个") {
+			t.Fatalf("a %d-key row is drawn whole but the caption calls it a sample: %q",
+				short.SelToken+1, s)
+		}
+	}
+}
