@@ -691,3 +691,37 @@ func parityFixtureIDs(t *testing.T, gz []byte) int {
 	}
 	return len(f.IDs)
 }
+
+// TestReadmeBinarySizeNamesTheWeightsPart checks the size claim in the opening paragraph
+// against the file it is mostly made of.
+//
+// The README said "11 MB" from the initial commit, which was never revisited: the shipped
+// Linux binary is 12.4 MB, so the headline number had been 13% low for the project's whole
+// history. There is nothing wrong with a statement of the form "about N MB", but "about 11"
+// and "12.4" differ by more than rounding.
+//
+// The binary size itself cannot be asserted here — it depends on the toolchain, the linker
+// and the platform, and this test runs on three of them. What can be checked is the weights
+// file the sentence now names as its bulk: if that grows, the number beside it is wrong again,
+// and the test says so with both figures instead of the reader finding out from a download.
+func TestReadmeBinarySizeNamesTheWeightsPart(t *testing.T) {
+	doc := readREADME(t)
+	const claim = "12 MB（Linux amd64，含 2.3 MB 的权重）"
+	if !strings.Contains(doc, claim) {
+		t.Fatalf("the README no longer states the binary size in the form this test knows (%q); "+
+			"update the test with the sentence you wrote", claim)
+	}
+
+	info, err := os.Stat(filepath.Join("..", "model", "weights.json"))
+	if err != nil {
+		t.Skipf("no weights file to measure: %v", err)
+	}
+	mb := float64(info.Size()) / (1 << 20)
+	// The sentence quotes one decimal place, so anything inside half a tenth of 2.3 is the
+	// same number. A weights file that crosses 2.35 or drops below 2.25 changes what the
+	// sentence should say.
+	if mb < 2.25 || mb >= 2.35 {
+		t.Fatalf("the README says the binary carries 2.3 MB of weights, the file is %.2f MB — "+
+			"update the sentence to %.1f MB", mb, mb)
+	}
+}
