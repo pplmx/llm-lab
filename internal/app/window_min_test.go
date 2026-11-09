@@ -62,6 +62,22 @@ func TestWindowMinimumMatchesTheSmallestSnapshot(t *testing.T) {
 		}
 	}
 
+	// The clamp has to report itself. ClampWindowSize's own doc comment says the flags exist
+	// "so a screenshot can be taken at a specific size" — raising -w 800 to 1180 in silence
+	// therefore produces a screenshot at a size nobody asked for, with nothing to explain it.
+	// This is the same defect -step had: the reader asked for one thing and got another.
+	if !strings.Contains(string(main), "raised to %dx%d") {
+		t.Fatalf("main.go clamps the window size without saying so; `-w 800` opens at 1180 " +
+			"with no indication that the requested size was replaced")
+	}
+	// It must warn rather than refuse: a size below the verified floor still satisfies what
+	// the flag means, unlike an out-of-range -step. A log.Fatalf here would break the
+	// documented "小屏" recipe in the README.
+	if strings.Contains(string(main), `log.Fatalf("-w`) || strings.Contains(string(main), `log.Fatalf("-h`) {
+		t.Fatalf("main.go rejects an undersized window instead of raising it; a request for a " +
+			"small window is satisfiable at the floor, and the README documents that path")
+	}
+
 	// And the snapshot suite must still render at exactly that size, so the
 	// guarantee is demonstrated rather than assumed.
 	render, err := os.ReadFile("render_sizes_test.go")

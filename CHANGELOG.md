@@ -6,6 +6,14 @@
 
 ### Added
 
+- **`-w 800` 会默默打开 1180 宽的窗口，而这恰好推翻了这两个 flag 存在的理由。** `ClampWindowSize` 自己的注释写着 flag 是为了「so a screenshot can be taken at a specific size」——那就意味着要 800 宽得到 1180 宽的截图，且命令行上没有任何说明
+  - 实测 `-w 800 -h 600`：安静地打开 1180×720。这和上一轮 `-step 99` 是同一类缺陷：**读者要的东西被换成了别的，且不被告知**
+  - 修法：保留夹取（布局确实只在 1180×720 以上验证过），但夹取时往 stderr 打一行：`-w 800 -h 600 raised to 1180x720: the layouts are only verified at 1180x720 and above`
+  - 单轴与退化输入都验过：`-w 1920 -h 600` → `raised to 1920x720`（不需要动的轴**原样保留**）；`-w 0 -h 0` → `raised to 1180x720`；合法尺寸完全安静
+  - **和 `-step` 的处理仍然刻意不同**：这里用 `log.Printf` 而不是 `log.Fatalf`。要一个小窗口这个意图在 1180×720 上依然成立，而 README 里就有「小屏」的用法；「打开第 99 步」则没有任何合法解释
+  - 守卫加在已有的 `TestWindowMinimumMatchesTheSmallestSnapshot` 里（它本来就在读 main.go）：现在既要求夹取存在，也要求它**报告自己**，并且**不许**改成 `log.Fatalf`——后者会破坏 README 记录的小屏用法
+  - 破坏性验证：把夹取改回静默，报 `main.go clamps the window size without saying so; -w 800 opens at 1180 with no indication that the requested size was replaced`
+
 - **`-weights` 的报错把「weights」写了两遍，而且两种失败下错的地方不一样。** 实测三种输入：
   - 文件不存在 → `weights /tmp/nope.json: open /tmp/nope.json: no such file or directory`（路径重复，而且没说这是在读权重）
   - schema 不对 → `weights /tmp/bad1.json: weights: the file parsed but has no configuration …`（**「weights」出现两次**，因为 `Parse` 已经加了前缀）

@@ -21,7 +21,16 @@ func main() {
 	step := flag.Int("step", 0, "lesson to open on (0-6)")
 	flag.Parse()
 
-	*width, *height = app.ClampWindowSize(*width, *height)
+	// The clamp keeps the window at or above the size the layouts are verified at, but it must
+	// say so. Silently raising -w 800 to 1180 defeats the reason the flags exist — this
+	// package's own doc comment for ClampWindowSize says they are there "so a screenshot can be
+	// taken at a specific size" — because the screenshot then comes out at a size nobody asked
+	// for, with nothing to explain the difference. Warn instead of substituting in silence.
+	if cw, ch := app.ClampWindowSize(*width, *height); cw != *width || ch != *height {
+		log.Printf("-w %d -h %d raised to %dx%d: the layouts are only verified at %dx%d and above",
+			*width, *height, cw, ch, app.MinWindowWidth, app.MinWindowHeight)
+		*width, *height = cw, ch
+	}
 
 	var (
 		w   *model.Weights
