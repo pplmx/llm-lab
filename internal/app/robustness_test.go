@@ -1,6 +1,9 @@
 package app
 
 import (
+	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -151,5 +154,220 @@ func TestStartingOnALaterStageRendersThatStage(t *testing.T) {
 		if !tr.HasText(marker) {
 			t.Fatalf("booting on step %d does not show its inspector card", step+1)
 		}
+	}
+}
+
+// narrowWeights returns a copy of w with d_model halved, every tensor that depends on it sliced
+// accordingly, so the app can be run against a shape the bundle does not have.
+//
+// The point is not that such a checkpoint is realistic. It is that d_model is only required to be
+// positive, so these files load, and a sentence or title that quotes the width has to follow the
+// file rather than the bundle.
+func narrowWeights(base *model.Weights) *model.Weights {
+	d := base.Config.DModel / 2
+	out := *base
+	out.Config = base.Config
+	out.Config.DModel = d
+	out.TokEmbed = base.TokEmbed[:base.Config.Vocab*d]
+	out.PosEmbed = base.PosEmbed[:base.Config.Ctx*d]
+	out.LNFG = base.LNFG[:d]
+	out.LNFB = base.LNFB[:d]
+	out.Layers = nil
+	for _, l := range base.Layers {
+		out.Layers = append(out.Layers, model.LayerWeights{
+			LN1G: l.LN1G[:d], LN1B: l.LN1B[:d], LN2G: l.LN2G[:d], LN2B: l.LN2B[:d],
+			WQ: l.WQ[:d*d], WK: l.WK[:d*d], WV: l.WV[:d*d], WO: l.WO[:d*d],
+			W1: l.W1[:d*base.Config.DFF], W2: l.W2[:base.Config.DFF*d],
+		})
+	}
+	return &out
+}
+
+// stageTexts collects every string the seven stages render for one weight set.
+func stageTexts(t *testing.T, w *model.Weights) map[string]bool {
+	t.Helper()
+	seen := make(map[string]bool)
+	for step := 0; step < 7; step++ {
+		a := New(w)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1500, 4000)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			seen[s] = true
+		}
+	}
+	return seen
+}
+
+// standaloneNumber matches n as a number in its own right: not a digit inside a longer number,
+// and not the fractional part of a decimal.
+//
+// The first version of these checks used a plain word-boundary-ish pattern and reported
+// "min -2.64 · max +2.90" as naming the context window, because 64 appears inside 2.64. A guard
+// that cries wolf over a cosine is worse than no guard: it trains the reader to skim past its
+// failures, which is exactly how a real one gets missed. Byte values are legitimately 64 too —
+// "byte 0x64 · rune 'd'" and "'d' = U+0064，占 1 个字节：64 01100100" both do name 64 and neither
+// says anything about the context window.
+//
+// So a match has to be preceded by something that is neither a digit, a letter nor a decimal
+// point, and followed by something that is not a digit or a decimal point.
+func standaloneNumber(n string) *regexp.Regexp {
+	return regexp.MustCompile(`(^|[^0-9A-Za-z.])` + regexp.QuoteMeta(n) + `([^0-9.]|$)`)
+}
+
+// TestNoStageNamesTheBundleConfigAtAnotherWidth is the general form of three separate defects
+// found one at a time: the positional card's "64 个位置", the output lesson's "[T, 96]", and the
+// embedding card's title "这 96 个维度".
+//
+// Each was a number from the loaded weights written as a constant. Each was correct for the
+// bundled file and wrong for any other, and each survived because every test loaded the bundle.
+// Rather than looking for the fourth by reading code, this renders the whole app twice — once on
+// the bundle, once on a halved d_model — and requires that no string survives unchanged while
+// naming the bundle's width.
+//
+// The check is on unchanged strings specifically. A string that mentions 96 and changed has
+// clearly been rewritten to follow the config; one that mentions 96 and did not change is still
+// a constant, whether or not it happens to be right for this checkpoint. Coincidental matches are
+// the reason the assertion is about the *pair* (mentions the width, did not change) rather than
+// about the number alone: a byte value, a cosine or a position index can legitimately be 96.
+func TestNoStageNamesTheBundleConfigAtAnotherWidth(t *testing.T) {
+	base, err := model.Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	narrow := narrowWeights(base)
+	if narrow.Config.DModel == base.Config.DModel {
+		t.Fatal("the narrow copy has the bundle's width, so this test proves nothing")
+	}
+
+	bundled := stageTexts(t, base)
+	halved := stageTexts(t, narrow)
+	if len(halved) == 0 {
+		t.Fatal("the narrow copy rendered nothing")
+	}
+
+	// Every string that mentions the bundle's width and is unchanged in the halved render.
+	width := fmt.Sprintf("%d", base.Config.DModel)
+	re := standaloneNumber(width)
+	var stale []string
+	for s := range bundled {
+		if !re.MatchString(s) {
+			continue
+		}
+		if halved[s] {
+			stale = append(stale, s)
+		}
+	}
+	if len(stale) > 0 {
+		sort.Strings(stale)
+		var b strings.Builder
+		for _, s := range stale {
+			b.WriteString("\n  " + s)
+		}
+		t.Fatalf("%d string(s) name the bundle's d_model %s and survive unchanged when the model "+
+			"is %d wide, so they are constants rather than derived:%s",
+			len(stale), width, narrow.Config.DModel, b.String())
+	}
+}
+
+// windowUnchanged reports whether the text immediately around every match of re in s appears,
+// at the same offsets, in one of the other strings from the same render.
+//
+// The point is to separate "this number did not follow the config" from "this sentence happened
+// to differ somewhere else". A stale constant sits in prose that is otherwise fixed, so its
+// neighbourhood repeats verbatim in the other render even when the sentence as a whole does not.
+func windowUnchanged(a, b map[string]bool, s string, re *regexp.Regexp, pad int) bool {
+	locs := re.FindAllStringIndex(s, -1)
+	if len(locs) == 0 {
+		return false
+	}
+	for _, loc := range locs {
+		start := loc[0] - pad
+		if start < 0 {
+			start = 0
+		}
+		end := loc[1] + pad
+		if end > len(s) {
+			end = len(s)
+		}
+		// Run lengths in bytes are fine here: the pad is only a heuristic for "the words next
+		// to it", and a multi-byte character straddling the boundary would just make the window
+		// slightly shorter on both sides, equally.
+		around := s[start:end]
+		found := false
+		for other := range b {
+			if strings.Contains(other, around) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// TestNoStageNamesTheBundleContextAtAnotherWindow is the same check for the context window, which
+// has a defect of its own on record: the positional-encoding card said "它把 64 个位置放成了 64
+// 个几乎互不相干的地址" with Dims derived on the same line, and validate only requires ctx > 0,
+// so a ctx=32 checkpoint loads and the sentence named 64.
+//
+// Separate from the width test because the copy is made differently — the positional table has one
+// row per position, so a smaller window just drops rows, where a narrower d_model reslices every
+// tensor in the model.
+func TestNoStageNamesTheBundleContextAtAnotherWindow(t *testing.T) {
+	base, err := model.Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	small := *base
+	small.Config = base.Config
+	small.Config.Ctx = base.Config.Ctx / 2
+	small.PosEmbed = base.PosEmbed[:small.Config.Ctx*base.Config.DModel]
+	if small.Config.Ctx == base.Config.Ctx {
+		t.Fatal("the copy has the bundle's context window, so this test proves nothing")
+	}
+
+	bundled := stageTexts(t, base)
+	smaller := stageTexts(t, &small)
+
+	// Only sentences that are *about* the context window. The first version of this check
+	// matched any string containing the number, and reported two false positives: the
+	// tokenising stage prints a byte's own value as decimal 64, and byte 64 is 'd'. Those
+	// strings name 64 and say nothing about how many positions the model has.
+	//
+	// Filtering on subject rather than trying to exclude coincidences by their spelling is the
+	// honest way round: a guard that cries wolf over a byte value trains the reader to skim its
+	// failures, which is how a real one gets missed.
+	ctx := fmt.Sprintf("%d", base.Config.Ctx)
+	re := standaloneNumber(ctx)
+	var stale []string
+	for s := range bundled {
+		if !re.MatchString(s) || !strings.Contains(s, "位置") {
+			continue
+		}
+		// Comparing whole strings misses a constant in a sentence that also quotes measured
+		// figures: those figures differ between the two renders, so the sentence differs and
+		// the stale number rides along unnoticed. Measured — putting "64 个位置" back into the
+		// positional card left this test green, because the cosines in the same sentence had
+		// changed too.
+		//
+		// So the unit is the neighbourhood of the number rather than the sentence: if the text
+		// on both sides of it is identical in both renders, that number is not following the
+		// config.
+		if windowUnchanged(bundled, smaller, s, re, 24) {
+			stale = append(stale, s)
+		}
+	}
+	if len(stale) > 0 {
+		sort.Strings(stale)
+		var b strings.Builder
+		for _, s := range stale {
+			b.WriteString("\n  " + s)
+		}
+		t.Fatalf("%d string(s) name the bundle's ctx %s and survive unchanged at ctx %d, so they "+
+			"are constants rather than derived:%s",
+			len(stale), ctx, small.Config.Ctx, b.String())
 	}
 }
