@@ -165,6 +165,22 @@ func (a *App) stage(c *ui.Context) {
 // were four steps away and the input field, while empty, gives no hint that a
 // byte-level tokenizer will accept anything at all.
 func (a *App) emptyPromptCard(c *ui.Context) {
+	// Two different situations produce zero tokens. Usually the prompt is empty, which is the
+	// state this card is written for. But Truncate keeps runes whole, so a prompt whose every
+	// character is wider than the context window yields no ids either — measured, an emoji with
+	// ctx=1, 2 or 3. Telling that reader to "type a few characters" points at the input box,
+	// where the characters already are; the fix is a wider window.
+	if a.Prompt != "" {
+		card(c, func() {
+			ctx := a.W.Config.Ctx
+			sectionTitle(c, "提示词装不进这个窗口", fmt.Sprintf("窗口 %d 个 token", ctx))
+			mutedText(c, fmt.Sprintf("输入框里有 %d 字节，但这个模型每次只看 %d 个 token，而"+
+				"截断只在字符边界上切——所以没有任何一个完整字符能放进去。"+
+				"这个窗口宽度是配置文件里的 ctx，不是界面上能改的；换一个 ctx 更大的权重文件，"+
+				"或者改用单字节的字符（英文、标点）试试。", len(a.Prompt), ctx))
+		})
+		return
+	}
 	card(c, func() {
 		sectionTitle(c, "还没有提示词", "整条流水线从这里开始")
 		mutedText(c, "向上方的输入框随便打几个字——英文、中文、标点都行。"+

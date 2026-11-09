@@ -777,3 +777,81 @@ func TestNoLessonBodyDescribesAnEmptyTraceAsASmallOne(t *testing.T) {
 		t.Fatal("no lesson body was exercised; the check is verifying nothing")
 	}
 }
+
+// TestPromptTooWideForTheWindowIsNotReportedAsEmpty covers the second way to reach zero tokens.
+//
+// Truncate keeps runes whole, so a prompt whose every character is wider than ctx yields no ids at
+// all. With ctx below 4 that is reachable: measured, an emoji prompt at ctx=1, 2 or 3 produces zero
+// tokens while the input box plainly holds text. The app called that state "还没有提示词" in both
+// the status line and the empty-state card, and the card told the reader to type something — advice
+// pointing at a box that already had something in it.
+//
+// The two zero-token states are now separate: an empty prompt says so, and a prompt that cannot fit
+// says why and names the only real fix.
+func TestPromptTooWideForTheWindowIsNotReportedAsEmpty(t *testing.T) {
+	base, err := model.Bundled()
+	if err != nil {
+		t.Skip("no bundled weights")
+	}
+	withCtx := func(ctx int) *App {
+		w := *base
+		w.Config = base.Config
+		w.Config.Ctx = ctx
+		w.PosEmbed = base.PosEmbed[:ctx*base.Config.DModel]
+		return New(&w)
+	}
+
+	tooWide := withCtx(1)
+	tooWide.Prompt = "😀" // 4 bytes, cannot fit in a 1-token window whole
+	tooWide.recompute()
+	if n := len(tooWide.Trace.Tokens); n != 0 {
+		t.Fatalf("a 4-byte character fitted into a %d-token window (%d tokens)", 1, n)
+	}
+	if strings.Contains(tooWide.Status, "还没有提示词") {
+		t.Fatalf("the status line calls a non-empty prompt empty: %q", tooWide.Status)
+	}
+	if !strings.Contains(tooWide.Status, "装不进") {
+		t.Fatalf("the status line does not say the prompt cannot fit: %q", tooWide.Status)
+	}
+	tr := ui.NewTester(tooWide.View, 1500, 940)
+	tr.Frame()
+	var cardText string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "装不进这个窗口") {
+			cardText = s
+		}
+	}
+	if cardText == "" {
+		t.Fatal("the stage card still presents the too-wide prompt as the empty state")
+	}
+
+	// A genuinely empty prompt keeps the original wording and the presets.
+	empty := withCtx(64)
+	empty.Prompt = ""
+	empty.recompute()
+	if !strings.Contains(empty.Status, "还没有提示词") {
+		t.Fatalf("an empty prompt reports %q", empty.Status)
+	}
+	tr2 := ui.NewTester(empty.View, 1500, 940)
+	tr2.Frame()
+	sawEmpty := false
+	for _, s := range tr2.Texts() {
+		if strings.Contains(s, "还没有提示词") {
+			sawEmpty = true
+		}
+		if strings.Contains(s, "装不进这个窗口") {
+			t.Fatalf("an empty prompt is described as too wide: %q", s)
+		}
+	}
+	if !sawEmpty {
+		t.Fatal("the empty prompt lost its heading")
+	}
+
+	// And a window wide enough for the character must work normally.
+	fits := withCtx(4)
+	fits.Prompt = "😀"
+	fits.recompute()
+	if n := len(fits.Trace.Tokens); n != 4 {
+		t.Fatalf("a 4-byte character in a 4-token window gave %d tokens", n)
+	}
+}

@@ -320,6 +320,15 @@ func (a *App) recompute() {
 	// contradiction: the inspector beside it says the app is waiting for input, while the status
 	// line reports a finished forward pass over nothing.
 	switch {
+	// An empty id list usually means no prompt, but not always: Truncate keeps runes whole, so a
+	// prompt whose every character is wider than the context window yields no ids at all. With
+	// ctx below 4 that is reachable — measured, an emoji prompt with ctx=1, 2 or 3 produces zero
+	// tokens while the input box plainly holds text, and the app reported "还没有提示词". Telling
+	// the reader there is no prompt when there is one hides the real cause, which is that the
+	// window is too small to hold a single character of it.
+	case len(ids) == 0 && a.Prompt != "":
+		a.Status = fmt.Sprintf("提示词装不进 %d 个 token 的窗口 · %d 层 × %d 头",
+			a.W.Config.Ctx, a.W.Config.NLayer, a.W.Config.NHead)
 	case len(ids) == 0:
 		a.Status = fmt.Sprintf("还没有提示词 · %d 层 × %d 头", a.W.Config.NLayer, a.W.Config.NHead)
 	case len(a.Prompt) > a.W.Config.Ctx:
