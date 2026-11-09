@@ -40,8 +40,13 @@ func TestEveryStageCanBeScrolledToItsEnd(t *testing.T) {
 			}
 			tr.Frame()
 			forward := a.Scroll.Y
-			if forward < 0 {
-				t.Fatalf("%dx%d step %d: wheeled forward to %.0f", size.w, size.h, step+1, forward)
+			// The name of this test is "can be scrolled to its end", so that is what must be
+			// asserted. It used to check only that the offset was non-negative, which passes
+			// with the column stuck at the top — measured: every stage does reach MaxY exactly,
+			// so the weaker assertion had never been asked a question it could fail.
+			if forward != a.Scroll.MaxY {
+				t.Fatalf("%dx%d step %d: wheeled to %.0f of a possible %.0f, so the end of the "+
+					"stage is unreachable", size.w, size.h, step+1, forward, a.Scroll.MaxY)
 			}
 			// Scrolling back up returns to the top, so the offset is a real
 			// position and not a one-way ratchet.

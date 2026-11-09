@@ -6,6 +6,12 @@
 
 ### Added
 
+- **`TestEveryStageCanBeScrolledToItsEnd` 从来没检查过「滚到末尾」。** 它只断言 `Scroll.Y >= 0`——这一条在柱子卡在顶部时同样成立——以及回滚后回到 0
+  - 实测每个阶段确实精确到达 `MaxY`（7 个阶段全部 `Scroll.Y == MaxY`，如 stage 5 的 1777），所以这个弱断言**从没被问过一个它可以失败的问题**
+  - 改成 `forward != a.Scroll.MaxY` 就报错。演示差别：若柱子只滚到一半（889 / 1777），旧断言 `889 >= 0` 通过，新断言 `889 != 1777` 失败
+  - 这一类（第 8 轮 `TestNextByteSkillIsCalibratedAtTOne`、本轮）都是**测试名承诺的比函数体验证的多**。这次是名字写着「到末尾」，正文只验「没往回弹」
+  - 顺带记录了本次测量的仓库现状：`internal/app` 有 **489 个测试函数**，跑一遍 **212 秒**，而 CI 的 `-timeout 300s` 只剩 **88 秒**余量（29%）；本次会话已经让它从 206s 涨到 212s。没有改 timeout——那是 CI 配置判断，留给用户；但这个余量已经值得记下来
+
 - **CONTRIBUTING 说「`just check` 约 35 秒、`just check-ci` 冷缓存约 75 秒」，实测 **206 秒 / 422 秒**，低估六倍。** 这两个数正是读者判断「这次改动要不要跑全量门槛」的依据
   - 实测：`just check` 206s；`go clean -testcache && just check-ci` 422s。差距主要在 `internal/app`——它有 **489 个测试函数**、跑一遍 207 秒，而 `check-ci` 会把它**跑两遍**（标量 + `GOEXPERIMENT=simd`），各 207 秒
   - 用 `git log -S` 查：这个数字是 `2093a2e`（11 月 7 日）写下的，当时 `app_test.go` 只有 **186 个测试函数**，此后 **142 个提交**动过 app 的测试文件。**它不是写错了，是长歪了**——和上一轮 README 的 9.4ms、上上轮的 11MB 是同一类
