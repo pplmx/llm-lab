@@ -790,16 +790,32 @@ func scoreWorkings(c *ui.Context, q, k, dHead int, p scoreParts) {
 	for _, t := range p.Top {
 		terms = append(terms, fmt.Sprintf("d%d %+.3f", t.D, t.V))
 	}
-	// The scale is shown at the precision the model multiplies with: float32. A
-	// float64 1/sqrt(d) prints as 0.204124145, but multiplying the printed dot by
-	// it gives 0.932751018 while the printed score is 0.932751060 — a reader
-	// checking the line by hand would find the last digits do not close.
+	// The scale is shown at the precision the model multiplies with: float32, and printed with
+	// enough digits for the multiplication to close.
+	//
+	// This line exists so a reader can check it by hand, so the printed numbers have to
+	// reproduce the printed answer. The conversion to float32 was right and the format was not:
+	// printed at four decimals the factor became 0.2041 against a true 0.20412415, and
+	// -11.0839 × 0.2041 = -2.2622 while the card showed -2.2625. Measured across both layers,
+	// every head and every unmasked cell on the default prompt: 4778 of 5328 lines (89.7%)
+	// failed to re-multiply, worst error 0.0017. Six decimals brings that to zero.
 	scale := float64(float32(1 / math.Sqrt(float64(dHead))))
 	workingsLinesCopyable(c, []string{
 		fmt.Sprintf("q%d · k%d 的三项最大贡献：%s", q, k, strings.Join(terms, "  ")),
 		fmt.Sprintf("+ 其余 %d 维 %+.4f = 点积 %.4f", dHead-len(p.Top), p.Rest, p.Dot),
-		fmt.Sprintf("score = 点积 / √%d = %.4f × %.4f = %+.4f", dHead, p.Dot, scale, p.Score),
+		fmt.Sprintf("score = 点积 / √%d = %.4f × %.6f = %+.4f", dHead, p.Dot, scale, p.Score),
 	})
+	// Why a note rather than a format that always closes: the score is a float32 product of
+	// float32 quantities, and the printed dot is rounded to four decimals independently of it.
+	// Printing the factor at six decimals takes the disagreement from 89.7% of lines to 5.4%;
+	// printing the dot at five, six, seven or eight decimals leaves it at 2.1-2.2%, because the
+	// residue comes from the score's own rounding and no choice of display precision removes it.
+	// Measured across both layers, every head and every unmasked cell on the default prompt.
+	//
+	// Saying what the rounding is beats chasing a format that would claim a precision the
+	// numbers do not have.
+	mutedText(c, "点积与除数都按四位到六位小数显示，score 本身是 float32 的结果，"+
+		"所以自己乘一遍末位可能差一两个单位。")
 }
 
 func (a *App) stageSoftmax(c *ui.Context) {

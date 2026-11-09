@@ -776,7 +776,11 @@ func TestPrintedScoreLineUsesTheComputedNumbers(t *testing.T) {
 	}
 	scale := float64(float32(1 / math.Sqrt(float64(dHead))))
 
-	want := fmt.Sprintf("score = 点积 / √%d = %.4f × %.4f = %+.4f",
+	// The divisor prints at six decimals, not four. Four was the format when the line was
+	// written, and it made the printed product disagree with the printed score for 89.7% of
+	// this model's cells — the line exists to be re-multiplied by hand, so the factor has to
+	// carry enough digits for that to work.
+	want := fmt.Sprintf("score = 点积 / √%d = %.4f × %.6f = %+.4f",
 		dHead, p.Dot, scale, p.Score)
 	found := false
 	for _, s := range tr.Texts() {
@@ -4414,4 +4418,105 @@ func TestRoundedArithmeticBlocksSaySo(t *testing.T) {
 				"to know it is the printing", b.step+1, b.what)
 		}
 	}
+}
+
+// TestScoreWorkingsReMultiply keeps the score line checkable by hand, which is what it is for.
+//
+// The line reads "score = 点积 / √24 = -11.0839 × 0.204124 = -2.2625" and exists so a reader can
+// confirm the division themselves. The factor was converted to float32 — the precision the model
+// multiplies at, which was the right call — and then printed at four decimals, which threw that
+// precision away: 0.20412415 became 0.2041, and -11.0839 × 0.2041 is -2.2622 against a printed
+// -2.2625. Measured across both layers, every head and every unmasked cell on the default prompt,
+// 4778 of 5328 lines (89.7%) failed to re-multiply, worst error 0.0017.
+//
+// Six decimals takes it to 5.4%. It does not reach zero and no display precision can: the score is
+// a float32 product while the printed dot is rounded independently, and printing the dot at five,
+// six, seven or eight decimals all leave a 2.1-2.2% residue. The card therefore also says in words
+// that the last digit may be off, rather than claiming a closure the numbers cannot deliver.
+//
+// This test pins both halves: the printed line must re-multiply for the overwhelming majority of
+// cells, and the block must carry the caveat for the rest.
+func TestScoreWorkingsReMultiply(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	dh := tr.Config.DHead()
+	scale := float64(float32(1 / math.Sqrt(float64(dh))))
+	// Parse the factor's precision out of the rendered line rather than assuming it. The first
+	// version of this test hardcoded six decimals and computed the products from its own copy of
+	// the scale, so it kept passing after the format string went back to four — it was testing
+	// fine arithmetic in the test file, not the arithmetic on screen.
+	formatDot, formatScale, ok := scoreWorkingsPrecision(t)
+	if !ok {
+		t.Fatal("could not read the precision of the score line")
+	}
+	shownScale := math.Round(scale*math.Pow(10, float64(formatScale))) / math.Pow(10, float64(formatScale))
+	dotUnit := math.Pow(10, float64(formatDot))
+	total, bad := 0, 0
+	for li := range tr.Layers {
+		for hi := range tr.Layers[li].Heads {
+			h := tr.Layers[li].Heads[hi]
+			for q := 0; q < len(tr.Tokens); q++ {
+				for k := 0; k <= q && k < len(h.Scores[q]); k++ {
+					if math.IsInf(float64(h.Scores[q][k]), -1) {
+						continue
+					}
+					p := computeScore(h.Q[q], h.K[k], dh, h.Scores[q][k])
+					if !p.OK {
+						continue
+					}
+					total++
+					shownDot := math.Round(p.Dot*dotUnit) / dotUnit
+					shownScore := math.Round(p.Score*1e4) / 1e4
+					if math.Abs(shownDot*shownScale-shownScore) > 5e-5 {
+						bad++
+					}
+				}
+			}
+		}
+	}
+	if total == 0 {
+		t.Fatal("no score cells measured")
+	}
+	if frac := float64(bad) / float64(total); frac > 0.10 {
+		t.Fatalf("%d of %d score lines (%.1f%%) do not re-multiply from the numbers they print; "+
+			"the line exists to be checked by hand", bad, total, 100*frac)
+	}
+
+	// And the caveat, because the residue above is real and unavoidable. The workings only draw
+	// with a cell under the cursor, so one has to be pinned for the note to be on screen at all.
+	a.Step = 2
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 10, 4
+	tr2 := ui.NewTester(a.View, 1500, 4000)
+	tr2.Frame()
+	joined := strings.Join(tr2.Texts(), "\n")
+	if !strings.Contains(joined, "自己乘一遍末位可能差一两个单位") {
+		t.Fatal("the score block does not warn that its last digit may not close, so the " +
+			"minority of cells that disagree read as an arithmetic error")
+	}
+}
+
+// scoreWorkingsPrecision reads the decimal places the score line actually prints for the dot
+// product and the divisor, by matching the format string in the source.
+//
+// Reading the source is unusual, but the alternative is worse: a test that recomputes the product
+// from its own assumed precision cannot notice the format string changing, which is exactly the
+// defect being tested for.
+func scoreWorkingsPrecision(t *testing.T) (dot, scale int, ok bool) {
+	t.Helper()
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`score = 点积 / √%d = %\.(\d+)f × %\.(\d+)f = %\+\.[0-9]+f`)
+	m := re.FindStringSubmatch(string(src))
+	if m == nil {
+		return 0, 0, false
+	}
+	d, err1 := strconv.Atoi(m[1])
+	s2, err2 := strconv.Atoi(m[2])
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return d, s2, true
 }
