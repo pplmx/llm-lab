@@ -6,6 +6,13 @@
 
 ### Added
 
+- **两句引用「加载进来的权重」的话被写成了常量，而包自己的注释就写着不能这样。** `lesson.bodyFn` 的文档注释原文：「A sentence that quotes a number from the loaded weights … cannot be a constant: change the checkpoint and the prose would keep claiming the old figures」。两处违反了它
+  - 位置编码卡片：「它把 **64** 个位置放成了 64 个几乎互不相干的地址」——同一行里 `Dim` 是推导的，`64` 不是。`validate` 对 `ctx` 只要求 > 0，所以 `ctx: 32` 的文件能正常加载，而卡片照样说 64。**实测 ctx=32：卡片仍是「64 个位置」**
+  - 输出阶段课文：「形状从 **[T, 96] 变成 [1, 256]**」——`d_model` 同样只要求 > 0，`d_model: 48` 的文件能加载。**实测 d_model=48：课文仍写 [T, 96]**
+  - 为什么一直没被抓到：所有测试都加载内置权重，而那两个常量**恰好**在那个权重上是对的
+  - 修法：卡片改用推导出来的 `shape.Positions`（新增字段）；课文改用包内已有的 `bodyFn` 机制（FFN 那一段早就在用它从 `tr.Config` 算「%.0f 倍宽」）。今天渲染结果与原来逐字相同
+  - `TestWeightDerivedProseFollowsTheLoadedConfig` **加载改小了的权重副本**再读渲染文本，而不是读源码——源码检查只能证明句子被改写过，证明不了屏幕上的数字跟着文件走。两处都做了破坏性验证：写回 64 → `a ctx of 32 renders a sentence that does not say "32 个位置放成了 32 个"`；写回常量课文 → 同样报错
+
 - **阶段数字键写死成 7 个，加第 8 步时按 8 没反应、提示还写着「1–7 跳转」，而所有测试照样绿。** 数字键清单、快捷键提示、以及两处测试循环，**四处各写了一遍 `Key1..Key7`**，没有任何一处和 `len(lessons)` 有关系
   - 实测（临时加一个合成第 8 步）：`len(lessons) == 8`，按 `Key8` 阶段仍停在 0，提示仍是 `1–7 跳转`，`TestShortcutHintKeepsTheOtherKeys` 等全部通过——因为测试里期望的字符串本身就是第七个字面量
   - 改法：`stageDigitKeys()` 从 `len(lessons)` 推导，`stageDigitRange()` 生成提示里的「1–N」，两个用户可见的字符串都改用后者。今天渲染结果与原来逐字相同（7 步 → `1–7`）

@@ -1466,7 +1466,13 @@ type posEncodingShape struct {
 	Gap int
 	// Dims is d_model, so the card can name the space the 1/√d reference refers to.
 	Dims int
-	OK   bool
+	// Positions is the context window: how many rows the positional table has. The card says
+	// "it placed N positions as N almost uncorrelated addresses", and N was written as a
+	// literal 64 beside a Dims that was derived — so loading a weights file with a different
+	// ctx produced a sentence that named the wrong number of positions. validate only checks
+	// ctx > 0, so such a file loads. Measured with ctx=32: the card still said 64.
+	Positions int
+	OK        bool
 }
 
 // computePosEncodingShape measures the positional table of a model against the
@@ -1485,6 +1491,7 @@ func computePosEncodingShape(w *model.Weights) posEncodingShape {
 		s.Gap = 1
 	}
 	s.Dims = d
+	s.Positions = ctx
 	s.RandomCos = 1 / math.Sqrt(float64(d))
 	row := func(i int) []float32 { return w.PosEmbed[i*d : (i+1)*d] }
 	// sinusoidal is the fixed encoding from the original transformer, indexed the way

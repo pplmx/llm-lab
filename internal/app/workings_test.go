@@ -4225,3 +4225,91 @@ func TestHeadProfilesAdviceNeverNamesTheCurrentLayer(t *testing.T) {
 			"above proves nothing")
 	}
 }
+
+// TestWeightDerivedProseFollowsTheLoadedConfig keeps the two sentences that name numbers from
+// the loaded weights from stating them as constants.
+//
+// The package already says why this matters, in the comment on lesson.bodyFn: "A sentence that
+// quotes a number from the loaded weights … cannot be a constant: change the checkpoint and the
+// prose would keep claiming the old figures." Two sentences broke that rule, and both survived
+// because every test loaded the bundled weights, where the constants happen to be right.
+//
+//   - The positional-encoding card said "它把 64 个位置放成了 64 个几乎互不相干的地址" with
+//     Dims derived from the config on the same line. validate only requires ctx > 0, so a
+//     ctx=32 file loads and the sentence named 64.
+//   - The output lesson's body said "形状从 [T, 96] 变成 [1, 256]". d_model is likewise only
+//     required to be positive, so a d_model=48 file loads and the lesson described a 96-wide
+//     model.
+//
+// Both are checked by loading a modified copy of the bundled weights rather than by reading the
+// source: a source check would only prove the sentence was rewritten, not that the number on
+// screen follows the file.
+func TestWeightDerivedProseFollowsTheLoadedConfig(t *testing.T) {
+	base, err := model.Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+
+	// A copy with a different ctx. The positional table has one row of d_model per position,
+	// so shrinking it is a matter of dropping rows.
+	small := *base
+	small.Config = base.Config
+	small.Config.Ctx = base.Config.Ctx / 2
+	if len(base.PosEmbed) >= small.Config.Ctx*base.Config.DModel {
+		small.PosEmbed = base.PosEmbed[:small.Config.Ctx*base.Config.DModel]
+	}
+	shape := computePosEncodingShape(&small)
+	if !shape.OK {
+		t.Fatalf("the halved-ctx copy did not measure; this test's own setup is stale")
+	}
+	if shape.Positions != small.Config.Ctx {
+		t.Fatalf("computePosEncodingShape reports %d positions for a ctx of %d",
+			shape.Positions, small.Config.Ctx)
+	}
+	if shape.Positions == base.Config.Ctx {
+		t.Fatal("the copy has the same ctx as the bundle, so this test proves nothing")
+	}
+
+	// And the rendered sentence must use it. The card is on the embedding stage.
+	a := New(&small)
+	a.Step = 1
+	tr := ui.NewTester(a.View, 1500, 3400)
+	tr.Frame()
+	var sentence string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "个位置放成了") {
+			sentence = s
+		}
+	}
+	if sentence == "" {
+		t.Fatal("the positional-encoding card is missing")
+	}
+	want := fmt.Sprintf("%d 个位置放成了 %d 个", small.Config.Ctx, small.Config.Ctx)
+	if !strings.Contains(sentence, want) {
+		t.Fatalf("a ctx of %d renders a sentence that does not say %q:\n%s",
+			small.Config.Ctx, want, sentence)
+	}
+
+	// The output lesson's shape line, with a narrower d_model. Only the text is under test
+	// here, so a Trace carrying the config is enough — no forward pass needed for a sentence
+	// that reads tr.Config.
+	narrow := &model.Trace{Config: base.Config}
+	narrow.Config.DModel = base.Config.DModel / 2
+	var lessonBody string
+	for _, l := range lessons {
+		if l.bodyFn == nil {
+			continue
+		}
+		if b := l.bodyFn(narrow); strings.Contains(b, "形状从") {
+			lessonBody = b
+		}
+	}
+	if lessonBody == "" {
+		t.Fatal("no lesson body mentions the projection shape any more")
+	}
+	wantShape := fmt.Sprintf("[T, %d] 变成 [1, %d]", narrow.Config.DModel, narrow.Config.Vocab)
+	if !strings.Contains(lessonBody, wantShape) {
+		t.Fatalf("a d_model of %d renders a body that does not say %q:\n%s",
+			narrow.Config.DModel, wantShape, lessonBody)
+	}
+}

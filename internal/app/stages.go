@@ -107,9 +107,22 @@ var lessons = []lesson{
 		formula: "FFN(x) = W₂ · GELU(W₁ · LN(x))",
 	},
 	{
-		name:    "输出 / 采样",
-		title:   "从向量到下一个字",
-		body:    "最后一层的输出经过最终 LayerNorm，再与嵌入矩阵相乘（权重绑定），只把最后一个位置的向量投影到词表上（形状从 [T, 96] 变成 [1, 256]），得到下一个 token 的 logit——但每个位置其实都算得出下一个字节（下面「每个位置都在预测」那张卡片把它们逐个核对了）。logit 不是概率，要除以温度再做 softmax。温度趋近 0 等于贪心，温度大于 1 会让分布变平、输出更随机。",
+		name:  "输出 / 采样",
+		title: "从向量到下一个字",
+		// The shape in this sentence names two numbers from the loaded weights, so per the
+		// bodyFn contract above it cannot be a constant. It used to be: the text said
+		// "[T, 96] 变成 [1, 256]" no matter what was loaded, and validate accepts any
+		// d_model > 0, so a weights file with d_model 48 loaded fine and the lesson went on
+		// describing a 96-wide model. Measured before this change: with d_model=48 the body
+		// still read [T, 96].
+		bodyFn: func(tr *model.Trace) string {
+			return fmt.Sprintf(
+				"最后一层的输出经过最终 LayerNorm，再与嵌入矩阵相乘（权重绑定），只把最后一个位置的向量投影到词表上"+
+					"（形状从 [T, %d] 变成 [1, %d]），得到下一个 token 的 logit——但每个位置其实都算得出下一个字节"+
+					"（下面「每个位置都在预测」那张卡片把它们逐个核对了）。logit 不是概率，要除以温度再做 softmax。"+
+					"温度趋近 0 等于贪心，温度大于 1 会让分布变平、输出更随机。",
+				tr.Config.DModel, tr.Config.Vocab)
+		},
 		formula: "p = softmax(logits / T)",
 	},
 }
@@ -505,7 +518,8 @@ func (a *App) stagePosEncodingShape(c *ui.Context) {
 			"「位置编码就是那套 sin/cos 公式，所有 transformer 都这样」",
 			fmt.Sprintf("经典 transformer 用的是固定正弦编码，相邻位置余弦 %.2f——每行只是沿曲线走一小步。"+
 				"这个模型的位置表是训练出来的，相邻余弦只有 %+.3f，比 %d 维随机向量的 %.3f 还小，"+
-				"也就是说它把 64 个位置放成了 64 个几乎互不相干的地址。"+
+				fmt.Sprintf("也就是说它把 %d 个位置放成了 %d 个几乎互不相干的地址。",
+					shape.Positions, shape.Positions)+
 				"两种都能用：正弦编码让「近」在几何上有意义，学出来的表让模型自己决定哪个方向代表哪个位置。"+
 				"这个仓库的架构没规定其中任何一种，是梯度下降选了这个。",
 				shape.SinusoidalAdjacentCos, shape.AdjacentCos, shape.Dims, shape.RandomCos))
