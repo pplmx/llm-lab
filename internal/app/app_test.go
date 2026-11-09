@@ -5155,25 +5155,59 @@ func TestClickableChipsGiveHoverFeedback(t *testing.T) {
 		}
 	})
 
-	// Stage dots: find one by scanning, since they have no text.
-	t.Run("stage dots", func(t *testing.T) {
+	// Stepper rows: the row for each stage highlights under the pointer. They have no text of
+	// their own worth searching for, so one is found by scanning.
+	//
+	// This subtest used to be called "stage dots" and scanned y 170..190 at a 2-DIP lattice,
+	// concluding from any changed pixel that the dot reacted. The reacting element is not the
+	// dot but the whole row: stepper() gives a non-current Row a Background(colPanel2) when
+	// row.Hovered(), and the row is FillWidth. Measured along y=180, 77 of 167 probe points
+	// across the sidebar react — the row's full width, at every height in it.
+	//
+	// The lattice is 4 DIP. The old 2-DIP one rendered 800 frames to answer one yes/no
+	// question at about 21ms each; 4 still cannot step over a reacting region that spans the
+	// row, and costs a quarter of the frames.
+	t.Run("stepper rows", func(t *testing.T) {
 		a := newTestApp(t)
 		a.Step = 1
 		tr := ui.NewTester(a.View, 1180, 720)
 		tr.Frame()
 		base := tr.Image()
+		const coarse = 4
+		// Only inside the stepper: the seven rows run from the first label's top to the last
+		// one's bottom (measured: y=84 to y=292 at 32 DIP per row). Sweeping the whole sidebar
+		// found something else that reacts — the earlier version scanned to y=400 and a run with
+		// the row highlight removed still passed, by reacting to whatever else lives down there.
+		var hitX, hitY float32
 		found := false
-		for y := float32(170); y < 190 && !found; y += 2 {
-			for x := float32(240); x < 400 && !found; x += 2 {
+		for y := float32(84); y < 292 && !found; y += coarse {
+			// x stops short of the sidebar's scrollbar. Measured with the row highlight
+			// disabled: the only reactions left in this band sit at x=226, the scrollbar, so a
+			// scan reaching 230 was satisfied by that and never asked about the rows.
+			for x := float32(30); x < 210 && !found; x += coarse {
 				tr.Move(x, y)
 				tr.Frame()
 				if diffCount(base, tr.Image()) > 0 {
-					found = true
+					hitX, hitY, found = x, y, true
 				}
 			}
 		}
 		if !found {
-			t.Fatal("no stage dot reacts to the pointer")
+			t.Fatal("no stepper row reacts to the pointer")
+		}
+		// The hit has to be a row, not a stray control: the reaction must extend horizontally,
+		// which is what distinguishes a FillWidth row from a dot-sized target.
+		span := 0
+		for dx := float32(0); dx < 400; dx += 4 {
+			tr.Move(hitX+dx, hitY)
+			tr.Frame()
+			if diffCount(base, tr.Image()) > 0 {
+				span++
+			}
+		}
+		if span < 20 {
+			t.Fatalf("the pointer reacted at (%.0f,%.0f) but only %d of 100 probes to its right "+
+				"did, so that is not a full-width row", hitX, hitY, span)
 		}
 	})
 }

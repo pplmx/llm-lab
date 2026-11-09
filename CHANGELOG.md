@@ -6,6 +6,16 @@
 
 ### Added
 
+- **`TestClickableChipsGiveHoverFeedback` 的 "stage dots" 子测试名不副实，而且慢。** 它用 2 DIP 网格扫 y=170..190 共 **800 帧**（约 21ms/帧，占 16.85s），只要**任何**像素变化就算通过
+  - 查证发现真正响应指针的不是圆点而是**整行**：`stepper()` 给非当前行 `row.Hovered()` 时加 `Background(colPanel2)`，行是 `FillWidth`。沿 y=180 量，侧栏 167 个探针里有 77 个会响应——是整行宽度
+  - 于是改成 "stepper rows"：4 DIP 网格（响应区跨整行，4 DIP 不可能跨过去），并**要求响应向右侧延展**（≥20/100 个探针），这样才能区分「整行」与「一个点状控件」
+  - **破坏性验证折腾了四次才成立**，每次失败都指向同一个毛病——扫描范围里混进了别的东西：
+    - 扫到 y=400：侧栏下方还有别的可悬停元素
+    - 扫到 x=300：越界进了主面板，x=277 是 token 条
+    - 扫到 x=230：x=226 是**侧栏滚动条**（关掉行高亮后只剩这 20 个探针响应）
+    - 收窄到 x<210 后才真正只观察行本身：关掉行高亮 → `no stepper row reacts to the pointer`
+  - 最终：通过时 **16.85s → 3.61s**，且断言第一次真正对应测试名
+
 - **把上一轮新增的 `TestWheelCountClearsTheTallestStage` 并进了 `TestEveryStageCanBeScrolledToItsEnd`。** 两者都要把七个阶段在两个窗口尺寸下各滚一遍，重复了整整一套滚动动画
   - 合并方式：滚动测试本来就在遍历每个阶段，顺手记录最高的 `MaxY`，循环结束后断言「八次 400 DIP 足够、六次也够」。删掉独立测试
   - 断言强度不变，破坏性验证通过：把轮数改成 1 → `the tallest stage (1180x720 step 5, MaxY 1805) needs 4.5 wheels of 400 DIP; this test drives 8, so it would stop short`
