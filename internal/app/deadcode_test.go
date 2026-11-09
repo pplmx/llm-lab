@@ -28,8 +28,6 @@ func TestNoUnusedFunctionsInApp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fset := token.NewFileSet()
-
 	// name -> file where it is declared, for unexported funcs and methods.
 	declared := map[string]string{}
 	// Source of every file, with each declaration's own name blanked out, so a
@@ -41,10 +39,32 @@ func TestNoUnusedFunctionsInApp(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		f, err := parser.ParseFile(fset, name, src, 0)
+		// Strip comments from the pristine source, before any name is blanked. Blanking a
+		// declaration's name makes the file unparseable — `func (a *App) foo(` becomes
+		// `func (a *App)    (` — so the parser has to see the original, and the offsets it
+		// reports are the ones used for both edits.
+		fileFset := token.NewFileSet()
+		f, err := parser.ParseFile(fileFset, name, src, parser.ParseComments)
 		if err != nil {
 			t.Fatalf("parse %s: %v", name, err)
 		}
+
+		// Blank the comments, keeping newlines so a later failure's line numbers still line
+		// up. A space in place of every other comment byte keeps the identifiers on either
+		// side from fusing.
+		blanked := []byte(src)
+		for _, group := range f.Comments {
+			for _, c := range group.List {
+				off := fileFset.Position(c.Pos()).Offset
+				endOff := fileFset.Position(c.End()).Offset
+				for i := off; i < endOff && i < len(blanked); i++ {
+					if blanked[i] != '\n' {
+						blanked[i] = ' '
+					}
+				}
+			}
+		}
+
 		for _, d := range f.Decls {
 			fd, ok := d.(*ast.FuncDecl)
 			if !ok || fd.Name == nil || fd.Name.IsExported() {
@@ -60,15 +80,14 @@ func TestNoUnusedFunctionsInApp(t *testing.T) {
 				}
 			}
 			declared[fd.Name.Name] = name
-			// Blank the declaration's own name.
-			off := fset.Position(fd.Name.Pos()).Offset
-			if off >= 0 && off+len(fd.Name.Name) <= len(src) {
-				src = src[:off] + strings.Repeat(" ", len(fd.Name.Name)) + src[off+len(fd.Name.Name):]
+			// Blank the declaration's own name, so a name that appears only at its
+			// definition is not counted as a use. Same length, so no offset moves.
+			off := fileFset.Position(fd.Name.Pos()).Offset
+			for i := off; i < off+len(fd.Name.Name) && i < len(blanked); i++ {
+				blanked[i] = ' '
 			}
 		}
-		// Strip comments: a name mentioned only in a doc comment is not a use.
-		src = stripComments(src)
-		stripped = append(stripped, src)
+		stripped = append(stripped, string(blanked))
 	}
 
 	joined := strings.Join(stripped, "\n")
@@ -111,31 +130,4 @@ func readFileString(name string) (string, error) {
 		return "", err
 	}
 	return string(b), nil
-}
-
-// stripComments removes line and block comments well enough for identifier
-// matching; it does not need to be exact about strings, since a function name
-// inside a string literal is not a reference either way.
-func stripComments(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		switch {
-		case i+1 < len(s) && s[i] == '/' && s[i+1] == '/':
-			for i < len(s) && s[i] != '\n' {
-				i++
-			}
-			b.WriteByte('\n')
-		case i+1 < len(s) && s[i] == '/' && s[i+1] == '*':
-			i += 2
-			for i+1 < len(s) && !(s[i] == '*' && s[i+1] == '/') {
-				i++
-			}
-			i++
-			b.WriteByte(' ')
-		default:
-			b.WriteByte(s[i])
-		}
-	}
-	return b.String()
 }

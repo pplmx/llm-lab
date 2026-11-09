@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -165,71 +166,138 @@ func TestContributingCountsEveryTooltip(t *testing.T) {
 	t.Fatalf("there are %d tooltips (%s处) but the guide does not say so", n, cn[n])
 }
 
-// TestContributingFocusTableMatchesTheApp keeps the Tab-order table true.
+// TestContributingFocusTableMatchesTheApp measures the Tab cycle and compares it to the table.
 //
-// The guide lists what Tab reaches, in order, and says the temperature slider joins the cycle only on the output stage. That is
-// the kind of list that goes stale quietly: a control added anywhere renumbers everything after it, and the table would still
-// read as fact. So the order is measured here and compared against the labels the guide prints.
+// The guide's table is where a reader learns what Tab reaches, and it had rotted into something
+// false: it listed six stops where the attention stage has eleven, and every coordinate past the
+// third was wrong, because it described an interface from before the layer and head segmented
+// controls and the card-index chips existed.
+//
+// The old version of this test could not notice. It checked that six control names appeared in
+// the document, that a heading said 六个, and that the table had seven lines — all true while the
+// numbers beside them described a different app — and it only required Tab to reach five stops,
+// so a cycle of eleven passed. The check is now against the pixels.
 func TestContributingFocusTableMatchesTheApp(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "CONTRIBUTING.md"))
 	if err != nil {
 		t.Fatalf("read CONTRIBUTING.md: %v", err)
 	}
 	doc := string(b)
-	for _, want := range []string{"提示词输入框", "重置", "采样下一个 token", "温度滑块", "上一步", "下一步"} {
-		if !strings.Contains(doc, want) {
-			t.Fatalf("the focus table no longer lists %q", want)
-		}
-	}
-	if !strings.Contains(doc, "仅第 7 步") {
-		t.Fatal("the guide no longer says the temperature slider is reachable only on the output stage")
-	}
-	// The section heading has to agree with the table under it. It said "五个" while
-	// the table listed six, because a row was added later and the heading was not —
-	// a count in a heading is a claim like any other, so it is checked rather than
-	// left to the reader to notice.
-	if !strings.Contains(doc, "六个 Tab 停点") {
-		t.Fatalf("the focus section's heading no longer states the six Tab stops its table lists " +
-			"(it said 五个 while the table had six)")
-	}
-	rowsInTable := strings.Count(doc[strings.Index(doc, "| Tab | 控件 |"):strings.Index(doc, "**层和头两个分段控件也在循环里**")], "\n| ")
-	if rowsInTable != 7 { // header, separator, six rows
-		t.Fatalf("the focus table now has %d rows (want 7 including header and separator), "+
-			"so the heading's count needs revisiting", rowsInTable)
+
+	if !strings.Contains(doc, "1180×720") {
+		t.Fatal("the guide no longer states the window the focus table was measured at")
 	}
 
-	// Walk the cycle on a stage where every control is live, and count the distinct stops.
+	// Stage 3 (index 2): the attention stage, where layer and head are both live and the stage
+	// carries a three-chip card row, so the cycle includes every kind of stop.
+	rings := focusRings(t, 2, 1180, 720)
+	if len(rings) < 6 {
+		t.Fatalf("Tab found only %d focus rings on stage 3; the cycle has collapsed", len(rings))
+	}
+
+	// The heading states the cycle's length. A count in a heading is a claim like any other and
+	// goes stale the same way — it once read 五个 over a six-row table.
+	cn := [...]string{"零", "一", "两", "三", "四", "五", "六", "七", "八", "九", "十",
+		"十一", "十二", "十三", "十四", "十五", "十六", "十七", "十八", "十九", "二十"}
+	if len(rings) >= len(cn) {
+		t.Fatalf("%d focus rings is past what this test can spell", len(rings))
+	}
+	if !strings.Contains(doc, cn[len(rings)]+" 个 Tab 停点") &&
+		!strings.Contains(doc, cn[len(rings)]+"个 Tab 停点") {
+		t.Fatalf("the attention stage has %d Tab stops but the guide's heading does not say %q",
+			len(rings), cn[len(rings)]+"个 Tab 停点")
+	}
+
+	// Every measured ring is in the table, box and all. A ring missing from the document is a
+	// control the reader is not told they can reach; a box that disagrees is a stale row.
+	for i, r := range rings {
+		want := fmt.Sprintf("(%d,%d)-(%d,%d)", int(r[0]), int(r[1]), int(r[2]), int(r[3]))
+		if !strings.Contains(doc, want) {
+			t.Fatalf("Tab stop %d draws its ring at %s, which the guide's table does not list; "+
+				"re-measure the table rather than guessing the numbers", i+1, want)
+		}
+	}
+
+	// The table's data rows must equal the cycle. This catches a row added to the document for
+	// a control that does not exist, which the box check alone cannot see.
+	i := strings.Index(doc, "| Tab | 控件 | 焦点环位置 |")
+	if i < 0 {
+		t.Fatal("the guide no longer has a focus table")
+	}
+	rest := doc[i:]
+	if j := strings.Index(rest, "\n\n"); j >= 0 {
+		rest = rest[:j]
+	}
+	rows := 0
+	for _, line := range strings.Split(rest, "\n") {
+		if strings.HasPrefix(line, "| ") {
+			rows++
+		}
+	}
+	if got := rows - 2; got != len(rings) {
+		t.Fatalf("the focus table has %d data rows for a cycle of %d stops", got, len(rings))
+	}
+}
+
+// focusRings walks the Tab cycle on one stage and returns each stop's focus-ring bounding box.
+//
+// The ring is found by differencing each frame against the *unfocused* frame: it exists only
+// while a control has focus. Diffing against the previous stop instead — the obvious thing to
+// write — measures two rings at once and yields a box spanning both, which is how a first draft
+// reported boxes wider than any control on screen.
+//
+// Which widget each ring belongs to is deliberately not attempted. Pressing a key to see what
+// changes cannot identify it: Right moves no app field in the text input, walks the value in the
+// segmented controls, and does nothing on a button, so several distinct stops all look like
+// "nothing happened". The box is the only signal that answers both "is there a ring" and "where".
+func focusRings(t *testing.T, step, w, h int) [][4]float32 {
+	t.Helper()
 	a := newTestApp(t)
-	a.Step = 6
-	tr := ui.NewTester(a.View, 1180, 720)
+	a.Step = step
+	tr := ui.NewTester(a.View, w, h)
 	tr.Frame()
 	base := append([]byte(nil), tr.Image().Pix...)
-	stops := 0
-	for i := 0; i < 8; i++ {
+	var rings [][4]float32
+	for n := 0; n < 24; n++ {
 		tr.Key(0, ui.KeyTab)
 		tr.Frame()
 		img := tr.Image()
-		cur := img.Pix
-		changed := 0
-		for y := 0; y < 720 && changed < 40; y++ {
+		minX, minY, maxX, maxY := 1<<30, 1<<30, -1, -1
+		for y := 0; y < h; y++ {
 			row := y * img.Stride
-			for x := 0; x < 1180; x++ {
+			for x := 0; x < w; x++ {
 				o := row + x*4
-				if o+2 < len(cur) && (cur[o] != base[o] || cur[o+1] != base[o+1] || cur[o+2] != base[o+2]) {
-					changed++
-					if changed >= 40 {
-						break
-					}
+				if o+2 >= len(img.Pix) || o+2 >= len(base) {
+					continue
+				}
+				if img.Pix[o] == base[o] && img.Pix[o+1] == base[o+1] && img.Pix[o+2] == base[o+2] {
+					continue
+				}
+				if x < minX {
+					minX = x
+				}
+				if x > maxX {
+					maxX = x
+				}
+				if y < minY {
+					minY = y
+				}
+				if y > maxY {
+					maxY = y
 				}
 			}
 		}
-		if changed >= 40 {
-			stops++
+		if maxX < 0 {
+			continue
 		}
+		ring := [4]float32{float32(minX), float32(minY), float32(maxX), float32(maxY)}
+		for _, prev := range rings {
+			if prev == ring {
+				return rings
+			}
+		}
+		rings = append(rings, ring)
 	}
-	// Six stops: the five always-live controls plus the slider. Anything else means the table above is describing a
-	// cycle that no longer exists.
-	if stops < 5 {
-		t.Fatalf("Tab reached %d focusable controls on the output stage; the guide lists six", stops)
-	}
+	t.Fatal("the Tab cycle did not repeat within 24 presses, so it has no length to state")
+	return rings
 }
