@@ -381,3 +381,47 @@ func TestMainValidatesStep(t *testing.T) {
 		t.Fatal("main.go no longer applies a validated -step to the app's stage")
 	}
 }
+
+// TestMainDoesNotPrefixLoadErrors keeps the weights error a caller prints verbatim.
+//
+// The two failure modes it guards are the ones that existed together before round 12:
+// main.go wrapped the error with "weights <path>: ", and model.Load passed os.ReadFile's
+// error through untouched, so a missing file printed "weights /x.json: open /x.json: no such
+// file..." while a schema error printed "weights /x.json: weights: the file parsed but has no
+// configuration" — the same word twice in one sentence, because Parse had already prefixed its
+// own. Removing either half alone leaves one of the two wrong.
+//
+// model.Load now names its own operation, so main.go prints the error as-is. main.go is
+// package main and cannot be linked here, so — like TestMainValidatesStep beside it — the
+// source is the handle: the format string must not re-add a path or a "weights" label.
+func TestMainDoesNotPrefixLoadErrors(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := string(src)
+
+	// The load failure must be printed without main.go adding its own context.
+	if !strings.Contains(main, "log.Fatalf(\"%v\", err)") {
+		t.Fatalf("main.go no longer prints model.Load's error verbatim, so it is adding a " +
+			"prefix the model layer already provides (this is what produced " +
+			"\"weights /x.json: weights: the file parsed but has no configuration\")")
+	}
+	// And the old form must not come back by another route.
+	if strings.Contains(main, "weights %s: %v") {
+		t.Fatalf("main.go still prefixes the weights path onto an error that already names " +
+			"the file and the operation")
+	}
+	// The context has to come from somewhere: model.Load builds it, so its prefix is the
+	// thing this depends on. If that is ever dropped, the missing-file case loses the word
+	// "weights" entirely and the reader cannot tell which flag failed.
+	load, err := os.ReadFile(filepath.Join("..", "model", "weights.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(load), `"read weights: %w"`) {
+		t.Fatal("model.Load no longer says what it was reading, and main.go no longer adds " +
+			"it, so a missing -weights file reports a bare os error with no indication of " +
+			"which argument was wrong")
+	}
+}

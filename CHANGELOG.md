@@ -6,6 +6,15 @@
 
 ### Added
 
+- **`-weights` 的报错把「weights」写了两遍，而且两种失败下错的地方不一样。** 实测三种输入：
+  - 文件不存在 → `weights /tmp/nope.json: open /tmp/nope.json: no such file or directory`（路径重复，而且没说这是在读权重）
+  - schema 不对 → `weights /tmp/bad1.json: weights: the file parsed but has no configuration …`（**「weights」出现两次**，因为 `Parse` 已经加了前缀）
+  - 空文件 → `weights /tmp/bad2.json: parse weights: /tmp/bad2.json is empty`（路径出现两次）
+  - 根因是上下文加在了错的那一层：`main.go` 用 `"weights %s: %v"` 包一层，而 `model.Parse` 的每条错误**已经**自带 `weights: ` 或 `parse weights: ` 前缀；`model.Load` 又原样透传 `os.ReadFile` 的裸错误，那条只有路径、没有「在读权重」
+  - 修法：上下文各归各位。`Load` 给读取失败加上 `read weights: `，`main.go` 改成 `log.Fatalf("%v", err)` 原样打印。现在三种分别是 `read weights: open …: no such file`、`weights: the file parsed but has no configuration …`、`parse weights: … is empty`，每种恰好一层上下文
+  - `TestLoadErrorsSayWhatWasBeingLoaded`（model）与 `TestMainDoesNotPrefixLoadErrors`（app，读 `main.go` 源码）**两边都钉住**，因为只去掉一半会剩下另一种错法：去掉 `main.go` 的前缀而不给 `Load` 加上下文，缺文件的报错就变成裸的 `open …`，读者不知道是哪个参数错了
+  - 两处都做了破坏性验证：恢复 `main.go` 的前缀 → app 那条报「adding a prefix the model layer already provides」；把 `Load` 改回裸错误 → model 那条报「the error does not say what was being read」
+
 - **`-step` 越界时默默打开第一步，等于把读者要的那一步换掉却不告诉他。** 原代码是 `if *step >= 0 && *step < len(...) { a.Step = *step }`——`-step 99` 打开第 1 步，命令行上没有任何提示，读起来像这个 flag 根本没生效
   - 改成校验：越界直接 `log.Fatalf` 退出，并列出合法范围 0-6 与**每一步的名字**，读者不用猜
   - 实测：`-step 99` → `-step 99 is out of range: lessons are numbered 0-6 (分词, 嵌入, 注意力分数, Softmax, 残差 / LN, FFN, 输出 / 采样)`，退出码 1；`-step 6` 正常进到窗口（本机无 display，报的是显示错误，说明参数已通过）

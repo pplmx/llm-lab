@@ -117,3 +117,49 @@ func TestParseErrorsNameTheActualProblem(t *testing.T) {
 		// Parse is what a library caller would see.
 	}
 }
+
+// TestLoadErrorsSayWhatWasBeingLoaded covers the one error path Load produces on its own.
+//
+// Load returns os.ReadFile's error untouched for a missing or unreadable file, and that error
+// names the path but not what the program was doing with it: "open /x.json: no such file or
+// directory" would be printed for a weights file, an image and a CSV alike. main.go used to
+// supply the missing context by prefixing the path itself, which then doubled the prefix on
+// every error Parse returns — "weights /x.json: weights: the file parsed but has no
+// configuration" — so the prefix could not simply stay there.
+//
+// Every error this function returns now names the operation, which is what lets a caller print
+// it verbatim. The test pins both halves: the read failure says "read weights", and the parse
+// failures keep their own single prefix.
+func TestLoadErrorsSayWhatWasBeingLoaded(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "absent.json")
+	_, err := Load(missing)
+	if err == nil {
+		t.Fatal("Load accepted a path that does not exist")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "read weights") {
+		t.Fatalf("the error does not say what was being read: %q", msg)
+	}
+	if !strings.Contains(msg, missing) {
+		t.Fatalf("the error does not name the path: %q", msg)
+	}
+	// And exactly one level of context: the doubled prefix is what this fix removed, so a
+	// message that counts "weights" twice has regressed.
+	if n := strings.Count(msg, "weights"); n != 1 {
+		t.Fatalf("the error names weights %d times, so the caller's prefix has come back: %q", n, msg)
+	}
+
+	// The parse side is unchanged: one prefix, produced by Parse rather than by the caller.
+	empty := filepath.Join(dir, "empty.json")
+	if writeErr := os.WriteFile(empty, nil, 0o644); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	_, err = Load(empty)
+	if err == nil {
+		t.Fatal("Load accepted an empty file")
+	}
+	if got := strings.Count(err.Error(), "weights"); got != 1 {
+		t.Fatalf("the empty-file error names weights %d times: %q", got, err.Error())
+	}
+}

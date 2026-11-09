@@ -90,7 +90,14 @@ func Bundled() (*Weights, error) {
 func Load(path string) (*Weights, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		// Name what was being attempted, not just what the OS reported. The bare
+		// os.ReadFile error says "open /x.json: no such file or directory", which names the
+		// path but not that it was being read as weights — and main.go used to add that
+		// context itself, which then doubled the prefix on every error Parse returns
+		// ("weights /x.json: weights: the file parsed but has no configuration"). Every
+		// error from this function now carries its own context, so a caller can print it
+		// as-is.
+		return nil, fmt.Errorf("read weights: %w", err)
 	}
 	return Parse(data, path)
 }

@@ -30,7 +30,12 @@ func main() {
 	if *weightsPath != "" {
 		w, err = model.Load(*weightsPath)
 		if err != nil {
-			log.Fatalf("weights %s: %v", *weightsPath, err)
+			// No path prefix here: every error model.Load can return already names the file
+			// or says what is wrong with its contents ("parse weights: /x.json is empty",
+			// "weights: the file parsed but has no configuration ..."). Adding the path again
+			// produced lines like "weights /tmp/x.json: weights: the file parsed but has no
+			// configuration", which reads as two separate faults in one sentence.
+			log.Fatalf("%v", err)
 		}
 	} else {
 		w, err = model.Bundled()
