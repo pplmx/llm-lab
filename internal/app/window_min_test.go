@@ -441,3 +441,54 @@ func TestMainDoesNotPrefixLoadErrors(t *testing.T) {
 			"which argument was wrong")
 	}
 }
+
+// TestSidebarSurvivesALongWeightsPath keeps the file a reader loaded from pushing the rest of
+// the sidebar out of the window.
+//
+// The sidebar is 224 DIP wide and its content column has no height bound. `-weights
+// /a/very/long/path/...` used to be drawn at full length, wrapping to three lines and, past
+// about 800 characters, pushing the status row to y=802 in a 720-tall window — the last rows
+// became unreachable with no scrolling available for them. Measured before the fix at
+// 1180x720: the weights text grew from 13 DIP tall to 219, and the status line left the window.
+//
+// Two properties are checked, because either alone is satisfiable by the wrong fix. The
+// weights line must stay one line tall (so it cannot grow without bound), and the status row
+// must stay inside the window (so the reader can still see the token count and forward-pass
+// state, which is what tells them whether the app is working at all).
+func TestSidebarSurvivesALongWeightsPath(t *testing.T) {
+	// A path longer than any real one needs to be: the point is that the layout does not
+	// depend on the length at all.
+	long := "/" + strings.Repeat("directory/", 200) + "weights.json"
+	for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}} {
+		a := newTestApp(t)
+		a.W.Source = long
+		tr := ui.NewTester(a.View, size.w, size.h)
+		tr.Frame()
+
+		var weightsRect ui.Rect
+		var statusRect ui.Rect
+		var sawWeights, sawStatus bool
+		for _, s := range tr.Texts() {
+			switch {
+			case strings.HasPrefix(s, "权重："):
+				weightsRect, sawWeights = tr.Find(s)
+			case strings.Contains(s, "tokens ·"):
+				statusRect, sawStatus = tr.Find(s)
+			}
+		}
+		if !sawWeights || !sawStatus {
+			t.Fatalf("%dx%d: the sidebar lost its weights or status line", size.w, size.h)
+		}
+		// One line of fontMicro is 13 DIP; two would be 26. Anything taller means the path
+		// wrapped, which is the mechanism that used to push everything below it down.
+		if weightsRect.H > 20 {
+			t.Fatalf("%dx%d: the weights line is %.0f DIP tall, so a long path still wraps",
+				size.w, size.h, weightsRect.H)
+		}
+		if statusRect.Y+statusRect.H > float32(size.h) {
+			t.Fatalf("%dx%d: the status line ends at y=%.0f, past the %d-DIP window — a long "+
+				"weights path pushed it out and the sidebar cannot scroll",
+				size.w, size.h, statusRect.Y+statusRect.H, size.h)
+		}
+	}
+}

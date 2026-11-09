@@ -840,7 +840,14 @@ func (a *App) sidebar(c *ui.Context) {
 			kv(c, "ctx", fmt.Sprint(a.W.Config.Ctx))
 			kv(c, "参数", humanCount(a.paramCount()))
 		})
-		ui.Text(c, "权重："+a.W.Source).FontSize(fontMicro).TextColor(colFaint)
+		// One line, with the tail kept. The sidebar is 224 DIP wide and its content is not
+		// height-bounded, so a long -weights path used to wrap to three lines and, past about
+		// 800 characters, push the status line below the bottom of the window — measured at
+		// 1180x720: the weights text grew from 13 DIP to 219 and the status row landed at
+		// y=802 in a 720-tall window. Truncating the tail rather than the head keeps the part
+		// that identifies the file; the directory it lives in is rarely what a reader is
+		// checking, and the full value is on the command line they just typed.
+		ui.Text(c, "权重："+shortPath(a.W.Source, 34)).FontSize(fontMicro).TextColor(colFaint).NoWrap()
 		if a.W.Steps > 0 {
 			ui.Text(c, fmt.Sprintf("训练 %d 步 · loss %.3f", a.W.Steps, a.W.Loss)).FontSize(fontMicro).TextColor(colFaint)
 		} else {
@@ -881,6 +888,24 @@ func (a *App) paramCount() int {
 	n := c.Vocab*d + c.Ctx*d + 2*d
 	per := 4*d*d + 2*d*c.DFF + 4*d
 	return n + c.NLayer*per
+}
+
+// shortPath shortens a file path to at most n runes, keeping its tail.
+//
+// A weights file is usually named something like weights.json and lives somewhere deep; when
+// only part of the path can be shown, the filename and its immediate parent are what tell the
+// reader which file this is. The ellipsis goes at the front to say the beginning was dropped,
+// which is the opposite of truncateRunes and deliberate: for a sentence the interesting part is
+// at the start, for a path it is at the end.
+func shortPath(p string, n int) string {
+	r := []rune(p)
+	if len(r) <= n {
+		return p
+	}
+	if n <= 1 {
+		return "…"
+	}
+	return "…" + string(r[len(r)-(n-1):])
 }
 
 func humanCount(n int) string {
