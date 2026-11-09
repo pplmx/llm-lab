@@ -409,9 +409,24 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 	// Size the matrix from the space the window actually leaves for it, so the
 	// cells stay square and every column fits instead of being squeezed by the
 	// flexbox. The right-hand column of the card needs roughly 240px.
-	avail := float32(420)
-	if w, _ := c.Size(); w > 0 {
+	// The matrix is bounded on both axes. The width bound leaves room for the bar list beside it;
+	// the height bound keeps the whole matrix inside the stage viewport, which starts below the
+	// fixed step bar. c.Size() reports the window, not the space this column was given — measured
+	// as (1500,940) at that point — so the chrome has to be subtracted here.
+	//
+	// A matrix taller than the viewport cannot be scrolled fully into view at any offset: its top
+	// rows stay under the bar and PointerPosition reports no element there, so hovering them
+	// yields no cell. Measured at 1500x940 with T=36: an unbounded matrix reached 653 DIP with its
+	// top at y=159 while the viewport begins at y=228.
+	const stageChrome = 228 // window top to the first scrollable row, measured at all sizes
+	const leaving = 160     // card padding, the chip row, and the axis labels below the matrix
+	const maxCell = 20      // a cell larger than this is harder to scan, not easier
+	avail := maxCell * float32(T)
+	if w, h := c.Size(); w > 0 && h > 0 {
 		if room := w - a.SidebarW - a.InspectorW - 2 - 32 - 28 - 240; room < avail {
+			avail = room
+		}
+		if room := h - stageChrome - leaving; room > 0 && room < avail {
 			avail = room
 		}
 	}
@@ -419,8 +434,8 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 		avail = 160
 	}
 	cell := avail / float32(T)
-	if cell > 20 {
-		cell = 20
+	if cell > maxCell {
+		cell = maxCell
 	}
 	if cell < 2.5 {
 		cell = 2.5
@@ -534,8 +549,19 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 			// Relative to the grid, so the label gutter is not a cell.
 			x -= grid.X - b.X
 			y -= grid.Y - b.Y
-			q = int(y / ch)
-			k = int(x / cw)
+			// A pointer left of or above the grid gives a negative quotient, and converting a
+			// float to int truncates toward zero — so -0.9 becomes 0 and the gutter passed the
+			// `k >= 0` check below as cell 0. Measured at 1920x1080 with T=36: a pointer at the
+			// grid's left edge, 18 DIP into the label gutter, reported cell (0,0).
+			//
+			// A wider matrix makes this easier to hit, because the gutter is a smaller fraction
+			// of a cell, so the quotient lands in (-1, 0) rather than below -1. Guarding before
+			// the conversion keeps the gutter out of the grid at every size.
+			q, k = -1, -1
+			if x >= 0 && y >= 0 {
+				q = int(y / ch)
+				k = int(x / cw)
+			}
 			if q >= T {
 				q = T - 1
 			}
