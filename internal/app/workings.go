@@ -1024,9 +1024,13 @@ type logitLens struct {
 	Final int
 	// ConfidentWrong counts intermediate rungs that disagree with the final
 	// answer while giving their own answer more than lensConfident probability.
-	// It is the number that justifies the card's warning: on the bundled weights
-	// and the default prompt it is 105 of 180 rungs, and 31 of 36 positions have
-	// at least one of them.
+	// It is the number that justifies the card's warning.
+	//
+	// Measured on the bundled weights and the default prompt: 76 of 180 rungs, and all 36
+	// positions have at least one. The figures here were once 105 and 31, which no longer match
+	// the weights — the same staleness that a comment on the score stage had. Nothing checked
+	// them: the card computes its own counts from this field, so it stayed right while the
+	// comment describing it drifted. TestLogitLensConfidentWrongCountIsCurrent holds them.
 	ConfidentWrong int
 	// RungsCompared is how many intermediate rungs there were to disagree.
 	RungsCompared int

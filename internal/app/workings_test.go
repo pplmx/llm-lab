@@ -4884,3 +4884,57 @@ func TestReAddableBlocksReallyDoMisround(t *testing.T) {
 		}
 	}
 }
+
+// TestLogitLensConfidentWrongCountIsCurrent holds the figures quoted beside ConfidentWrong.
+//
+// Those figures were 105 of 180 rungs and 31 of 36 positions, while the weights give 76 and 36.
+// The card was right because it computes from the field; only the comment describing the field was
+// wrong, which is why no assertion caught it. A number in a comment goes stale exactly like a
+// number in code, and the earlier score-stage comment had the same problem.
+//
+// The figures are parsed out of the source rather than copied here, so changing the comment alone
+// cannot leave this test green — the mistake made when a colour-scale range was guarded by holding
+// a second copy of the numbers.
+func TestLogitLensConfidentWrongCountIsCurrent(t *testing.T) {
+	src, err := os.ReadFile("workings.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`(\d+) of (\d+) rungs, and all (\d+)\s+// positions have at least one`)
+	m := re.FindStringSubmatch(string(src))
+	if m == nil {
+		t.Fatal("the comment beside ConfidentWrong no longer quotes its figures in the form " +
+			"\"N of M rungs, and all K positions have at least one\"; update this test with " +
+			"whatever it says now")
+	}
+	wantCW, wantRungs, wantPos := mustParseInt(t, m[1]), mustParseInt(t, m[2]), mustParseInt(t, m[3])
+
+	a := newTestApp(t)
+	gotCW, gotRungs, gotPos := 0, 0, 0
+	for i := 0; i < len(a.Trace.Tokens); i++ {
+		lens := computeLogitLens(a.W, a.Trace, i, 1.0)
+		if !lens.OK {
+			continue
+		}
+		gotCW += lens.ConfidentWrong
+		gotRungs += lens.RungsCompared
+		if lens.ConfidentWrong > 0 {
+			gotPos++
+		}
+	}
+	if gotCW != wantCW || gotRungs != wantRungs || gotPos != wantPos {
+		t.Fatalf("the comment beside ConfidentWrong says %d of %d rungs across %d positions, but "+
+			"the weights give %d of %d across %d — one fact stated twice, so update both",
+			wantCW, wantRungs, wantPos, gotCW, gotRungs, gotPos)
+	}
+}
+
+// mustParseInt reads a printed integer, failing rather than returning zero.
+func mustParseInt(t *testing.T, s string) int {
+	t.Helper()
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		t.Fatalf("cannot read %q as an integer: %v", s, err)
+	}
+	return v
+}

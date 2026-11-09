@@ -6,6 +6,18 @@
 
 ### Added
 
+- **`ConfidentWrong` 字段的注释写「105 of 180 rungs, 31 of 36 positions」，实测是 **76 of 180，36 of 36**。** 卡片本身是对的（它从字段现算），错的只有描述这个字段的注释
+  - 和上一轮色深范围那一处是同一个病：**注释里的数字没有测试盯着，就会和权重一起漂**
+  - 把源码里所有 `N of M (rungs|rows|positions|lines|dimensions|heads|cells|tokens|keys)` 形式的断言捞出来逐条复核，共 7 处：
+    - `31 of 35 rows`（previousTokenShare）✅ 实测一致
+    - `92 of 180 rungs`（lens 不同意）✅ 一致
+    - `129 of 134 rows` ✅ 本轮刚写，来自实测
+    - `4778 of 5328 lines` ✅ 第 32 轮实测过
+    - `30 of 35 positions`（**两处**，FFN answer-direction）✅ 一致——这条一开始被我误判成 stale，实际它量的是 **top-10 rank**，不是 logit lens 的 30/35；查证后确认注释与 `computeFFNAnswerDirection` 的输出完全吻合（layer0 top-10 30/35、rank 103.4→4.5；layer1 rank 3.7→10.7）
+    - `76 of 180`（本轮改的）——原来写 105/31
+  - **7 处里只有 1 处过期**。修法照上一轮的教训：`TestLogitLensConfidentWrongCountIsCurrent` **从源码里解析这几个数字**再与实测比，不在测试里存第二份
+  - 破坏性验证：把注释改回 105/31 → `says 105 of 180 rungs across 31 positions, but the weights give 76 of 180 across 36`
+
 - **FFN 的两张卡片各报一个计数，读者会自然相加，而它们在 134 行里有 129 行加不出 d_ff。** 舞台说「166 个负值（占 43%）」，旁边检查器说「激活 > 0.01 218 / 384 (57%)」——两个数挨着显示、都以 384 为分母，读起来像一次划分
   - 实测：六个提示词 × 两层 × 每一行，`neg(<0) + active(>0.01) ≠ 384` 的行是 **129 / 134**；最坏一行有 **10 个维度（2.6%）** 落在 `(0, 0.01]` 区间，**两个计数都不算**
   - 两个数各自都是对的，问题在**并排摆放而不解释**：加起来少几个、看不出来少的去哪儿了
