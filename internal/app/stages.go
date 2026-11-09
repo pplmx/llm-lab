@@ -651,9 +651,17 @@ func (a *App) stageScores(c *ui.Context) {
 				kv(c, "可见", fmt.Sprintf("%d 个 key", i+1))
 				// The colour ramp is |score| / saturation, so its top is a fact
 				// about this matrix: state it, since it moves with the prompt and
-				// with the layer — measured 4.6 to 12.5 on layer 0 and 8.1 to 15.2
-				// on layer 1 across the bundled examples — and nothing else on the
-				// stage implies it.
+				// with the layer — and nothing else on the stage implies it.
+				//
+				// Measured across eight prompts (the default, "attention is all you need", "hi",
+				// "ab", "a", a Chinese sentence and two long English ones):
+				//
+				//	colour scale 0.6–10.4 on layer 0 and 1.7–17.8 on layer 1
+				//
+				// The figures used to read 4.6 to 12.5 and 8.1 to 15.2, which the weights have
+				// since left behind. TestScoreColorScaleRangeMatchesTheWeights parses the line
+				// above and compares it with a fresh measurement, so the next weight change
+				// updates the number rather than leaving a stale figure in a comment.
 				if sc := scoreColorScale(h); sc > 0 {
 					kv(c, "色深上限", fmt.Sprintf("|分数| = %.2f", sc))
 					mutedText(c, "颜色深浅按 |分数| ÷ 上限 取值，所以最亮的那格就是这个上限。")

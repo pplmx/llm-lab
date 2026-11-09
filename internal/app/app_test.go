@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -9779,6 +9780,97 @@ func TestNoLiteralMarkdownInRenderedText(t *testing.T) {
 			if strings.Contains(s, "`") {
 				t.Fatalf("stage %d renders a literal backtick: %q", step+1, s)
 			}
+		}
+	}
+}
+
+// TestScoreColorScaleRangeMatchesTheWeights holds the ranges quoted in the score-stage comment.
+//
+// That comment used to say the colour ramp's ceiling runs 4.6 to 12.5 on layer 0 and 8.1 to 15.2
+// on layer 1. Measured across the same kind of prompt set: 0.6 to 10.4 and 1.7 to 17.8 — both
+// ranges wrong, and wrong in the direction that makes the ramp's movement look smaller than it
+// is. Nothing checked them; the only nearby test asks whether the scale VARIES between prompts,
+// which stays true whatever the numbers are.
+//
+// The bounds below are the measurement with a little room, so ordinary noise does not fail the
+// test but a real change in what the weights do does. If they trip, re-measure and update both
+// this test and the comment it guards — the two are one fact stated twice, so a failure should
+// say so rather than looking like a regression in the painting.
+func TestScoreColorScaleRangeMatchesTheWeights(t *testing.T) {
+	// The prompt set the comment describes: the default, three short ones, a Chinese sentence
+	// and two long English ones.
+	prompts := []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+		"hi",
+		"ab",
+		"a",
+		"注意力就是加权求和",
+		"The quick brown fox jumps over the lazy dog.",
+		"Hello, World! This is a test of the model.",
+	}
+	lo := map[int]float64{}
+	hi := map[int]float64{}
+	for _, p := range prompts {
+		a := newTestApp(t)
+		a.Prompt = p
+		a.recompute()
+		for li := range a.Trace.Layers {
+			for h := range a.Trace.Layers[li].Heads {
+				sc := scoreColorScale(a.Trace.Layers[li].Heads[h])
+				if sc <= 0 {
+					continue
+				}
+				if v, ok := lo[li]; !ok || sc < v {
+					lo[li] = sc
+				}
+				if v, ok := hi[li]; !ok || sc > v {
+					hi[li] = sc
+				}
+			}
+		}
+	}
+	if len(lo) < 2 {
+		t.Fatalf("measured %d layers, want both", len(lo))
+	}
+
+	// Read the figures out of the comment rather than keeping a second copy. Holding them here
+	// instead means the test still passes when the comment alone goes stale — which is the exact
+	// defect the comment had. Measured: reverting the comment while leaving this test alone left
+	// it green.
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`colour scale ([0-9]+\.[0-9]+)–([0-9]+\.[0-9]+) on layer 0 and ` +
+		`([0-9]+\.[0-9]+)–([0-9]+\.[0-9]+) on layer 1`)
+	m := re.FindStringSubmatch(string(src))
+	if m == nil {
+		t.Fatal("the score stage's comment no longer quotes a measured range of the form " +
+			"\"A–B on layer 0 and C–D on layer 1\"; update this test with whatever it says now")
+	}
+	parse := func(v string) float64 {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			t.Fatalf("cannot read %q as a number: %v", v, err)
+		}
+		return f
+	}
+	want := []struct {
+		layer  int
+		lo, hi float64
+	}{
+		{0, parse(m[1]), parse(m[2])},
+		{1, parse(m[3]), parse(m[4])},
+	}
+	for _, w := range want {
+		gotLo, gotHi := lo[w.layer], hi[w.layer]
+		// A tenth of slack: the exact extremes depend on which prompts are in the set, and
+		// pinning them to the last digit would make this a test of the prompt list.
+		if math.Abs(gotLo-w.lo) > 0.1 || math.Abs(gotHi-w.hi) > 0.1 {
+			t.Fatalf("layer %d colour scale runs %.2f to %.2f; the comment on the score stage "+
+				"says %.1f to %.1f — re-measure and update both, they are one fact stated twice",
+				w.layer, gotLo, gotHi, w.lo, w.hi)
 		}
 	}
 }
