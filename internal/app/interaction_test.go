@@ -1334,6 +1334,11 @@ func TestHeatmapPointerLandsOnTheDrawnCell(t *testing.T) {
 			}
 			// And the gutter itself is not a cell: pointing into the label margin must
 			// report nothing rather than cell 0.
+			//
+			// This is the assertion that caught the truncation bug: int(-18/cw) is -1 while cw
+			// is under 18 DIP and 0 once it is over, so a wider matrix silently turned the label
+			// margin into cell 0. The wider sizes in this test's list are what exercise it —
+			// at 1180x720 the same probe could never fail. Keep a large size in that list.
 			if grid.X > r.X {
 				tr.Move(r.X+2, grid.Y+ch/2)
 				tr.Frame()
