@@ -701,9 +701,55 @@ func computeNextByteSkill(w *model.Weights, tr *model.Trace, temperature float64
 	if s.Scored <= 0 {
 		return s
 	}
-	s.Rows = make([]positionPrediction, 0, s.Scored)
+	// Every row is predicted, including the last: the last row's prediction is what a
+	// sampler draws from, and the causal check compares that row on both sides of the
+	// shorter window. It is only the scoring loop below that needs a successor to compare
+	// against, which is why the rows are trimmed to Scored here rather than in the predictor.
+	s.Rows = predictEveryPosition(w, tr, temperature)[:s.Scored]
 	var total float64
-	for t := 0; t < s.Scored; t++ {
+	for t := range s.Rows {
+		row := &s.Rows[t]
+		actual := tr.Tokens[t+1].ID
+		row.Actual = actual
+		pActual := float64(row.Probs[actual])
+		// At a low enough temperature the true byte's probability can underflow to exactly
+		// zero in float32, which makes -ln(p) infinite. That is a limit of the arithmetic, not
+		// a property of the model worth printing: the card said "平均损失 +Inf nats" and
+		// "降低了 -Inf%", which reads as a bug in the app. Count them instead and let the
+		// summary say the mean is a lower bound.
+		if pActual > 0 {
+			row.Loss = -math.Log(pActual)
+		} else {
+			s.Underflowed++
+		}
+		row.Hit = row.Guess == actual
+		if row.Hit {
+			s.Hits++
+		}
+		total += row.Loss
+	}
+	s.MeanLoss = total / float64(s.Scored)
+	return s
+}
+
+// predictEveryPosition unembeds every row of the final LayerNorm and returns that row's
+// distribution with its argmax. It is the T-row half of computeNextByteSkill, split out
+// because the causal check compares two runs position by position and needs the final row
+// of the shorter run — the one with no successor, and precisely the prediction the added
+// byte was drawn from.
+//
+// Actual is left at -1: this function knows nothing about the prompt, so it cannot say
+// what came next. The caller that can offers it.
+func predictEveryPosition(w *model.Weights, tr *model.Trace, temperature float64) []positionPrediction {
+	if w == nil || tr == nil {
+		return nil
+	}
+	n := len(tr.FinalNorm)
+	if len(tr.Tokens) < n {
+		n = len(tr.Tokens)
+	}
+	rows := make([]positionPrediction, 0, n)
+	for t := 0; t < n; t++ {
 		probs := model.Softmax(w.Unembed(tr.FinalNorm[t]), temperature)
 		guess, best := 0, float32(-1)
 		for id, p := range probs {
@@ -711,30 +757,163 @@ func computeNextByteSkill(w *model.Weights, tr *model.Trace, temperature float64
 				best, guess = p, id
 			}
 		}
-		actual := tr.Tokens[t+1].ID
-		pActual := float64(probs[actual])
-		// At a low enough temperature the true byte's probability can underflow to exactly
-		// zero in float32, which makes -ln(p) infinite. That is a limit of the arithmetic, not
-		// a property of the model worth printing: the card said "平均损失 +Inf nats" and
-		// "降低了 -Inf%", which reads as a bug in the app. Count them instead and let the
-		// summary say the mean is a lower bound.
-		loss := 0.0
-		if pActual > 0 {
-			loss = -math.Log(pActual)
-		} else {
-			s.Underflowed++
-		}
-		hit := guess == actual
-		if hit {
-			s.Hits++
-		}
-		total += loss
-		s.Rows = append(s.Rows, positionPrediction{
-			Pos: t, Guess: guess, Actual: actual, Probs: probs, Loss: loss, Hit: hit,
-		})
+		rows = append(rows, positionPrediction{Pos: t, Guess: guess, Actual: -1, Probs: probs})
 	}
-	s.MeanLoss = total / float64(s.Scored)
-	return s
+	return rows
+}
+
+// causalComparison is what a reader can see by running the model over one window and
+// then over the same window minus its last byte: the property that makes a decoder a
+// decoder, measured instead of asserted.
+//
+// The app teaches the causal mask in prose on four stages ("因果掩码让位置 t 只看得到 t
+// 及其之前的内容") and never once demonstrated the consequence. It is worth measuring
+// rather than trusting, because a broken mask leaves every other figure in the app
+// plausible: a row that attends one key too far still sums to 1 and still draws a
+// triangle. It is also the reason sampling costs one forward pass per byte instead of a
+// run over the whole prefix — if shortening the sequence could change an earlier row,
+// nothing could be reused.
+//
+// What "unchanged" means is a tolerance, and the number is measured rather than guessed.
+// Exact equality would be the natural bar — row t is computed from tokens 0..t alone — but
+// it is not true of the experimental SIMD build, and the reason is instructive:
+// matMulRowsRange processes rows in blocks of four, so the shorter run's last rows take the
+// scalar `+=` tail while the longer run's take the fused-multiply-add path. FMA rounds once
+// per term where `+=` rounds twice, so those rows differ in the last bits (measured worst
+// |Δp| = 1.8e-6 under GOEXPERIMENT=simd, over twelve prompts; the default build's is
+// exactly 0). A mask that actually leaked a future key moves a probability by ~3e-2 — four
+// orders of magnitude above that noise, and it is what the negative control below uses.
+//
+// So the bar is causalTolerance: tight enough that any real mask defect fails it, loose
+// enough that the two matmul kernels agree. Bit-exactness would have been a stronger claim
+// and a false one.
+type causalComparison struct {
+	// Compared is how many positions the two runs share and were compared; Identical how
+	// many of those agree within causalTolerance. The shorter run's final row counts: it has
+	// no successor to be scored against, but it very much made a prediction, and that
+	// prediction is the one the next byte was drawn from.
+	Compared, Identical int
+	// WorstDelta is the largest single-probability difference seen over the compared rows.
+	// It is what tells rounding from a defect when a test fails, and tests assert on it —
+	// the rendered line deliberately does not print it, because it is exactly 0 on the
+	// default build and about 1e-6 under GOEXPERIMENT=simd, and docs/output.png is compared
+	// byte for byte under both builds.
+	WorstDelta float64
+	// MismatchAt is the position of the first row that disagreed, or -1. It is reported
+	// rather than only counted: "one row differs" sends a reader looking through all of
+	// them, and naming the position says where the sequence stopped being irrelevant.
+	MismatchAt int
+	// OK reports that there was anything to compare: a window of at least two bytes.
+	OK bool
+}
+
+// causalTolerance is how far a probability may move between the two runs and still count as
+// unchanged.
+//
+// Measured, not guessed: 1e-5 sits about five times above the worst deviation the two matmul
+// kernels produce (1.8e-6, GOEXPERIMENT=simd, twelve prompts up to the 64-token ceiling) and
+// about three orders of magnitude below what an actual mask defect does (3e-2, measured by
+// leaking one future key into every row). Anything in between would work; the gap is wide
+// enough that the exact value does not need to be tuned.
+const causalTolerance = 1e-5
+
+// compareCausalInvariance compares a run over the window's first T−1 bytes with a run
+// over all T, which is the only comparison in which "the earlier positions did not move"
+// is a statement about one sequence.
+//
+// Rows are paired by their own recorded position and the walk stops at the first unequal
+// position, because at that point the two runs are not two prefixes of one sequence and
+// the remaining pairs describe unrelated tokens. The longer run has one row the shorter
+// one cannot have — the position created by the added byte — and that row is correctly
+// outside the denominator: it is not that it moved, it is that it did not exist.
+func compareCausalInvariance(prefix, full []positionPrediction) causalComparison {
+	c := causalComparison{MismatchAt: -1}
+	if len(prefix) == 0 || len(full) < len(prefix) {
+		return c
+	}
+	for i := range prefix {
+		p, f := prefix[i], full[i]
+		if p.Pos != f.Pos {
+			break
+		}
+		c.Compared++
+		delta, same := comparePrediction(p, f)
+		if delta > c.WorstDelta {
+			c.WorstDelta = delta
+		}
+		if same {
+			c.Identical++
+			continue
+		}
+		if c.MismatchAt < 0 {
+			c.MismatchAt = p.Pos
+		}
+	}
+	c.OK = c.Compared > 0
+	return c
+}
+
+// comparePrediction reports how far two positions' predictions are apart, and whether they
+// agree within causalTolerance: same argmax byte and no probability further off than that.
+//
+// The argmax has to match exactly. "The model picked a different byte" is never rounding —
+// a near-tie at the top of a softmax over 256 bytes is a real property of the row, not an
+// artefact — so it is not given the tolerance. The probabilities are, because those are
+// where FMA-versus-`+=` shows up.
+func comparePrediction(a, b positionPrediction) (worst float64, same bool) {
+	if a.Guess != b.Guess || len(a.Probs) != len(b.Probs) {
+		return math.Inf(1), false
+	}
+	same = true
+	for i, p := range a.Probs {
+		d := math.Abs(float64(p) - float64(b.Probs[i]))
+		if d > worst {
+			worst = d
+		}
+		if d > causalTolerance {
+			same = false
+		}
+	}
+	return worst, same
+}
+
+// causalReferenceTemperature is the temperature the invariance is measured at. Any fixed
+// value would do: softmax divides every logit by the same constant, so the argmax cannot
+// depend on it, and the comparison is between two runs at one temperature anyway. 1 is
+// chosen because it is the temperature the weights were trained at, so the figure can be
+// checked against the per-position card above it.
+const causalReferenceTemperature = 1.0
+
+// measureCausalInvariance runs the model twice over the reader's current window — once on
+// the window minus its last byte, once on all of it — and compares the prediction each run
+// made at every position they share.
+//
+// The second forward pass is the whole cost (4.3ms for 36 tokens) and is the point: the
+// answer is a property of the implementation, and the app is the only place it can be
+// observed without reading gpt.go.
+//
+// Taking the *window* rather than the prompt is what makes this work past the context
+// limit. Once the prompt outgrows ctx, recompute keeps the tail; comparing that against
+// the previous run would pair positions that slid one place, and the figure would report
+// "the earlier predictions changed" — true of two different windows, false of the mask.
+// Re-deriving both runs from the window on screen avoids the mismatch entirely: the
+// comparison is always between a sequence and its own prefix, whatever the prompt's length.
+func measureCausalInvariance(w *model.Weights, tr *model.Trace) causalComparison {
+	none := causalComparison{MismatchAt: -1}
+	if w == nil || tr == nil || len(tr.Tokens) < 2 {
+		return none
+	}
+	ids := make([]int, len(tr.Tokens))
+	for i, tok := range tr.Tokens {
+		ids[i] = tok.ID
+	}
+	prefix := model.Forward(w, ids[:len(ids)-1])
+	// predictEveryPosition, not computeNextByteSkill: the shorter run's final row is the
+	// prediction the added byte was sampled from, and dropping it would leave a two-token
+	// prompt — the shortest one that has anything to say here — with nothing to compare.
+	return compareCausalInvariance(
+		predictEveryPosition(w, prefix, causalReferenceTemperature),
+		predictEveryPosition(w, tr, causalReferenceTemperature))
 }
 
 // sparsityEvidence states, in one clause, what makes this model's activations

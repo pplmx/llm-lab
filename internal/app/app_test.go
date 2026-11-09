@@ -8573,7 +8573,13 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 			// The word-boundary sentence: a one-token prompt has no position whose
 			// predecessor is a space. (Only fragments from strings over 40 runes count —
 			// collect() drops shorter ones as labels rather than prose.)
-			"错得最多的地方是词边界"},
+			"错得最多的地方是词边界",
+			// The causal-mask check compares the window against its own prefix, so a
+			// one-token prompt has nothing to compare and the line is absent by design —
+			// the same branch as the strip above it. Two tokens already reach it: "hi"
+			// prints "剩下 1 个位置…", which becomes identical to the long prompt's line
+			// once the numbers are stripped.
+			"因果掩码核对"},
 	}
 
 	collect := func(prompt string) []map[string]bool {

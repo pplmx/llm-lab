@@ -113,6 +113,14 @@ type App struct {
 	// accordion that would hide the teaching content behind a click.
 	RevealCard string
 
+	// causal is the causal-invariance measurement for causalFor, computed once per trace
+	// rather than per frame: it runs a second forward pass over the window minus its last
+	// byte plus two unembeddings (measured 4.3ms), which is affordable once but is pure
+	// repetition at 60fps. Storing the trace it describes means a stale figure can never be
+	// quoted after recompute forgets to refresh it — the same pattern as cancelStats below.
+	causal    causalComparison
+	causalFor *model.Trace
+
 	// lastHeatmapRect is the rectangle the heatmap painter was handed on the last
 	// frame, recorded so a test can compare the drawn grid against the cell the
 	// pointer resolves to. It is not read by the view.
@@ -508,6 +516,34 @@ func (a *App) cancellation() cancellationStats {
 		a.cancelStatsFor = a.Trace
 	}
 	return a.cancelStats
+}
+
+// causalInvariance returns the cached causal-mask measurement for the current window,
+// computing it if the cache is missing or describes a different trace.
+//
+// Lazy rather than eager, and cached by trace identity, for two reasons. It costs a
+// second forward pass over the window minus its last byte plus an unembedding over every
+// row of both — measured 4.3ms on the 36-token default prompt, against an 11.5ms frame for
+// that stage — and six of the seven stages never show the figure, so paying it in recompute
+// would tax every keystroke for a card the reader may not open. The cached read is 3ns.
+//
+// Caching by *trace* rather than by temperature is what makes that safe: the comparison is
+// run at T = 1 and does not read a.Temp at all. It does not have to, either — softmax
+// divides every logit by the same constant, so which byte wins cannot depend on it
+// (measured: every row on four prompts keeps its argmax across all eight slider positions),
+// and pinning one temperature is what keeps a slider drag from triggering a re-measurement
+// that cannot change the answer.
+//
+// The same measure-then-cache shape as cancellation, including the guard: a figure
+// stored beside the trace it describes cannot be quoted after a prompt change.
+func (a *App) causalInvariance() causalComparison {
+	if a.Trace == nil || len(a.Trace.Tokens) < 2 {
+		return causalComparison{MismatchAt: -1}
+	}
+	if a.causalFor != a.Trace {
+		a.causal, a.causalFor = measureCausalInvariance(a.W, a.Trace), a.Trace
+	}
+	return a.causal
 }
 
 // stageFade is how a stage switch animates: both panels that describe the stage

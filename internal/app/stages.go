@@ -2140,6 +2140,7 @@ func (a *App) stageNextByteSkill(c *ui.Context) {
 			mutedText(c, "只是这个提示词只有一个位置，而一次预测要拿提示词里真实的下一个字节来核对——"+
 				"位置 0 之后没有字节了。多打一个字，这张卡片就会变成逐位置的图。")
 			kv(c, "可以核对的位置", "0（需要至少两个 token）")
+			a.causalInvarianceLine(c)
 		})
 		return
 	}
@@ -2149,6 +2150,10 @@ func (a *App) stageNextByteSkill(c *ui.Context) {
 		a.predictionStrip(c, skill)
 		a.nextByteSkillSummary(c, tr, skill)
 		a.skillBreakdownLine(c, tr, skill)
+		// After the accuracy figures, not before them: the check is about what the strip
+		// can *rely* on, and a reader meets it as the answer to "and are these predictions
+		// stable?" rather than as an unexplained count of positions.
+		a.causalInvarianceLine(c)
 		// One legend line, not four: the counts it would carry are already in the
 		// summary above, and on this stage every row of chrome pushes the sampling
 		// card's own button out of the window. What the strip's colours and its
@@ -2943,4 +2948,49 @@ func cosText(v float64) string {
 		return "0.0000"
 	}
 	return fmt.Sprintf("%+.4f", v)
+}
+
+// causalInvarianceLine shows the causal mask's defining consequence, measured on the
+// window the reader is actually looking at: shortening the input by its last byte leaves
+// every remaining position's prediction where it was.
+//
+// The app teaches the mask in prose on four stages ("因果掩码让位置 t 只看得到 t 及其之前
+// 的内容") and, until this, never showed the thing that claim is for. It is the property the
+// whole left-to-right design rests on, and one an implementation can quietly fail: a row
+// attending one key too far still sums to 1 and still draws a triangle, so nothing else in
+// the app would look wrong. Measured on the bundled weights and the default prompt, all 35
+// shared positions keep the same argmax; the largest probability movement is exactly 0 on the
+// default build and 9.5e-7 on the SIMD one (see causalTolerance for why the latter is not 0).
+//
+// The figure is the reason a decoder is cheap to run: one forward pass predicts at every
+// position at once, so extending the sequence needs one new row, not a re-run of the prefix.
+//
+// The denominator is the shorter run's positions, not the longer one's: the added byte
+// creates a position with nothing before it to be compared against, and counting that as a
+// disagreement would turn an invariant into a failure. When a row does disagree the line
+// names its position instead of only counting — the reader's next question is "which one".
+func (a *App) causalInvarianceLine(c *ui.Context) {
+	cmp := a.causalInvariance()
+	if !cmp.OK {
+		return
+	}
+	// What the line states is the *bar*, not the measured deviation, and that is deliberate
+	// twice over. A reader needs to know what "没变" is being measured against — "the same"
+	// without a tolerance is not a claim — and the bar is a constant, so the sentence is the
+	// same on every build. Printing cmp.WorstDelta instead would make the frame depend on
+	// which matmul kernel was compiled in (exactly 0 on the default build, ~1e-6 on the SIMD
+	// one), and docs/output.png is compared byte for byte under both — the CI caught exactly
+	// that. The measured deviation is still checked, in the tests, where a number that differs
+	// per build belongs.
+	line := fmt.Sprintf("因果掩码核对：窗口去掉最后一个字节重跑一遍，剩下 %d 个位置的预测没变"+
+		"（判据是每个概率的偏差 ≤ %.0e；掩码写错时实测差 3e-2 量级）",
+		cmp.Compared, causalTolerance)
+	if cmp.Identical < cmp.Compared {
+		line = fmt.Sprintf("因果掩码核对：窗口去掉最后一个字节重跑一遍，剩下的 %d 个位置里有 %d 个的预测变了",
+			cmp.Compared, cmp.Compared-cmp.Identical)
+		if cmp.MismatchAt >= 0 {
+			line += fmt.Sprintf("；第一个在位置 %d", cmp.MismatchAt)
+		}
+	}
+	ui.Text(c, line).FontSize(fontMicro).TextColor(colFaint).LineHeight(1.4)
 }

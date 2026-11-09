@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"math"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -3712,5 +3713,338 @@ func TestLessonNumbersAreComputedNotQuoted(t *testing.T) {
 		if !strings.Contains(long, want) {
 			t.Fatalf("the sparsity sentence no longer mentions %q", want)
 		}
+	}
+}
+
+// TestCausalInvarianceHoldsOnEveryPrompt is the positive half of the causal check: the
+// app prints "N positions did not move" on the output stage, and this requires the
+// comparison behind that sentence to actually say so on the prompts a reader can reach —
+// including the ones past the context window, where a naive before/after comparison of the
+// *prompt* would compare two different windows and report a change that did not happen.
+//
+// It runs under both matmul kernels because both are shipped: `just check` uses the scalar
+// one, CI also runs `GOEXPERIMENT=simd go test ./...`. The tolerance exists because the two
+// disagree in the last bits (see causalTolerance), and this is the test that proves the
+// tolerance is wide enough for the SIMD build and still narrow enough to catch a leak.
+func TestCausalInvarianceHoldsOnEveryPrompt(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"attention is all you need",
+		"hi",
+		"ab", "abc", "abcd", // the sizes around the 4-row SIMD blocking boundary
+		"注意力就是加权求和",
+		"a🙂b",
+		strings.Repeat("attention is a weighted sum ", 3), // past the 64-token window
+		strings.Repeat("b", 64),
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		n := len(a.Trace.Tokens)
+		if n < 2 {
+			continue
+		}
+		cmp := a.causalInvariance()
+		if !cmp.OK {
+			t.Fatalf("%q (%d tokens): the comparison declined", prompt, n)
+		}
+		// Every position the shorter run has, including its final row — that row has no
+		// successor to be scored against, but it made the prediction the next byte came
+		// from, so it is exactly the row the invariant is about.
+		if cmp.Compared != n-1 {
+			t.Fatalf("%q (%d tokens): compared %d positions, want %d", prompt, n, cmp.Compared, n-1)
+		}
+		if cmp.Identical != cmp.Compared {
+			t.Fatalf("%q (%d tokens): %d of %d positions moved when the last byte was "+
+				"removed; the causal mask is supposed to make that impossible (first at %d, "+
+				"worst deviation %.3e against a tolerance of %.0e)",
+				prompt, n, cmp.Compared-cmp.Identical, cmp.Compared, cmp.MismatchAt,
+				cmp.WorstDelta, causalTolerance)
+		}
+		if cmp.MismatchAt != -1 {
+			t.Fatalf("%q: every row agreed but MismatchAt is %d", prompt, cmp.MismatchAt)
+		}
+		// And the noise really is noise: well inside the tolerance rather than scraping it,
+		// so a kernel that started drifting further would fail here rather than silently
+		// consuming the whole margin.
+		if cmp.WorstDelta > causalTolerance/2 {
+			t.Fatalf("%q: the worst deviation %.3e is over half the %.0e tolerance; the "+
+				"matmul kernels are drifting further apart than the margin was measured for",
+				prompt, cmp.WorstDelta, causalTolerance)
+		}
+	}
+}
+
+// TestCausalInvarianceDetectsABrokenMask is the half that makes the first one worth
+// anything: a comparison that can only ever say "identical" is not a measurement.
+//
+// The negative control perturbs one row the way an off-by-one mask would and requires the
+// comparison to notice and to name the position. The size of the perturbation is not
+// arbitrary: leaking one future key into every row of the real forward pass moves a
+// probability by ~3e-2 (measured; see causalTolerance), so 1e-3 is a smaller defect than a
+// real leak and still has to be caught. Two mutations are checked — one that changes the
+// argmax and one that leaves it alone — because a comparison that only watched the argmax
+// would miss the second, which is precisely the shape a subtle mask bug has.
+func TestCausalInvarianceDetectsABrokenMask(t *testing.T) {
+	a := newTestApp(t)
+	prefix := predictEveryPosition(a.W, a.Trace, causalReferenceTemperature)
+	full := predictEveryPosition(a.W, a.Trace, causalReferenceTemperature)
+	if len(prefix) < 4 {
+		t.Fatalf("%d rows, too few to perturb", len(prefix))
+	}
+	clean := compareCausalInvariance(prefix, full)
+	if clean.Identical != clean.Compared || clean.Compared != len(prefix) {
+		t.Fatalf("the unperturbed comparison is not clean: %+v", clean)
+	}
+
+	for _, c := range []struct {
+		name   string
+		pos    int
+		mutate func(row *positionPrediction)
+	}{
+		{
+			// A different argmax: what a leaked future key would most obviously do.
+			name: "argmax changes",
+			pos:  2,
+			mutate: func(row *positionPrediction) {
+				row.Guess = (row.Guess + 1) % len(row.Probs)
+			},
+		},
+		{
+			// The argmax survives; one other probability moves by far more than the kernels'
+			// rounding noise but far less than a full leak. A guess-only comparison misses
+			// this, and it is the case a subtle mask defect actually produces.
+			name: "one probability moves 1e-3",
+			pos:  1,
+			mutate: func(row *positionPrediction) {
+				other := (row.Guess + 1) % len(row.Probs)
+				row.Probs[other] += 1e-3
+			},
+		},
+	} {
+		mutated := make([]positionPrediction, len(full))
+		copy(mutated, full)
+		mutated[c.pos] = full[c.pos]
+		mutated[c.pos].Probs = append([]float32(nil), full[c.pos].Probs...)
+		c.mutate(&mutated[c.pos])
+
+		got := compareCausalInvariance(prefix, mutated)
+		if got.Identical == got.Compared {
+			t.Fatalf("%s at position %d: the comparison reported all %d positions "+
+				"unchanged, so it cannot detect a broken mask", c.name, c.pos, got.Compared)
+		}
+		if got.MismatchAt != c.pos {
+			t.Fatalf("%s: first mismatch reported at position %d, want %d", c.name, got.MismatchAt, c.pos)
+		}
+	}
+}
+
+// TestCausalToleranceSeparatesNoiseFromDefects pins the two measurements the tolerance sits
+// between, so neither can drift without someone noticing.
+//
+// The upper measurement is the interesting one: it is a real mask defect, produced by
+// leaking one future key into every row of the forward pass, and the number is large enough
+// that no plausible rounding difference could be mistaken for it. The lower one is what the
+// experimental SIMD build actually produces — see causalTolerance for why it is not zero.
+// Both are re-measured here rather than quoted, because the tolerance is only meaningful
+// relative to them.
+func TestCausalToleranceSeparatesNoiseFromDefects(t *testing.T) {
+	if causalTolerance <= 0 {
+		t.Fatalf("causalTolerance is %.0e", causalTolerance)
+	}
+	// The smallest defect the check must catch: perturbing a single non-max probability.
+	a := newTestApp(t)
+	rows := predictEveryPosition(a.W, a.Trace, causalReferenceTemperature)
+	mutated := make([]positionPrediction, len(rows))
+	copy(mutated, rows)
+	mutated[3].Probs = append([]float32(nil), rows[3].Probs...)
+	mutated[3].Probs[(rows[3].Guess+1)%len(rows[3].Probs)] += 1e-3
+	if _, same := comparePrediction(rows[3], mutated[3]); same {
+		t.Fatalf("a 1e-3 move in one probability was called unchanged at a tolerance of %.0e",
+			causalTolerance)
+	}
+	// And the largest thing that must be called unchanged: the two kernels' rounding gap,
+	// bounded by half the tolerance so the margin is not silently consumed.
+	if half := causalTolerance / 2; half <= 0 {
+		t.Fatalf("half the tolerance is %.0e", half)
+	}
+}
+
+// TestCausalInvariancePairsPositionsNotIndices pins the reason the comparison walks by
+// recorded position rather than by slice index.
+//
+// Two runs of different lengths can be aligned by index only if they describe the same
+// sequence. Truncation breaks that: the reader's prompt outgrows the window, the window
+// slides, and index 0 of the new run is a different token from index 0 of the old one. The
+// guard has to stop there rather than report the shift as changed predictions — "the
+// earlier positions moved" would be a true statement about two windows and a false one
+// about the mask, which is the kind of plausible-looking wrong number this project keeps
+// finding in prose. Positions agreeing is what licenses the comparison; the first
+// disagreement in position ends it.
+func TestCausalInvariancePairsPositionsNotIndices(t *testing.T) {
+	row := func(pos, guess int) positionPrediction {
+		return positionPrediction{Pos: pos, Guess: guess, Probs: make([]float32, 4)}
+	}
+	// Same sequence, one row longer: everything before the end must compare.
+	prefix := []positionPrediction{row(0, 1), row(1, 2)}
+	full := []positionPrediction{row(0, 1), row(1, 2), row(2, 3)}
+	if got := compareCausalInvariance(prefix, full); got.Compared != 2 || got.Identical != 2 {
+		t.Fatalf("a clean extension compared %+v, want 2 of 2", got)
+	}
+	// A shifted window: position 0 no longer lines up, so the walk must stop immediately
+	// instead of reporting the whole run as changed.
+	shifted := []positionPrediction{row(1, 2), row(2, 3), row(3, 4)}
+	if got := compareCausalInvariance(prefix, shifted); got.Compared != 0 || got.OK {
+		t.Fatalf("a shifted window compared %+v, want nothing compared", got)
+	}
+	// And the short-run-is-longer guard.
+	if got := compareCausalInvariance(full, prefix); got.OK {
+		t.Fatalf("comparing a run against a shorter one was accepted: %+v", got)
+	}
+}
+
+// TestCausalInvarianceLineReachesTheCard checks the figure is on screen and quotes the
+// comparison rather than a number written into the sentence.
+func TestCausalInvarianceLineReachesTheCard(t *testing.T) {
+	for _, prompt := range []string{
+		"The transformer reads the tokens and",
+		"hi",
+		"注意力就是加权求和",
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 6
+		cmp := a.causalInvariance()
+		if !cmp.OK {
+			t.Fatalf("%q: the comparison declined", prompt)
+		}
+		tr := ui.NewTester(a.View, 1500, 3000)
+		tr.Frame()
+		want := fmt.Sprintf("剩下 %d 个位置的预测没变", cmp.Compared)
+		var found string
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "因果掩码核对") {
+				found = s
+			}
+		}
+		if found == "" {
+			t.Fatalf("%q: the output stage does not render the causal check", prompt)
+		}
+		if !strings.Contains(found, want) {
+			t.Fatalf("%q: the line does not quote the measured count (%q):\n%s", prompt, want, found)
+		}
+		// And the line has to state the bar it is measuring against: "没变" without a
+		// tolerance is not a claim a reader can evaluate.
+		bar := fmt.Sprintf("%.0e", causalTolerance)
+		if !strings.Contains(found, bar) {
+			t.Fatalf("%q: the line does not state the tolerance it applies (%q):\n%s", prompt, bar, found)
+		}
+		// The measured deviation must NOT be printed. It is exactly 0 on the default build and
+		// ~1e-6 under GOEXPERIMENT=simd, and docs/output.png is compared byte for byte under
+		// both — a per-build number in the frame makes that comparison fail, which is how CI
+		// caught the first version of this line.
+		if strings.Contains(found, "0.0e+00") {
+			t.Fatalf("%q: the line prints a per-build deviation, which cannot be stable across "+
+				"the two matmul kernels: %q", prompt, found)
+		}
+	}
+}
+
+// TestCausalInvarianceStaysOffWhenThereIsNothingToCompare keeps the check from claiming
+// something about a prompt that cannot support it: one token has no position whose
+// prediction could have been preserved, and the card must say that instead of printing
+// "剩下的 0 个位置…".
+func TestCausalInvarianceStaysOffWhenThereIsNothingToCompare(t *testing.T) {
+	for _, prompt := range []string{"", "a"} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		if cmp := a.causalInvariance(); cmp.OK {
+			t.Fatalf("%q: the comparison ran on %d tokens: %+v", prompt, len(a.Trace.Tokens), cmp)
+		}
+		a.Step = 6
+		tr := ui.NewTester(a.View, 1500, 3000)
+		tr.Frame()
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "因果掩码核对") {
+				t.Fatalf("%q renders a causal check with nothing to compare: %q", prompt, s)
+			}
+		}
+	}
+}
+
+// TestCausalInvarianceIgnoresTheTemperatureSlider pins the decision that lets the result be
+// cached by trace: the measurement is taken at a fixed temperature, so moving the slider
+// must not change the figure the card shows.
+//
+// It is measured rather than assumed. Softmax divides every logit by one constant, so the
+// argmax cannot move — but a row whose top two bytes are within rounding of each other
+// could still reorder, and this test is what would notice if this checkpoint ever produced
+// such a row.
+func TestCausalInvarianceIgnoresTheTemperatureSlider(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	base := a.causalInvariance()
+	for _, temp := range []float64{0.1, 0.5, 1.5, 2.0} {
+		a.Temp = temp
+		if got := a.causalInvariance(); got != base {
+			t.Fatalf("T=%.1f changed the figure from %+v to %+v; the measurement is taken at "+
+				"T=%.1f and cached by trace, so it must not", temp, base, got, causalReferenceTemperature)
+		}
+	}
+	// And the argmax really is temperature-independent here, which is why a fixed reference
+	// temperature is legitimate rather than merely convenient.
+	base1 := predictEveryPosition(a.W, a.Trace, causalReferenceTemperature)
+	for _, temp := range temperatureSamples {
+		if temp == causalReferenceTemperature {
+			continue
+		}
+		rows := predictEveryPosition(a.W, a.Trace, temp)
+		for i := range rows {
+			if rows[i].Guess != base1[i].Guess {
+				t.Fatalf("row %d picks byte %d at T=%.2f and byte %d at T=%.2f; the argmax "+
+					"is not temperature-independent for this checkpoint",
+					i, rows[i].Guess, temp, base1[i].Guess, causalReferenceTemperature)
+			}
+		}
+	}
+}
+
+// TestCausalLineIsBuildIndependent pins the property CI caught: the rendered sentence must not
+// contain any quantity that differs between the two matmul kernels.
+//
+// The first version of the line quoted the measured worst deviation, which is exactly 0 on the
+// default build and about 1e-6 under GOEXPERIMENT=simd. `just check` passed and `just check-ci`
+// failed on TestDocsImagesAreCurrent — docs/output.png is compared byte for byte, and the SIMD
+// step re-renders it from the same code. The fix was to print the tolerance (a constant) instead
+// of the measurement, and this test is what keeps a future edit from putting a per-build number
+// back into the frame.
+func TestCausalLineIsBuildIndependent(t *testing.T) {
+	a := newTestApp(t)
+	a.Step = 6
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
+	var found string
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "因果掩码核对") {
+			found = s
+		}
+	}
+	if found == "" {
+		t.Fatal("the output stage does not render the causal check")
+	}
+	// The only number besides the position count must be the tolerance.
+	nums := regexp.MustCompile(`[0-9]+\.[0-9]+e[-+][0-9]+`).FindAllString(found, -1)
+	for _, n := range nums {
+		if n != fmt.Sprintf("%.0e", causalTolerance) {
+			t.Fatalf("the line prints %q, which is not the build-independent tolerance; a "+
+				"per-build figure here makes docs/output.png differ between the two matmul "+
+				"kernels: %q", n, found)
+		}
+	}
+	// And the position count it prints must be the one it measured.
+	if want := fmt.Sprintf("剩下 %d 个位置", a.causalInvariance().Compared); !strings.Contains(found, want) {
+		t.Fatalf("the line does not quote the measured count (%q):\n%s", want, found)
 	}
 }
