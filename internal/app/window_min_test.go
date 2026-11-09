@@ -337,3 +337,47 @@ func TestEdgeCaseBranchesAreSnapshot(t *testing.T) {
 		}
 	}
 }
+
+// TestMainValidatesStep keeps `-step` a validated flag rather than a silently clamped one.
+//
+// It used to be applied only when in range: `if *step >= 0 && *step < len(LessonNames())`.
+// A reader asking for `-step 99` therefore got lesson 0 with no indication that the lesson
+// they named does not exist, which is indistinguishable from the flag being ignored.
+//
+// main.go is package main and cannot be linked into this test, so — like the CLAMP check
+// above — the source is the only handle. What is asserted is the shape of the handling, not
+// its wording: a bounds test on the flag with a non-silent response, and that the in-range
+// path is still there.
+func TestMainValidatesStep(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	main := string(src)
+
+	// The out-of-range case must be fatal, and it must name the range. `log.Fatalf` is what
+	// stops the program; a plain Printf would print and continue into the old silent clamp.
+	if !strings.Contains(main, "log.Fatalf(\"-step %d is out of range") {
+		t.Fatalf("main.go no longer rejects an out-of-range -step; the flag is silently " +
+			"clamped again, so -step 99 opens lesson 1 with no warning")
+	}
+	// And the message has to say what the valid values are, not merely that the value was
+	// wrong: the reader needs to know 0-6 is the range.
+	for _, want := range []string{"len(names)-1", "strings.Join(names"} {
+		if !strings.Contains(main, want) {
+			t.Fatalf("main.go's -step error no longer names the valid range (%q): a message "+
+				"that only says the value is wrong leaves the reader guessing", want)
+		}
+	}
+	// The lesson list must come from the app, so the range cannot drift from the lessons.
+	if !strings.Contains(main, "app.LessonNames()") {
+		t.Fatal("main.go no longer asks the app for the lesson count, so the -step range " +
+			"can disagree with the lessons that exist")
+	}
+	// The valid path still sets the stage unconditionally, which is only safe because of the
+	// check above it — a future edit that re-adds a condition here would silently reintroduce
+	// the clamp.
+	if !strings.Contains(main, "\ta.Step = *step\n") {
+		t.Fatal("main.go no longer applies a validated -step to the app's stage")
+	}
+}

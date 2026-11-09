@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"log"
+	"strings"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -39,10 +40,20 @@ func main() {
 		}
 	}
 
-	a := app.New(w)
-	if *step >= 0 && *step < len(app.LessonNames()) {
-		a.Step = *step
+	// -step is validated rather than clamped. It used to be applied only when in range, so
+	// `-step 99` opened the first lesson with no indication that the requested one did not
+	// exist — the reader asks for the output stage and gets the tokenising stage, which reads
+	// as the flag being ignored rather than as a mistake in its value. A bad range is a
+	// command-line error, like a weights file that will not parse, so it stops the program
+	// and says what the valid values are.
+	names := app.LessonNames()
+	if *step < 0 || *step >= len(names) {
+		log.Fatalf("-step %d is out of range: lessons are numbered 0-%d (%s)",
+			*step, len(names)-1, strings.Join(names, ", "))
 	}
+
+	a := app.New(w)
+	a.Step = *step
 
 	mygo.App.WhenReady(func() {
 		mygo.NewWindow(mygo.WindowOptions{
