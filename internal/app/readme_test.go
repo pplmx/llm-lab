@@ -725,3 +725,55 @@ func TestReadmeBinarySizeNamesTheWeightsPart(t *testing.T) {
 			"update the sentence to %.1f MB", mb, mb)
 	}
 }
+
+// TestReadmeSkillFiguresMatchTheDefaultView holds the word-boundary numbers in the README.
+//
+// The README quoted "4/18 (22%), 73/96 (76%)" across three prompts, and "2.87 vs 0.83 nats" on the
+// default prompt. None of it reproduces. No combination of the preset prompts yields those hit
+// counts, and 2.87/0.83 is what the breakdown gives at T = 1.0 while the app opens at T = 0.80 and
+// draws 3.07/0.87.
+//
+// A README that quotes figures a reader cannot find on screen is worse than one that quotes none:
+// the reader concludes they are looking at something different. The numbers below are parsed out of
+// the README and compared with what the default view computes.
+func TestReadmeSkillFiguresMatchTheDefaultView(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`空格之后猜对 \*\*(\d+)/(\d+)（(\d+)%）\*\*，其余位置 \*\*(\d+)/(\d+)（(\d+)%）\*\*，` +
+		`两边的平均损失 \*\*([0-9.]+) vs ([0-9.]+) nats\*\*`)
+	m := re.FindStringSubmatch(string(src))
+	if m == nil {
+		t.Fatal("the README no longer quotes the word-boundary figures in the form " +
+			"\"空格之后猜对 **A/B（C%）**，其余位置 **D/E（F%）**，两边的平均损失 **G vs H nats**\"; " +
+			"update this test with what it says now")
+	}
+	wantHits, wantRows := mustParseInt(t, m[1]), mustParseInt(t, m[2])
+	wantOtherHits, wantOtherRows := mustParseInt(t, m[4]), mustParseInt(t, m[5])
+	wantLoss, wantOtherLoss := m[7], m[8]
+
+	// The default view: the app's opening prompt and opening temperature.
+	a := newTestApp(t)
+	skill := computeNextByteSkill(a.W, a.Trace, a.Temp)
+	b := computeSkillBreakdown(a.Trace, skill)
+	if !b.OK {
+		t.Fatal("the default view has no breakdown to compare against")
+	}
+	if b.AfterSpaceHits != wantHits || b.AfterSpaceRows != wantRows {
+		t.Fatalf("the README says the space boundary scores %d/%d, but the default view gives "+
+			"%d/%d at T = %.2f", wantHits, wantRows, b.AfterSpaceHits, b.AfterSpaceRows, a.Temp)
+	}
+	if b.OtherHits != wantOtherHits || b.OtherRows != wantOtherRows {
+		t.Fatalf("the README says the other positions score %d/%d, but the default view gives %d/%d",
+			wantOtherHits, wantOtherRows, b.OtherHits, b.OtherRows)
+	}
+	if got := fmt.Sprintf("%.2f", b.AfterSpaceLoss); got != wantLoss {
+		t.Fatalf("the README says the boundary loss is %s nats, but the default view gives %s",
+			wantLoss, got)
+	}
+	if got := fmt.Sprintf("%.2f", b.OtherLoss); got != wantOtherLoss {
+		t.Fatalf("the README says the other loss is %s nats, but the default view gives %s",
+			wantOtherLoss, got)
+	}
+}
