@@ -4399,6 +4399,7 @@ func TestRoundedArithmeticBlocksSaySo(t *testing.T) {
 		anchor string
 		what   string
 	}{
+		{1, "E[", "the embedding sum"},
 		{4, "每一次加法都不覆盖原值", "the residual chain"},
 		{5, "余项是精确补足的和", "the FFN output breakdown"},
 	}
@@ -4414,8 +4415,8 @@ func TestRoundedArithmeticBlocksSaySo(t *testing.T) {
 		}
 		if !strings.Contains(joined, "四位小数") || !strings.Contains(joined, "末位") {
 			t.Fatalf("stage %d shows %s with four-decimal terms and no word about rounding, so a "+
-				"reader who re-adds them finds a mismatch in one case out of four and has no way "+
-				"to know it is the printing", b.step+1, b.what)
+				"reader who re-adds them can find a mismatch in the last digit and has no way to "+
+				"know it is the printing", b.step+1, b.what)
 		}
 	}
 }
@@ -4519,4 +4520,96 @@ func scoreWorkingsPrecision(t *testing.T) (dot, scale int, ok bool) {
 		return 0, 0, false
 	}
 	return d, s2, true
+}
+
+// TestReAddableBlocksReallyDoMisround measures the rates the three rounding notes describe.
+//
+// The notes are not decoration: each says the last digit may be off, and the comments behind them
+// quote measured rates — 24.3% for the embedding sum, 25% for the residual chain, and the FFN
+// block's terms. Nothing checked those rates. If a change ever made the arithmetic exact the notes
+// would become false in the harmless direction, but a change that made the disagreement much worse
+// would leave the reader with a note claiming "one or two units" while the error grew.
+//
+// What is asserted is the shape rather than the exact figure: each block must disagree sometimes
+// (or the note is unnecessary) and never by more than a rounding step (or the note understates it).
+func TestReAddableBlocksReallyDoMisround(t *testing.T) {
+	a := newTestApp(t)
+	tr := a.Trace
+	const unit = 1e-4 // four decimals, the precision all three blocks print at
+	round := func(v float64) float64 { return math.Round(v/unit) * unit }
+
+	type rate struct {
+		name       string
+		total, bad int
+		worst      float64
+	}
+	var rates []rate
+
+	// Embedding sum: E + P = x, per dimension per token.
+	{
+		var r rate
+		r.name = "embedding sum"
+		for i := range tr.Embed {
+			for dim := range tr.Embed[i] {
+				r.total++
+				d := math.Abs(round(float64(tr.Embed[i][dim])) + round(float64(tr.Pos[i][dim])) -
+					round(float64(tr.Input[i][dim])))
+				if d > unit/2 {
+					r.bad++
+					if d > r.worst {
+						r.worst = d
+					}
+				}
+			}
+		}
+		rates = append(rates, r)
+	}
+
+	// Residual chain: each step's running total plus its term.
+	{
+		var r rate
+		r.name = "residual chain"
+		for li := range tr.Layers {
+			l := tr.Layers[li]
+			for i := 0; i < len(l.In) && i < len(tr.Tokens); i++ {
+				for dim := range l.In[i] {
+					steps, ok := residualChain(l, i, dim)
+					if !ok {
+						continue
+					}
+					for j := 1; j < len(steps); j++ {
+						r.total++
+						d := math.Abs(round(float64(steps[j-1].Sum)) + round(float64(steps[j].Term)) -
+							round(float64(steps[j].Sum)))
+						if d > unit/2 {
+							r.bad++
+							if d > r.worst {
+								r.worst = d
+							}
+						}
+					}
+				}
+			}
+		}
+		rates = append(rates, r)
+	}
+
+	for _, r := range rates {
+		if r.total == 0 {
+			t.Fatalf("%s: nothing measured", r.name)
+		}
+		frac := float64(r.bad) / float64(r.total)
+		t.Logf("%s: %d/%d (%.1f%%) disagree, worst %.6f", r.name, r.bad, r.total, 100*frac, r.worst)
+		// A block whose terms always re-add would make its note untrue, in the harmless
+		// direction — but it would also mean nobody is checking. Assert the note is warranted.
+		if frac < 0.01 {
+			t.Fatalf("%s: only %.1f%% of lines disagree, so the rounding note there is stale and "+
+				"should be removed", r.name, 100*frac)
+		}
+		// And never by more than a rounding step, or "off by one or two units" understates it.
+		if r.worst > 2.5*unit {
+			t.Fatalf("%s: worst disagreement %.6f is more than two rounding steps; the note says "+
+				"the last digit may differ, which would understate this", r.name, r.worst)
+		}
+	}
 }

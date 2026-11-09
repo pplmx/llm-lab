@@ -422,6 +422,16 @@ func (a *App) stageEmbed(c *ui.Context) {
 			kv(c, "两项的量级", fmt.Sprintf("‖E‖ %.2f · ‖P‖ %.2f · P/E = %.2f",
 				eNorm, pNorm, pNorm/eNorm))
 		}
+		// The line above is two four-decimal terms and their sum, so it is re-addable by
+		// inspection — and the printed terms do not always give the printed total. Measured over
+		// every dimension of every token on the default prompt: 840 of 3456 (24.3%) disagree in
+		// the last digit, worst 0.0001. The first dimension of the first token is one of them:
+		// 0.1322 + 0.7481 reads as 0.8803 where the card shows 0.8802.
+		//
+		// The same note is on the residual chain and the FFN breakdown; this block was the one
+		// that still lacked it.
+		mutedText(c, "两项和它们的和都按四位小数显示，自己相加时末位可能差一两个单位——"+
+			"差额来自四舍五入，不是加法算错了。")
 	})
 
 	a.stageEmbeddingStructure(c)
