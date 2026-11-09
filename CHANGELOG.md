@@ -6,6 +6,13 @@
 
 ### Added
 
+- **`docs/` 那六张图的清单写了两遍，删掉其中一遍的一项，另一遍照样通过。** `TestRenderDocs`（写图）和 `TestDocsImagesAreCurrent`（比对）各自维护一份六项的字面量
+  - 实测：只从 `TestRenderDocs` 里删掉 `attention` 那一项，`go test -run 'TestDocsImagesAreCurrent|TestRenderDocs'` **仍然 ok**——因为比对那边读的是它自己的清单，照样去验证 `docs/attention.png`，而 `just docs` 已经不再生成那张图了
+  - 两份必须手动保持一致的字面量，错在哪一边都不显眼：写的那边少一项，读的那边不会报；读的那边少一项，写了也没人验
+  - 改成一份包级 `docsFrames`，两边都用它
+  - 但换成单份之后暴露出同一个缺口的上移一层：**两边一起少一项时没有任何东西会说话**，那张过期的 PNG 留在仓库和 README 里，`TestDocsImagesAreCurrent` 从此不看它。实测删掉共享清单里的 `attention`，比对测试直接通过
+  - 所以再加 `TestDocsFramesCoverEveryImage`：清单对着**目录**校验而不是对着自己——`docs/` 里每张 PNG 都必须被清单渲染到，清单里也不许出现目录里没有的文件。两个方向都做了破坏性验证：删清单项 → `docs/attention.png exists but docsFrames does not render it`；加一个不存在的 `ghost` → `docsFrames renders "ghost" but docs/ghost.png does not exist`
+
 - **门面上写的「11 MB」从初始提交起就没对过，实测 12.4 MB。** 那是 README 第一屏的卖点之一：「一个 Go 二进制就够……11 MB」
   - 实测：`just build linux` 产物 **12.4 MB**，解压 tar.gz 里的 `llm-lab` 同样是 12.4 MB，而权重文件本身 2.3 MB
   - 用 `git log -S` 查：`11 MB` 是 `89c44c3 feat: init` 写下的，之后**一次都没改**
