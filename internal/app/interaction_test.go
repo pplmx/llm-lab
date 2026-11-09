@@ -1875,3 +1875,52 @@ func TestUndoLabelNamesTheActionThatJustHappened(t *testing.T) {
 		})
 	}
 }
+
+// TestHeatmapCanBeScrolledFullyIntoView records the constraint that blocks enlarging the matrix.
+//
+// Two attempts to make the matrix grow on wide windows broke
+// TestHeatmapPointerLandsOnTheDrawnCell rather than any size assertion, so the invariant they
+// violated was never written down. It is not "the matrix fits the window" — at 1180x720 it never
+// has, ending near y=999 in a 720-tall window, and the stage scrolls to reach it. The real
+// invariant is that some scroll position puts the whole matrix inside the viewport.
+//
+// The mechanism, measured at 1500x940 with T=36: growing the matrix to 653 DIP put its top at
+// y=159, while the stage viewport begins at y=228 because the step bar and its controls are fixed
+// above it. A matrix taller than the viewport cannot satisfy that at any offset, so its top rows
+// stay under the chrome and PointerPosition reports no element there.
+func TestHeatmapCanBeScrolledFullyIntoView(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}, {1920, 1080}} {
+		for step := 2; step <= 3; step++ {
+			a := newTestApp(t)
+			a.Prompt = "The transformer reads the tokens and"
+			a.recompute()
+			a.Step = step
+			a.SelToken = 30
+			tr := ui.NewTester(a.View, size.w, size.h)
+			tr.Frame()
+
+			fits := func() bool {
+				r := a.lastHeatmapRect
+				return r.W > 0 && r.H > 0 && r.Y >= 0 && r.Y+r.H <= float32(size.h)
+			}
+			ok := false
+			for i := 0; i < 12 && !ok; i++ {
+				if fits() {
+					ok = true
+					break
+				}
+				tr.Move(float32(size.w)/2, float32(size.h)/2)
+				tr.Wheel(float32(size.w)/2, float32(size.h)/2, 0, 200)
+				tr.Advance(2e9)
+				tr.Frame()
+			}
+			r := a.lastHeatmapRect
+			if !ok {
+				t.Fatalf("%dx%d step %d: no scroll position puts the %.0f-DIP matrix inside the "+
+					"%d-DIP viewport (it ends at y=%.0f); a matrix taller than the viewport cannot "+
+					"be fully shown, so its top rows sit under the fixed step bar and report no "+
+					"cell on hover", size.w, size.h, step+1, r.H, size.h, r.Y+r.H)
+			}
+		}
+	}
+}
