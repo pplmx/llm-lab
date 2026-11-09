@@ -2924,13 +2924,26 @@ func (a *App) stageEmbeddingStructure(c *ui.Context) {
 			}
 			kvW(c, "最像的四对", strings.Join(parts, " · "), 96)
 		}
+		// Whether the difference is noise is a measurement, not a sentence: a prompt whose
+		// bytes repeat in a pattern (abababab, say) produces adjacent pairs that really do sit
+		// above the random spread. Measured on "ab"x50: adjacent +0.1737 against a random mean
+		// of +0.0033 with spread 0.1017 — 1.7 standard deviations apart, while the fixed
+		// sentence claimed the difference was inside the noise. The figures beside it were
+		// always computed; the reading of them was not.
+		verdict := "两者差别落在噪声里。"
+		if e.SDRandom > 0 {
+			if z := math.Abs(e.AdjacentCos-e.RandomCos) / e.SDRandom; z > 0.5 {
+				verdict = fmt.Sprintf("两者相差 %.1f 个标准差，超出了随机波动——按这张表的说法，这段文本里相邻出现的字节对确实比随便两个更接近。"+
+					"不过这里量的是「文本里挨着出现」，不是「意思相近」：把同一段字节按顺序重复，相邻对自然重复同一个方向。", z)
+			}
+		}
 		misconception(c,
 			"「嵌入向量越像，两个 token 的意思就越接近」",
-			fmt.Sprintf("这张表里没有这回事。文本里挨着出现的字节对，平均余弦 %+.4f，而随便挑两对是 %+.4f（标准差 %.2f）——"+
-				"两者差别落在噪声里。元音之间只比元音与辅音近 %.2f。最像的 20 对里只有 %d 对两边都是可读字符，排第一的是「I」和一个控制字节。"+
+			fmt.Sprintf("这张表里没有这回事。文本里挨着出现的字节对，平均余弦 %+.4f，而随便挑两对是 %+.4f（标准差 %.2f）——%s"+
+				"元音之间只比元音与辅音近 %.2f。最像的 20 对里只有 %d 对两边都是可读字符，排第一的是「I」和一个控制字节。"+
 				"原因不神秘：这个模型的位置表与嵌入表是在 61 句话上训练的，96 个维度够它记住「哪些字节常见」，不够长出语义几何。"+
 				"真实的大模型里这种结构确实存在——但那是几十亿 token 训出来的，不是「嵌入」这个结构本身自带的。",
-				e.AdjacentCos, e.RandomCos, e.SDRandom,
+				e.AdjacentCos, e.RandomCos, e.SDRandom, verdict,
 				math.Abs(e.VowelCos-e.ConsonantCos), e.SimilarPrintableOf20))
 	})
 }

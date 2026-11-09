@@ -3469,6 +3469,15 @@ func TestEmbeddingStructureShowsNoStructure(t *testing.T) {
 	for _, prompt := range []string{
 		"The transformer reads the tokens and",
 		"attention is all you need",
+		"注意力就是加权求和",
+		strings.Repeat("ab", 50),
+		// The periodic prompt above is the point of this sweep rather than extra coverage.
+		// A periodic prompt produces adjacent pairs that really are closer than random:
+		// measured on "ab"x50, adjacent +0.1737 against a random mean of +0.0033 with
+		// spread 0.1017 — 1.7 standard deviations. The card used to print that pair of
+		// numbers and then say, in fixed prose, that the difference was inside the noise.
+		// This test only ever checked the two prompts above, where z < 0.5, so the claim
+		// looked like a property of the model when it is a property of the prompt.
 	} {
 		a := newTestApp(t)
 		a.Prompt = prompt
@@ -3480,9 +3489,11 @@ func TestEmbeddingStructureShowsNoStructure(t *testing.T) {
 		if e.SDRandom == 0 {
 			t.Fatalf("prompt %q: no spread measured", prompt)
 		}
-		// The adjacent mean must be within a small multiple of the random spread.
+		// The adjacent mean must be within a small multiple of the random spread *for an
+		// ordinary prompt*. Periodic input is excluded by name: it is measurable structure in
+		// the prompt, not in the table, and the card now says so instead of denying it.
 		z := math.Abs(e.AdjacentCos-e.RandomCos) / e.SDRandom
-		if z > 0.5 {
+		if z > 0.5 && !strings.Contains(prompt, "abab") {
 			t.Fatalf("prompt %q: text-adjacent pairs average %+.4f against a random mean of "+
 				"%+.4f with spread %.4f — the difference is %.1f standard deviations, so the "+
 				"table does have structure and the card's claim is wrong",
@@ -4084,5 +4095,68 @@ func TestCausalLineIsBuildIndependent(t *testing.T) {
 	// And the position count it prints must be the one it measured.
 	if want := fmt.Sprintf("剩下 %d 个位置", a.causalInvariance().Compared); !strings.Contains(found, want) {
 		t.Fatalf("the line does not quote the measured count (%q):\n%s", want, found)
+	}
+}
+
+// TestEmbeddingVerdictFollowsTheMeasurement closes the gap that let the fixed sentence stay
+// wrong for as long as it did.
+//
+// The card printed computed figures and then read them out in fixed prose: "两者差别落在噪声里".
+// TestEmbeddingStructureShowsNoStructure checked the premise on two ordinary prompts, where the
+// difference really is inside the spread, so the sentence looked like a property of the table
+// rather than a property of the prompt. A periodic prompt breaks it — "ab"x50 measures adjacent
+// +0.1737 against a random mean of +0.0033 with spread 0.1017, which is 1.7 standard deviations
+// and not noise by any reading — while the sentence went on saying it was.
+//
+// The test reads the rendered sentence, not the helper: a conditional that never reaches the
+// screen would pass a check on computeEmbeddingStructure alone.
+func TestEmbeddingVerdictFollowsTheMeasurement(t *testing.T) {
+	for _, c := range []struct {
+		prompt string
+		// noisy says which reading the measured z-score requires.
+		noisy bool
+	}{
+		{"The transformer reads the tokens and", true},
+		{strings.Repeat("ab", 50), false},
+	} {
+		a := newTestApp(t)
+		a.Prompt = c.prompt
+		a.recompute()
+		a.Step = 1
+		tr := ui.NewTester(a.View, 1500, 3400)
+		tr.Frame()
+
+		e := computeEmbeddingStructure(a.W, c.prompt)
+		if !e.OK || e.SDRandom == 0 {
+			t.Fatalf("%q: no measurement", c.prompt)
+		}
+		z := math.Abs(e.AdjacentCos-e.RandomCos) / e.SDRandom
+		if got := z <= 0.5; got != c.noisy {
+			t.Fatalf("%q: z = %.2f, so noisy should be %v, not %v — this test's own premise "+
+				"is stale", c.prompt, z, z <= 0.5, c.noisy)
+		}
+
+		var sentence string
+		for _, s := range tr.Texts() {
+			if strings.Contains(s, "这张表里没有这回事") {
+				sentence = s
+			}
+		}
+		if sentence == "" {
+			t.Fatalf("%q: the card is missing", c.prompt)
+		}
+		saysNoise := strings.Contains(sentence, "两者差别落在噪声里")
+		if saysNoise != c.noisy {
+			t.Fatalf("%q (z = %.2f): the card says the difference %s, but the figures beside "+
+				"it say otherwise:\n%s", c.prompt, z,
+				map[bool]string{true: "is inside the noise", false: "is outside the noise"}[saysNoise],
+				sentence)
+		}
+		// When the difference is real, the sentence has to name the actual distance rather
+		// than leave the reader to work it out from two cosines.
+		if !c.noisy && !strings.Contains(sentence, "个标准差") {
+			t.Fatalf("%q: the card says the difference is real without quoting how large it "+
+				"is:\n%s", c.prompt, sentence)
+		}
 	}
 }
