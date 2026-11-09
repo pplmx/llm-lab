@@ -420,7 +420,7 @@ func TestEveryPrintedArithmeticBlockStaysClose(t *testing.T) {
 		tol     float64
 	}{
 		{"score", worstPrintedScoreGap, 5e-5},
-		{"softmax", worstPrintedSoftmaxGap, 5e-5},
+		{"softmax", worstPrintedSoftmaxGap, 5e-3}, // relative to the printed α
 		{"weighted", worstPrintedWeightedGap, 1.5e-4},
 		{"ffn", worstPrintedFFNGap, 3e-4},
 		{"ln", worstPrintedLNGap, 3e-4},
@@ -470,42 +470,129 @@ func worstPrintedScoreGap(t *testing.T) float64 {
 	return 0
 }
 
+// worstPrintedSoftmaxGap reads the α line out of the frame and redoes it.
+//
+// Like the score helper beside it, this used to compute the quotient from the model's floats
+// before any formatting, so a printed precision that made the line uncheckable could not fail it.
+// The line to parse is:
+//
+//	α = exp(-2.2625 − 2.9311) ÷ 1.0711 = 0.0052
 func worstPrintedSoftmaxGap(t *testing.T) float64 {
 	t.Helper()
 	a := newTestApp(t)
 	a.Step = 3
-	h := a.layer().Heads[a.Head]
-	p := computeSoftmaxParts(h, a.SelToken, a.SelToken/2)
-	if !p.ok {
-		return 0
+	a.SelToken = 10
+	// The block lives in the inspector and draws only for the cell under the cursor, so one has
+	// to be pinned. Without this the helper found no line and the aggregate test failed with
+	// "did not render" — a useful failure, and the reason it is worth asserting that the block
+	// was found rather than returning zero.
+	a.KeyQ, a.KeyK = 10, 4
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
+
+	// The subtrahend is printed bare when the row max is positive and parenthesised when it is
+	// negative, and the score always carries an explicit sign: "exp(+1.2345 − 2.3456)" or
+	// "exp(+1.2345 − (-2.3456))". Both shapes have to parse.
+	re := regexp.MustCompile(`α = exp\(([+-][0-9.]+) − \(?([+-]?[0-9.]+)\)?\) ÷ ([0-9.]+) = ([0-9.]+)`)
+	for _, s := range tr.Texts() {
+		m := re.FindStringSubmatch(s)
+		if m == nil {
+			continue
+		}
+		num, _ := strconv.ParseFloat(m[1], 64)
+		rowMax, _ := strconv.ParseFloat(m[2], 64)
+		denom, _ := strconv.ParseFloat(m[3], 64)
+		shown, _ := strconv.ParseFloat(m[4], 64)
+		if denom == 0 {
+			t.Fatalf("the printed denominator is zero in %q", s)
+		}
+		// Relative, because α is a probability and its magnitude varies across cells; an absolute
+		// bound would be a different test depending on which cell happened to be shown.
+		//
+		// Measured on the correct four-decimal format: 3.18e-3. That residue is inherent — exp of
+		// a four-decimal exponent already carries about 5e-5 relative error, and dividing by a
+		// four-decimal denominator adds as much again, so the quotient cannot be more precise
+		// than the inputs it is computed from.
+		return math.Abs(math.Exp(num-rowMax)/denom-shown) / math.Max(shown, 1e-9)
 	}
-	return math.Abs(float64(p.num/p.denom) - float64(h.Attn[a.SelToken][a.SelToken/2]))
+	t.Fatal("the softmax workings block did not render; the reader has nothing to check")
+	return 0
 }
 
+// worstPrintedWeightedGap re-adds the terms the weighted-sum block prints.
+//
+// It used to round the model's own floats to four decimals inside the helper and add those — a
+// second copy of the formatting, which can drift from what the block actually prints. The lines
+// to parse are:
+//
+//	Out[10][d0] = Σ α·V 的三项最大贡献：k9 -0.7671  k8 +0.0235  k10 +0.0162
+//	+ 其余 8 项 +0.0123 ≈ -0.7151
+//
+// The remainder line is absent when the block prints every term (Rest == 0), in which case the
+// second line is just "≈ value"; both shapes are handled, and the comparison is against whichever
+// total the block states.
 func worstPrintedWeightedGap(t *testing.T) float64 {
 	t.Helper()
 	a := newTestApp(t)
 	a.Step = 3
-	h := a.layer().Heads[a.Head]
-	round := func(v float64) float64 {
-		out, _ := strconv.ParseFloat(strconv.FormatFloat(v, 'f', 4, 64), 64)
-		return out
-	}
-	worst := 0.0
-	for dim := 0; dim < a.Trace.Config.DHead(); dim++ {
-		p := computeWeighted(h.Attn[a.SelToken], h.V, a.SelToken, dim, len(a.Trace.Tokens))
-		sum := 0.0
-		for _, tm := range p.Top {
-			sum += round(tm.Val)
+	a.SelToken = 10
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
+
+	termsRe := regexp.MustCompile(`Out\[\d+\]\[d\d+\] = Σ α·V 的三项最大贡献：(.*)$`)
+	// The terms carry explicit signs: "k9 -0.7671  k8 +0.0235  k10 +0.0162". A pattern that
+	// only allows a leading minus matched one of the three and silently reported a gap from a
+	// sum of one term.
+	termRe := regexp.MustCompile(`k\d+ ([+-][0-9.]+)`)
+	restRe := regexp.MustCompile(`余 \d+ 项 (-?[0-9.]+) ≈ (-?[0-9.]+)$`)
+	bareRe := regexp.MustCompile(`≈ (-?[0-9.]+)$`)
+
+	var termSum float64
+	var rest float64
+	var shown float64
+	gotTerms, gotTotal := false, false
+	for _, s := range tr.Texts() {
+		if m := termsRe.FindStringSubmatch(s); m != nil {
+			for _, tm := range termRe.FindAllStringSubmatch(m[1], -1) {
+				v, err := strconv.ParseFloat(tm[1], 64)
+				if err != nil {
+					t.Fatalf("cannot parse the term %q in %q", tm[1], s)
+				}
+				termSum += v
+			}
+			gotTerms = true
+			continue
 		}
-		sum += round(p.Rest)
-		if gap := math.Abs(sum - p.Out); gap > worst {
-			worst = gap
+		// Only follow the terms line. The score block prints a remainder line of the same shape
+		// ("+ 其余 24 维 ... = 点积 ..." versus "+ 其余 8 项 ... ≈ ..."), and on the same stage it
+		// comes first, so an unscoped match picked up the wrong block's numbers and reported a
+		// 3.97e-02 gap that belonged to neither.
+		if !gotTerms || gotTotal {
+			continue
+		}
+		if m := restRe.FindStringSubmatch(s); m != nil {
+			rest, _ = strconv.ParseFloat(m[1], 64)
+			shown, _ = strconv.ParseFloat(m[2], 64)
+			gotTotal = true
+			continue
+		}
+		if m := bareRe.FindStringSubmatch(s); m != nil {
+			shown, _ = strconv.ParseFloat(m[1], 64)
+			gotTotal = true
 		}
 	}
-	return worst
+	if !gotTerms || !gotTotal {
+		t.Fatal("the weighted-sum workings block did not render both its terms and its total")
+	}
+	return math.Abs(termSum + rest - shown)
 }
 
+// worstPrintedFFNGap and worstPrintedLNGap still compute from the model's own values rather than
+// from the rendered text, which is the flaw fixed in the three helpers above. They are recorded
+// here rather than silently left: the FFN block prints "out[d] 的三项最大贡献" plus a remainder and
+// a total, and the LayerNorm block prints "(x − μ) × invStd × γ + β ≈ out", so both are parseable
+// by the same approach. Until they are converted, a formatting change to either block can pass
+// this test unnoticed — the same way the score and weighted blocks did before this round.
 func worstPrintedFFNGap(t *testing.T) float64 {
 	t.Helper()
 	a := newTestApp(t)
