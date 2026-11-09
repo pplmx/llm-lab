@@ -167,7 +167,8 @@ func (a *App) emptyPromptCard(c *ui.Context) {
 			// recomputes on every keystroke, so the strip appears as the reader types and
 			// the stage keys only switch stage. Measured: typing "hi" from empty reaches two
 			// tokens with no key pressed at all.
-			ui.Text(c, "边打边重算，顶部的 token 条会立刻出现；1–7 或方向键可以切到别的阶段。").
+			ui.Text(c, fmt.Sprintf("边打边重算，顶部的 token 条会立刻出现；%s 或方向键可以切到别的阶段。",
+				stageDigitRange())).
 				FontSize(fontMicro).TextColor(colFaint)
 		})
 	})
@@ -1754,8 +1755,8 @@ func (a *App) lesson(c *ui.Context) {
 		// keyboard is what the reader most recently chose to operate — but a reader who
 		// tabbed to a control and then found Enter doing something else needs to be told
 		// why, and the line that advertises Enter is where they will look.
-		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · Enter 采样%s · 1–7 跳转 · PgUp/PgDn 滚动",
-			shift, undo)).FontSize(fontMicro).TextColor(colFaint)
+		ui.Text(c, fmt.Sprintf("快捷键：← → 切换阶段 · %s · 空格 播放/暂停 · Enter 采样%s · %s 跳转 · PgUp/PgDn 滚动",
+			shift, undo, stageDigitRange())).FontSize(fontMicro).TextColor(colFaint)
 		ui.Text(c, "（用 Tab 选中某个按钮时，空格与 Enter 先作用于那个按钮——例如「重置」会被直接按下。）").
 			FontSize(fontMicro).TextColor(colFaint).LineHeight(1.35)
 	})

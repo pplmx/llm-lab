@@ -776,14 +776,56 @@ func (a *App) handleKeys(c *ui.Context) {
 			a.stepCell(1, 0)
 		}
 	default:
-		digits := [...]ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7}
-		for i, key := range digits {
-			if i < len(lessons) && c.Shortcut(0, key) {
+		for i, key := range stageDigitKeys() {
+			if c.Shortcut(0, key) {
 				a.selectStep(i)
 				break
 			}
 		}
 	}
+}
+
+// stageDigitKeys is the digit that jumps to each stage: 1 to the first, and so on.
+//
+// Derived from the lesson list rather than written out, because the hint beside it cannot be
+// written out either. Measured before this change, with a synthetic eighth lesson added: the
+// shortcut line still read "1–7 跳转", pressing Key8 did nothing, and every shortcut test
+// passed — three separate seven-element literals (this one, the hint, and two test loops) all
+// had to be edited together and none of them failed when they were not.
+//
+// The keyboard only has 1–9 to offer, so a tenth stage would need a different mechanism; until
+// then the count follows the lessons.
+func stageDigitKeys() []ui.Key { return digitKeysFor(len(lessons)) }
+
+// digitKeysFor is stageDigitKeys with the count as a parameter, so the derivation can be
+// checked at sizes the app does not ship with. A test that only ever sees len(lessons) cannot
+// tell a derived list from a hardcoded one — measured: replacing the body of stageDigitKeys
+// with `return digits[:7]` leaves every assertion green while there are seven lessons, which
+// is exactly how the three original literals stayed wrong.
+func digitKeysFor(stages int) []ui.Key {
+	digits := [...]ui.Key{
+		ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5,
+		ui.Key6, ui.Key7, ui.Key8, ui.Key9,
+	}
+	if stages < 0 {
+		stages = 0
+	}
+	if stages > len(digits) {
+		stages = len(digits)
+	}
+	return digits[:stages]
+}
+
+// stageDigitRange is the "1–N" the shortcut line shows, from the same source the keys use.
+func stageDigitRange() string { return digitRangeFor(len(stageDigitKeys())) }
+
+// digitRangeFor is the hint text for a given key count, parameterised for the same reason
+// digitKeysFor is.
+func digitRangeFor(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("1–%d", n)
 }
 
 func (a *App) togglePlay() {

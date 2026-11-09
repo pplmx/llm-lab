@@ -6,6 +6,13 @@
 
 ### Added
 
+- **阶段数字键写死成 7 个，加第 8 步时按 8 没反应、提示还写着「1–7 跳转」，而所有测试照样绿。** 数字键清单、快捷键提示、以及两处测试循环，**四处各写了一遍 `Key1..Key7`**，没有任何一处和 `len(lessons)` 有关系
+  - 实测（临时加一个合成第 8 步）：`len(lessons) == 8`，按 `Key8` 阶段仍停在 0，提示仍是 `1–7 跳转`，`TestShortcutHintKeepsTheOtherKeys` 等全部通过——因为测试里期望的字符串本身就是第七个字面量
+  - 改法：`stageDigitKeys()` 从 `len(lessons)` 推导，`stageDigitRange()` 生成提示里的「1–N」，两个用户可见的字符串都改用后者。今天渲染结果与原来逐字相同（7 步 → `1–7`）
+  - **但第一版守卫抓不到回退**：它把推导值和今天的 lesson 数对比，而写死 7 同样满足。实测把函数改成 `return digits[:7]`，所有断言仍然绿——这正是原来那四处能一直错下去的原因
+  - 所以把推导抽成可传参的 `digitKeysFor(stages)` / `digitRangeFor(n)`，测试覆盖 **0 / 1 / 5 / 8 / 9 / 12 / -1** 这些应用本身没有的规模（9 是键盘上限，必须封顶而不是越界），并校验第 i 个阶段对应数字 i+1 的顺序。再改回 `return digits[:7]` 就报 `digitKeysFor(0) gave 7 keys`
+  - 这条和上一轮是同一类：**只对着当前值校验的断言，分不清「推导出来的」和「写死的」**。上一轮的文档图清单也是删掉一项照样通过
+
 - **`docs/` 那六张图的清单写了两遍，删掉其中一遍的一项，另一遍照样通过。** `TestRenderDocs`（写图）和 `TestDocsImagesAreCurrent`（比对）各自维护一份六项的字面量
   - 实测：只从 `TestRenderDocs` 里删掉 `attention` 那一项，`go test -run 'TestDocsImagesAreCurrent|TestRenderDocs'` **仍然 ok**——因为比对那边读的是它自己的清单，照样去验证 `docs/attention.png`，而 `just docs` 已经不再生成那张图了
   - 两份必须手动保持一致的字面量，错在哪一边都不显眼：写的那边少一项，读的那边不会报；读的那边少一项，写了也没人验

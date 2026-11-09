@@ -4986,9 +4986,80 @@ func TestShortcutHintKeepsTheOtherKeys(t *testing.T) {
 			hint = s
 		}
 	}
-	for _, want := range []string{"← → 切换阶段", "空格 播放/暂停", "1–7 跳转"} {
+	// The digit range is derived, not written out: this expectation comes from the lesson
+	// count, so adding a stage updates the hint and the keys together. Measured before that
+	// change, with a synthetic eighth lesson: the line still said "1–7 跳转", Key8 did
+	// nothing, and this test passed — the expected string here was a seventh literal.
+	digits := stageDigitRange()
+	if digits == "" || len(stageDigitKeys()) != len(lessons) {
+		t.Fatalf("the digit shortcuts cover %d stages but there are %d lessons",
+			len(stageDigitKeys()), len(lessons))
+	}
+	for _, want := range []string{"← → 切换阶段", "空格 播放/暂停", digits + " 跳转"} {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("the shortcut line no longer mentions %q: %q", want, hint)
+		}
+	}
+}
+
+// TestStageDigitKeysFollowTheLessons is the check the three seven-element literals could not
+// make between themselves.
+//
+// The digit shortcuts, the shortcut hint and this package's tests each used to spell out
+// Key1..Key7. Nothing tied any of them to len(lessons), so an eighth stage would have been
+// reachable by the ← → keys, by clicking the sidebar and by the play timer, but not by typing
+// 8 — and the hint would have gone on advertising "1–7". Measured: with a synthetic eighth
+// lesson added, Key8 left the stage at 0 and every shortcut test still passed.
+//
+// The assertion is that the two derived pieces agree with the lesson list, in both directions.
+func TestStageDigitKeysFollowTheLessons(t *testing.T) {
+	keys := stageDigitKeys()
+	if len(keys) != len(lessons) {
+		t.Fatalf("%d digit keys for %d lessons; stage %d has no digit",
+			len(keys), len(lessons), len(keys)+1)
+	}
+	// The hint has to name the last key that actually exists, or it is describing a set the
+	// reader cannot use.
+	if want := fmt.Sprintf("1–%d", len(lessons)); stageDigitRange() != want {
+		t.Fatalf("the hint range is %q, want %q for %d lessons", stageDigitRange(), want, len(lessons))
+	}
+	// And every key must be the one the handler expects at that index: pressing it jumps to
+	// the stage it is advertised for.
+	for i, key := range keys {
+		a := newTestApp(t)
+		tr := ui.NewTester(a.View, 1500, 940)
+		tr.Frame()
+		tr.Key(0, key)
+		tr.Frame()
+		if a.Step != i {
+			t.Fatalf("digit %d jumped to stage %d", i+1, a.Step)
+		}
+	}
+
+	// Everything above compares derived values against today's lesson count, which a
+	// hardcoded seven satisfies just as well. These sizes are ones the app does not ship
+	// with, so only a real derivation produces them.
+	for _, n := range []int{0, 1, 5, 8, 9} {
+		if got := len(digitKeysFor(n)); got != n {
+			t.Fatalf("digitKeysFor(%d) gave %d keys", n, got)
+		}
+		if want := digitRangeFor(n); n > 0 && want != fmt.Sprintf("1–%d", n) {
+			t.Fatalf("digitRangeFor(%d) = %q", n, want)
+		}
+	}
+	// The keyboard runs out at 9, so a tenth stage cannot get a digit — the list must cap
+	// rather than read past its array.
+	if got := len(digitKeysFor(12)); got != 9 {
+		t.Fatalf("digitKeysFor(12) gave %d keys; the digits stop at 9", got)
+	}
+	if got := digitKeysFor(-1); len(got) != 0 {
+		t.Fatalf("digitKeysFor(-1) gave %d keys", len(got))
+	}
+	// Key order matters: the i-th stage must map to the digit i+1, not merely to some key.
+	wantKeys := []ui.Key{ui.Key1, ui.Key2, ui.Key3, ui.Key4, ui.Key5, ui.Key6, ui.Key7, ui.Key8, ui.Key9}
+	for i, k := range digitKeysFor(len(wantKeys)) {
+		if k != wantKeys[i] {
+			t.Fatalf("digit %d maps to key %v, want %v", i+1, k, wantKeys[i])
 		}
 	}
 }
