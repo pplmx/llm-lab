@@ -2569,8 +2569,9 @@ func (a *App) stageLayerRewrite(c *ui.Context) {
 // on the residual stage, one on the FFN stage — and each is one click from its card.
 //
 // The entries must match the chip labels passed to cardNamed, in the order the cards are
-// drawn. TestCardRowsMatchTheRenderedCards checks both, so a card cannot be added
-// without appearing in the row or renamed without this list going stale.
+// drawn. TestEveryNamedCardAppearsInItsStageRow checks the first, in both directions, and
+// TestCardChipsAreInPageOrder checks the second, so a card cannot be added without appearing in
+// the row, or renamed without this list going stale, or listed before the card it names.
 //
 // The lesson card is not listed: it is the stage's own text, at the end of every stage,
 // and a chip for it would be a chip for "the rest of the page".

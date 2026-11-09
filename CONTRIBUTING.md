@@ -45,7 +45,11 @@ go test -race ./internal/model/     # 只有这个包有 goroutine
 GOEXPERIMENT=simd go test ./...     # 实验性 SIMD 内核
 ```
 
-两个门槛分开是有意的：`just check` 约 35 秒，`just check-ci` 冷缓存约 75 秒（SIMD 要把整个测试集再跑一遍）。日常提交跑前者；动到模块依赖、并发或 SIMD 内核时跑后者。
+两个门槛分开是有意的：`just check` 约 **3.5 分钟**，`just check-ci` 冷缓存约 **7 分钟**。日常提交跑前者；动到模块依赖、并发或 SIMD 内核时跑后者。
+
+这两个数是从「约 35 秒 / 约 75 秒」改过来的，原来的值低估了六倍。差别主要在 `internal/app`：它现在有 489 个测试函数、跑一遍约 206 秒，而 `just check-ci` 会把它**跑两遍**（标量一遍、`GOEXPERIMENT=simd` 一遍），各 207 秒，再加上 vet、`go mod tidy`、`-race` 的 model 包，冷缓存下总共 422 秒。实测命令：`go clean -testcache && time just check-ci`。
+
+这个数字值得写准：它是读者决定「这次改动要不要跑全量」的依据，写小了会让人以为顺手跑一下没关系。
 
 `-race` 只跑 `internal/model`：`internal/app` 是单线程 UI 代码，而在 race 检测器下一次 `ui.Tester.Frame()` 要 24ms（正常 0.8ms），整个包会跑到 11 分钟，超过 Go 默认的 10 分钟测试超时。
 

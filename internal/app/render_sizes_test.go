@@ -367,15 +367,19 @@ func TestEveryStageOpensOnItsOwnFigure(t *testing.T) {
 	}
 }
 
-// TestCardRowsMatchTheRenderedCards keeps stageCards honest in both directions: every
-// chip the step bar offers must correspond to a card that is actually drawn on that
-// stage, and every drawn card must be offered.
+// TestCardRowsAreWellFormed checks the shape of stageCards on its own: one row per stage, no
+// empty or repeated chip.
 //
-// The row is a table of contents, so a chip that leads nowhere is worse than no row at
-// all — it promises a section that is not there. The check works by clicking each chip
-// and requiring the stage to scroll to a different place, then by counting the cards the
-// source converts with cardNamed, which is the only way a card gets a chip.
-func TestCardRowsMatchTheRenderedCards(t *testing.T) {
+// This comment used to claim the test kept the row honest "in both directions" by clicking each
+// chip and by counting the cardNamed calls. It does neither — those are separate tests, and have
+// been since this one was reduced to a shape check: TestEveryCardChipJumpsToItsCard clicks every
+// chip, and TestEveryNamedCardAppearsInItsStageRow does the source-level count in both
+// directions. A comment that describes work happening elsewhere is worse than a short one, because
+// a reader who trusts it will not go looking for the tests that actually hold the invariant.
+//
+// What remains here is worth keeping: a row count that disagrees with the lesson count, or a chip
+// listed twice, would break the table of contents in ways the other two tests do not notice.
+func TestCardRowsAreWellFormed(t *testing.T) {
 	if len(stageCards) != len(lessons) {
 		t.Fatalf("stageCards has %d rows for %d stages", len(stageCards), len(lessons))
 	}

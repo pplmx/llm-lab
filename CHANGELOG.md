@@ -6,6 +6,15 @@
 
 ### Added
 
+- **CONTRIBUTING 说「`just check` 约 35 秒、`just check-ci` 冷缓存约 75 秒」，实测 **206 秒 / 422 秒**，低估六倍。** 这两个数正是读者判断「这次改动要不要跑全量门槛」的依据
+  - 实测：`just check` 206s；`go clean -testcache && just check-ci` 422s。差距主要在 `internal/app`——它有 **489 个测试函数**、跑一遍 207 秒，而 `check-ci` 会把它**跑两遍**（标量 + `GOEXPERIMENT=simd`），各 207 秒
+  - 用 `git log -S` 查：这个数字是 `2093a2e`（11 月 7 日）写下的，当时 `app_test.go` 只有 **186 个测试函数**，此后 **142 个提交**动过 app 的测试文件。**它不是写错了，是长歪了**——和上一轮 README 的 9.4ms、上上轮的 11MB 是同一类
+  - 改成「约 3.5 分钟 / 约 7 分钟」，并写明实测命令与为什么要写准
+  - 顺带核了同一段里「`-race` 跑 app 会到 11 分钟」那个论断：抽 `TestEveryStageRendersAnyInput` 单例，race 下 1.63s 对正常约 0.1s，约 16 倍，与文中「24ms 对 0.8ms」一致——那个架构判断站得住，未动
+- **`TestCardRowsMatchTheRenderedCards` 的注释在描述另外两个测试的工作。** 它写着「works by clicking each chip … then by counting the cards the source converts with `cardNamed`」，而函数体只检查行数和 chip 重名
+  - 那两件事分别是 `TestEveryCardChipJumpsToItsCard` 与 `TestEveryNamedCardAppearsInItsStageRow`。**一条描述别处工作的注释比短注释更糟**——信了它的读者不会再去找真正守住这条不变式的测试
+  - 顺带把名字改成 `TestCardRowsAreWellFormed`（它守的是形状，不是「双向匹配」），并更新 `stages.go` 里引用旧名字的那处注释，指向真正做双向校验的两个测试
+
 - **把「挨个字段试」换成一条遍历合法配置的常驻测试，它当场又抓出两个缺陷。** 上一轮修的是 `n_head` 崩溃，做法是逐个字段手写探针；这轮先做了 21 个变体 × 4 提示词 × 7 阶段的临时扫描（0 panic、0 坏字符串），再把扫描固化成 `TestEveryLegalConfigRendersEveryStage`
   - 枚举的是**加载器会接受的形状**，不是「想得到的形状」：`n_head` 取 `d_model` 的**全部约数**（1,2,3,4,6,8,12,24），`ctx` / `d_ff` / `n_layer` 各取几档，再加三个窄 `d_model`
   - **固化成测试之后立刻报出两条原来漏掉的**（临时探针只扫了 4 个字段值、没扫窄 `d_model` 的零权重情形）：
