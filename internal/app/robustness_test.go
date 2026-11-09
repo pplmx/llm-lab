@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
 	"strings"
@@ -906,6 +907,76 @@ func TestShortPromptEmbedCardExplainsItselfInsteadOfVanishing(t *testing.T) {
 	for _, s := range tr2.Texts() {
 		if strings.Contains(s, "样本太少") {
 			t.Fatalf("a long prompt still gets the short-sample explanation: %q", s)
+		}
+	}
+}
+
+// TestEveryCardChipAppearsOnItsStageFromEveryShortPrompt guards against a card silently vanishing.
+//
+// Two rounds fixed cards that disappeared without explanation: the embed-structure card below three
+// adjacent pairs, and the whole embed stage when a prompt could not fit the window. Both were found
+// by comparing rendered output across prompts, not by reading code — the call sites all looked
+// reasonable, and only the missing chip showed the difference.
+//
+// The chip is the contract. A card that cannot draw its contents may still deserve to appear, with
+// an explanation, which is what those two fixes did; a chip that simply vanishes leaves the reader
+// unable to tell a missing measurement from a missing feature. This test does not demand every card
+// render its full contents from every prompt — several legitimately say "too short" — only that a
+// stage's chip row does not change shape as the prompt shrinks.
+func TestEveryCardChipAppearsOnItsStageFromEveryShortPrompt(t *testing.T) {
+	// The chip names registered through cardNamed, per stage. A card missing from this list is not
+	// covered by the sweep, so the list is asserted against the source below.
+	want := map[int][]string{
+		0: {"token 序列", "字符 → 字节", "数据流与形状"},
+		1: {"嵌入向量", "位置向量", "位置编码的形状", "嵌入有含义吗"},
+		2: {"Q / K / V", "分数矩阵", "掩码反事实"},
+		3: {"注意力矩阵", "加权求和", "四个头", "头之间重合吗"},
+		4: {"残差流", "LayerNorm", "残差为何不爆", "每层说什么", "每层改多少"},
+		5: {"FFN 内部", "哪个单元在干活", "FFN 写出了答案"},
+		6: {"最后位置", "每位置预测", "Top-12", "绑定权重", "采样"},
+	}
+
+	// Every chip the source registers must be in the table above.
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered := map[string]bool{}
+	for _, m := range regexp.MustCompile(`cardNamed\(c, "([^"]+)"`).FindAllStringSubmatch(string(src), -1) {
+		registered[m[1]] = true
+	}
+	listed := map[string]bool{}
+	for _, names := range want {
+		for _, n := range names {
+			listed[n] = true
+		}
+	}
+	for name := range registered {
+		if !listed[name] {
+			t.Errorf("the card %q is registered but not listed here, so this sweep does not cover "+
+				"it; add it to its stage's row", name)
+		}
+	}
+
+	for _, prompt := range []string{"a", "ab", "abc", "abcd", "The transformer reads the tokens and"} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		for step, names := range want {
+			a.Step = step
+			a.SelToken = 0
+			tr := ui.NewTester(a.View, 1500, 4000)
+			tr.Frame()
+			present := map[string]bool{}
+			for _, s := range tr.Texts() {
+				present[s] = true
+			}
+			for _, name := range names {
+				if !present[name] {
+					t.Fatalf("prompt %q, stage %d: the card %q is missing, so its chip vanished "+
+						"rather than explaining itself", prompt, step+1, name)
+				}
+			}
 		}
 	}
 }
