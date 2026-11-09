@@ -4938,3 +4938,64 @@ func mustParseInt(t *testing.T, s string) int {
 	}
 	return v
 }
+
+// TestFFNTopShareFiguresAreCurrent holds the range quoted above ffnWorkings.
+//
+// That paragraph said the three largest terms carry "14–16% of the absolute mass". Measured over
+// 6912 dimensions — both layers, every position, every output dimension — the same statistic runs
+// 4% to 27% with a mean of 10%. The rendered sentence was never wrong because it computes from
+// ffnTopShare; only the comment describing the result had drifted, exactly as a logit-lens count
+// and a colour-scale range had.
+//
+// The figures are parsed out of the source rather than copied, so reverting the comment alone
+// cannot leave this green.
+func TestFFNTopShareFiguresAreCurrent(t *testing.T) {
+	src, err := os.ReadFile("stages.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := regexp.MustCompile(`dimension\) on the bundled weights: (\d+)% to (\d+)%, mean (\d+)%`)
+	m := re.FindStringSubmatch(string(src))
+	if m == nil {
+		t.Fatal("the paragraph above ffnWorkings no longer quotes a range of the form " +
+			"\"on the bundled weights: A% to B%, mean C%\"; update this test with what it says now")
+	}
+	wantLo, wantHi, wantMean := mustParseInt(t, m[1]), mustParseInt(t, m[2]), mustParseInt(t, m[3])
+
+	a := newTestApp(t)
+	lo, hi := 100.0, 0.0
+	sum, n := 0.0, 0
+	for _, layer := range []int{0, 1} {
+		a.Layer = layer
+		l := a.layer()
+		for i := 0; i < len(l.Hidden); i++ {
+			for d := 0; d < a.Trace.Config.DModel; d++ {
+				p := computeFFN(l.Hidden[i], a.W.Layers[layer].W2, a.Trace.Config.DFF,
+					a.Trace.Config.DModel, d)
+				if !p.OK {
+					continue
+				}
+				s := ffnTopShare(p)
+				if s < lo {
+					lo = s
+				}
+				if s > hi {
+					hi = s
+				}
+				sum += s
+				n++
+			}
+		}
+	}
+	if n == 0 {
+		t.Fatal("no FFN dimensions were measured")
+	}
+	mean := sum / float64(n)
+	// One percentage point of slack: the figures are quoted as whole percents, and pinning the
+	// rounding would make this a test of the formatter rather than of the claim.
+	if math.Abs(lo-float64(wantLo)) > 1 || math.Abs(hi-float64(wantHi)) > 1 || math.Abs(mean-float64(wantMean)) > 1 {
+		t.Fatalf("the comment above ffnWorkings says %d%% to %d%% with mean %d%%, but the weights "+
+			"give %.0f%% to %.0f%% with mean %.0f%% over %d dimensions — one fact stated twice, "+
+			"so update both", wantLo, wantHi, wantMean, lo, hi, mean, n)
+	}
+}

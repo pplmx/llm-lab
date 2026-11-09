@@ -1592,9 +1592,15 @@ func (a *App) stageFFN(c *ui.Context) {
 }
 
 // ffnWorkings prints how one FFN output dimension is summed. The remainder is
-// shown because it is most of the answer: the three largest terms carry only
-// 14–16% of the absolute mass in this model, so a reader who saw just those
-// would reasonably conclude the rest does not matter.
+// shown because it is most of the answer: the three largest terms carry a small
+// share of the absolute mass, so a reader who saw just those would reasonably
+// conclude the rest does not matter.
+//
+// Measured over 6912 dimensions (both layers, every position, every output
+// dimension) on the bundled weights: 4% to 27%, mean 10%. The figures here were
+// once 14–16%, which no longer hold — the same drift a logit-lens count had, and
+// nothing was watching these either. TestFFNTopShareFiguresAreCurrent reads this
+// paragraph and compares it with a fresh measurement.
 func ffnWorkings(c *ui.Context, dim, dff int, p ffnParts) {
 	// Four decimals, like the total: at three the terms and the remainder each
 	// carried up to 5e-4 and the reader's sum missed the printed result on 88 of
