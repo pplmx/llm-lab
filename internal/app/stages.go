@@ -2589,8 +2589,12 @@ func (a *App) stageFFNConcentration(c *ui.Context) {
 	}
 	a.cardNamed(c, "哪个单元在干活", func() {
 		sectionTitle(c, "单元是怎么分工的", "整句所有位置合起来看")
-		mutedText(c, "上面那条色带只画了选中位置的 384 个单元。把整句每个位置都算进来，"+
-			"要看的是两个数：多少个单元才凑够一半的激活量，以及有没有单元在每个位置都开着。")
+		// The unit count is d_ff, which validate only requires to be positive — a file with
+		// d_ff=192 loads, so writing 384 here describes a model that is not on screen. Measured
+		// with d_ff halved: this line still said "384 个单元".
+		mutedText(c, fmt.Sprintf("上面那条色带只画了选中位置的 %d 个单元。把整句每个位置都算进来，"+
+			"要看的是两个数：多少个单元才凑够一半的激活量，以及有没有单元在每个位置都开着。",
+			rows[0].Units))
 		barsOut := make([]barRow, 0, len(rows))
 		var maxHalf float64
 		for _, r := range rows {
@@ -2625,7 +2629,11 @@ func (a *App) stageFFNConcentration(c *ui.Context) {
 				first.Layer, first.HalfMass, first.AlwaysOn, first.NeverOn),
 			fmt.Sprintf("层 %d：%d 个单元凑够一半激活，每位置都开的有 %d 个，从不打开 %d 个",
 				last.Layer, last.HalfMass, last.AlwaysOn, last.NeverOn),
-			fmt.Sprintf("两层都是 384 个单元，但集中程度差了 %.1f 倍",
+			// "两层" and the unit count were both typed in. The layer count is free too — a
+			// one-layer checkpoint loads — and this card only renders when it has at least two
+			// rows, so the honest phrasing names the two it is actually comparing.
+			fmt.Sprintf("层 %d 和层 %d 都是 %d 个单元，但集中程度差了 %.1f 倍",
+				first.Layer, last.Layer, first.Units,
 				float64(first.HalfMass)/math.Max(1, float64(last.HalfMass))),
 		})
 		if first.HalfMass > last.HalfMass*2 {

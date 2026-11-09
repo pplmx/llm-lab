@@ -308,6 +308,133 @@ func windowUnchanged(a, b map[string]bool, s string, re *regexp.Regexp, pad int)
 	return true
 }
 
+// halfDFFWeights returns a copy of w with d_ff halved. d_ff is only required to be positive, so
+// such a file loads; the FFN tensors are the only ones shaped by it.
+func halfDFFWeights(base *model.Weights) *model.Weights {
+	dff := base.Config.DFF / 2
+	out := *base
+	out.Config = base.Config
+	out.Config.DFF = dff
+	out.Layers = nil
+	for _, l := range base.Layers {
+		c := l
+		c.W1 = l.W1[:base.Config.DModel*dff]
+		c.W2 = l.W2[:dff*base.Config.DModel]
+		out.Layers = append(out.Layers, c)
+	}
+	return &out
+}
+
+// dropLayerWeights returns a copy of w with one fewer block.
+func dropLayerWeights(base *model.Weights) *model.Weights {
+	out := *base
+	out.Config = base.Config
+	out.Config.NLayer = base.Config.NLayer - 1
+	out.Layers = base.Layers[:out.Config.NLayer]
+	return &out
+}
+
+// TestNoStageNamesTheBundleFeedForwardWidth is the d_ff member of the family.
+//
+// The FFN-concentration card said "上面那条色带只画了选中位置的 384 个单元" and "两层都是 384 个
+// 单元" — 384 typed in, while the row struct already carried Units and the same card printed
+// per-layer unit counts from it. Measured with d_ff halved: both lines still said 384.
+//
+// The second line also hardcoded "两层". The card renders only with at least two rows, so naming
+// the two layers it is comparing is both correct and clearer than counting them in prose.
+func TestNoStageNamesTheBundleFeedForwardWidth(t *testing.T) {
+	base, err := model.Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	narrow := halfDFFWeights(base)
+	if narrow.Config.DFF == base.Config.DFF {
+		t.Fatal("the copy has the bundle's d_ff, so this test proves nothing")
+	}
+	bundled := stageTexts(t, base)
+	smaller := stageTexts(t, narrow)
+
+	width := fmt.Sprintf("%d", base.Config.DFF)
+	re := standaloneNumber(width)
+	var stale []string
+	for s := range bundled {
+		if !re.MatchString(s) || !strings.Contains(s, "单元") {
+			continue
+		}
+		if windowUnchanged(bundled, smaller, s, re, 24) {
+			stale = append(stale, s)
+		}
+	}
+	if len(stale) > 0 {
+		sort.Strings(stale)
+		var b strings.Builder
+		for _, s := range stale {
+			b.WriteString("\n  " + s)
+		}
+		t.Fatalf("%d string(s) name the bundle's d_ff %s and survive unchanged at d_ff %d:%s",
+			len(stale), width, narrow.Config.DFF, b.String())
+	}
+}
+
+// TestCardsThatCompareLayersNeedTwoOfThem records why n_layer gets no "constant prose" guard
+// like the d_model, d_ff and ctx ones.
+//
+// It was written as one, and the check was vacuous: it looked for "两层" surviving unchanged on a
+// one-layer model, and no such string exists because every card that compares layers returns
+// early when there are fewer than two. Measured — a one-layer copy renders zero strings
+// containing "两层", and the guard passed before any fix was made.
+//
+// So the property worth pinning is the early return itself, which is what keeps the hardcoded
+// layer indices in those cards from ever reaching a reader. The cards in question name layer 0
+// and layer 1 explicitly — "预测在层 0 的 FFN 之后就已经成形，层 1 是在把它磨尖" — which is
+// correct prose for a two-layer model and would be nonsense on a one-layer one. The guard is the
+// `len(...) < 2` check, not the wording.
+func TestCardsThatCompareLayersNeedTwoOfThem(t *testing.T) {
+	base, err := model.Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	one := dropLayerWeights(base)
+	if one.Config.NLayer >= 2 {
+		t.Fatal("the copy still has two layers, so this test proves nothing")
+	}
+
+	// Every card that talks about layers relative to each other. Each is keyed by a string
+	// unique to its heading, so this fails loudly if a card is renamed rather than passing
+	// vacuously on a missing card.
+	compared := []struct {
+		heading string
+		step    int
+	}{
+		{"每一层改写了多少", 4},
+		{"单元是怎么分工的", 5},
+	}
+	for _, c := range compared {
+		a := New(one)
+		a.Step = c.step
+		tr := ui.NewTester(a.View, 1500, 4000)
+		tr.Frame()
+		joined := strings.Join(tr.Texts(), "\n")
+		if strings.Contains(joined, c.heading) {
+			t.Fatalf("step %d renders %q on a %d-layer model; that card hardcodes layer 0 and "+
+				"layer 1, so it must not draw when there is only one", c.step+1, c.heading, one.Config.NLayer)
+		}
+	}
+
+	// And the two-layer model still draws them, so this is not passing because the headings
+	// were renamed.
+	for _, c := range compared {
+		a := New(base)
+		a.Step = c.step
+		tr := ui.NewTester(a.View, 1500, 4000)
+		tr.Frame()
+		if !strings.Contains(strings.Join(tr.Texts(), "\n"), c.heading) {
+			t.Fatalf("step %d does not render %q on the bundled weights either, so the check "+
+				"above proves nothing", c.step+1, c.heading)
+		}
+	}
+}
+
 // TestNoStageNamesTheBundleContextAtAnotherWindow is the same check for the context window, which
 // has a defect of its own on record: the positional-encoding card said "它把 64 个位置放成了 64
 // 个几乎互不相干的地址" with Dims derived on the same line, and validate only requires ctx > 0,
