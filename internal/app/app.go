@@ -1519,6 +1519,15 @@ func (a *App) sampleNext() {
 	a.recordUndo("采样续写")
 	a.LastSample = fmt.Sprintf("%q (id %d, p=%.3f)", byteText(pick), pick, probs[pick])
 	// A byte-level model predicts bytes, not runes: append exactly one byte.
+	//
+	// When the prompt already fills the context that byte will never be seen: recompute keeps
+	// the last Ctx tokens, so the string grows while the trace stays at Ctx. Measured on a
+	// 70-byte prompt, three presses took it to 73 bytes with the token count pinned at 64 — the
+	// only visible change was a count that did not move, and nothing on screen said why.
+	//
+	// The draw is still worth showing — the reader asked for a token and gets one — but the line
+	// has to say it came from a window that had already ended before it.
+	wasFull := a.Trace != nil && len(a.Trace.Tokens) >= a.W.Config.Ctx
 	a.Prompt += string([]byte{byte(pick)})
 	// Sampling edits the prompt like the other two paths, so it stops playback for the
 	// same reason. It does not go through promptChanged, which would clear the record
@@ -1535,6 +1544,10 @@ func (a *App) sampleNext() {
 	// still described token 5's row — the same split selectToken exists to prevent, reached by a third path.
 	if n := len(a.Trace.Tokens); n > 0 {
 		a.selectToken(n-1, true)
+	}
+	if wasFull {
+		a.LastSample += "——注意：提示词已满 " + fmt.Sprint(a.W.Config.Ctx) +
+			" 个 token，这一字节追加在窗口之外，模型看不到它。删掉几个字再看采样。"
 	}
 }
 

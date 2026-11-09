@@ -9970,3 +9970,45 @@ func TestScoreColorScaleRangeMatchesTheWeights(t *testing.T) {
 		}
 	}
 }
+
+// TestSamplingAtTheContextLimitSaysTheByteIsInvisible keeps the sample record honest when the
+// window is already full.
+//
+// recompute keeps the last Ctx tokens, so appending a byte to a prompt that already fills the
+// context grows the string without changing the trace. Measured before this: a 70-byte prompt
+// reached 73 bytes after three presses while the token count stayed at 64 — the reader's only
+// visible feedback was a count that did not move, and no card said why the new byte had no effect.
+//
+// The draw is still shown, since the reader asked for a token, but the record has to say the byte
+// landed outside the window.
+func TestSamplingAtTheContextLimitSaysTheByteIsInvisible(t *testing.T) {
+	a := newTestApp(t)
+	ctx := a.W.Config.Ctx
+	a.Prompt = strings.Repeat("a", ctx+6)
+	a.recompute()
+	if got := len(a.Trace.Tokens); got != ctx {
+		t.Fatalf("the prompt is %d bytes but the trace holds %d tokens; this test needs the window "+
+			"to be full", len(a.Prompt), got)
+	}
+	before := len(a.Prompt)
+	a.sampleNext()
+	if len(a.Prompt) != before+1 {
+		t.Fatalf("sampling appended %d bytes, want 1", len(a.Prompt)-before)
+	}
+	if got := len(a.Trace.Tokens); got != ctx {
+		t.Fatalf("the trace now holds %d tokens, want it pinned at %d", got, ctx)
+	}
+	if !strings.Contains(a.LastSample, "追加在窗口之外") {
+		t.Fatalf("a byte was appended past the window with the record saying %q; nothing tells the "+
+			"reader the model cannot see it", a.LastSample)
+	}
+
+	// A prompt with room must not carry the warning: it would be false there.
+	b := newTestApp(t)
+	b.Prompt = "hi"
+	b.recompute()
+	b.sampleNext()
+	if strings.Contains(b.LastSample, "追加在窗口之外") {
+		t.Fatalf("a prompt with room reported the byte as invisible: %q", b.LastSample)
+	}
+}

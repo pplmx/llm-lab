@@ -6,6 +6,14 @@
 
 ### Added
 
+- **提示词已满 64 token 时点「采样」，抽出的字节被截断掉，界面上什么都没说。** 提示词从 70 字节涨到 73，而 `tokens` 恒为 64——用户唯一的反馈是一个不动的数字
+  - 成因：`sampleNext` 无条件 `a.Prompt += byte`，而 `recompute` 只保留最后 `Ctx` 个 token。字符串在长，模型视野没变
+  - 这不算错抽：采样确实抽出了一个 token，卡片也如实显示了它。**缺的是那句话**——它落在窗口之外，模型看不到
+  - 修法：追加前记下 `wasFull := len(Trace.Tokens) >= Ctx`，若为真则在 `LastSample` 后面接一句「提示词已满 N 个 token，这一字节追加在窗口之外，模型看不到它。删掉几个字再看采样。」
+  - `TestSamplingAtTheContextLimitSaysTheByteIsInvisible` 双向：满窗口必须出这句，**有空间的提示词不许出**（否则是假话）
+  - 破坏性验证：删掉那句 → `a byte was appended past the window with the record saying "\"s\" (id 115, p=0.263)"; nothing tells the reader the model cannot see it`
+- **本轮顺带核对的采样性质（均正确、未改）**：`seed = FNV-1a(提示词)` 同提示词同温度**必定同抽**（5 次重复一致）；`x` 必落在抽中 token 的区间内；区间宽度**恰等于该 token 的概率**（35 组取样零误差）；温度改变时「同一个 x 可能落进别的区间」也成立（3 个提示词里有 1 个变）
+
 - **Top-12 卡片「其余 244 个合计」的写法依赖一个没人说过的前提：softmax 不会返回负数。**
   - 这个数字是**累加**非 top-12 的概率得来的，不是 `1 - sum(top)`。两者在 T=0.1 上有 1e-13 的差：用减法形式会渲染成 **`-0.0000%`**（实测复现）
   - 累加形式之所以不会印出负号，是因为每个概率都非负——**但这条前提此前既没写下来，也没有测试盯着**
