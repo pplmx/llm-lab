@@ -579,3 +579,169 @@ func TestEveryHeadCountRendersAndCountsItself(t *testing.T) {
 		}
 	}
 }
+
+// configVariant is one checkpoint shape the app has to survive, built by reslicing or padding
+// the bundled weights rather than by training anything.
+type configVariant struct {
+	name string
+	w    *model.Weights
+}
+
+// configVariants enumerates the shapes a weights file can legally have.
+//
+// Each field here is only checked for its own invariant in validate — ctx and d_ff and d_model
+// positive, d_model divisible by n_head — so all of these load. Two rounds of this work found real
+// defects in that space: a n_head that is not four crashed the window outright, and a d_ff that is
+// not 384 made a card describe units it did not have. Enumerating the field values centrally is
+// what turns "test the shapes we happen to think of" into "test the shapes the loader admits".
+func configVariants(t *testing.T, base *model.Weights) []configVariant {
+	t.Helper()
+	var out []configVariant
+
+	for _, c := range []int{8, 16, 32, 64} {
+		w := *base
+		w.Config = base.Config
+		w.Config.Ctx = c
+		if c < base.Config.Ctx {
+			w.PosEmbed = base.PosEmbed[:c*base.Config.DModel]
+		}
+		out = append(out, configVariant{fmt.Sprintf("ctx=%d", c), &w})
+	}
+
+	for _, f := range []int{2, 96, 192, 384} {
+		w := *base
+		w.Config = base.Config
+		w.Config.DFF = f
+		w.Layers = nil
+		for _, l := range base.Layers {
+			c := l
+			c.W1 = make([]float32, base.Config.DModel*f)
+			c.W2 = make([]float32, f*base.Config.DModel)
+			copy(c.W1, l.W1)
+			copy(c.W2, l.W2)
+			w.Layers = append(w.Layers, c)
+		}
+		out = append(out, configVariant{fmt.Sprintf("dff=%d", f), &w})
+	}
+
+	for _, n := range []int{1, 2, 3} {
+		w := *base
+		w.Config = base.Config
+		w.Config.NLayer = n
+		w.Layers = nil
+		for i := 0; i < n; i++ {
+			w.Layers = append(w.Layers, base.Layers[i%len(base.Layers)])
+		}
+		out = append(out, configVariant{fmt.Sprintf("nlayer=%d", n), &w})
+	}
+
+	// Every divisor of d_model, since n_head may be any of them.
+	for nh := 1; nh <= base.Config.DModel; nh++ {
+		if base.Config.DModel%nh != 0 {
+			continue
+		}
+		w := *base
+		w.Config = base.Config
+		w.Config.NHead = nh
+		out = append(out, configVariant{fmt.Sprintf("nhead=%d", nh), &w})
+	}
+
+	// A narrower d_model with a single head, so the width itself varies too. The tensors are
+	// zero-filled rather than resliced: at d_model 8 a zero patch of the 96-wide weights would
+	// be meaningless, and this variant is about the shape surviving, not about the numbers.
+	for _, d := range []int{8, 16, 48} {
+		w := *base
+		w.Config = base.Config
+		w.Config.DModel = d
+		w.Config.NHead = 1
+		w.TokEmbed = make([]float32, base.Config.Vocab*d)
+		w.PosEmbed = make([]float32, base.Config.Ctx*d)
+		w.LNFG = make([]float32, d)
+		w.LNFB = make([]float32, d)
+		for i := range w.LNFG {
+			w.LNFG[i] = 1
+		}
+		w.Layers = nil
+		for range base.Layers {
+			c := model.LayerWeights{
+				LN1G: make([]float32, d), LN1B: make([]float32, d),
+				LN2G: make([]float32, d), LN2B: make([]float32, d),
+				WQ: make([]float32, d*d), WK: make([]float32, d*d),
+				WV: make([]float32, d*d), WO: make([]float32, d*d),
+				W1: make([]float32, d*base.Config.DFF), W2: make([]float32, base.Config.DFF*d),
+			}
+			for i := range c.LN1G {
+				c.LN1G[i] = 1
+				c.LN2G[i] = 1
+			}
+			w.Layers = append(w.Layers, c)
+		}
+		out = append(out, configVariant{fmt.Sprintf("dmodel=%d", d), &w})
+	}
+
+	if len(out) < 10 {
+		t.Fatalf("only %d variants; the enumeration has shrunk", len(out))
+	}
+	return out
+}
+
+// TestEveryLegalConfigRendersEveryStage is the sweep that the last two rounds were working toward
+// one field at a time.
+//
+// n_head=2 crashed the window; d_ff=192 made a card lie about its unit count. Both were reachable
+// from a file that validate accepts. Rather than wait for the next one, this walks the shapes the
+// loader admits — every divisor for n_head, several values for each other free field, three
+// widths — against several prompts and all seven stages, and requires that nothing panics and
+// nothing renders a malformed figure.
+//
+// Panics are fatal rather than collected: a panic in this app takes down the whole window, so one
+// is enough to fail. The recover is per (variant, prompt, stage) so the message can name all
+// three instead of printing a bare stack.
+func TestEveryLegalConfigRendersEveryStage(t *testing.T) {
+	base, err := model.Bundled()
+	if err != nil {
+		t.Skipf("no bundled weights: %v", err)
+	}
+	// Two prompts, not four. The dimension being swept is the config, and prompt shape is already
+	// covered by TestEveryStageRendersAnyInput; what these two add is a multi-token ASCII string
+	// and a short multi-byte one, which are the extremes of token count and of bytes-per-token.
+	// Four prompts made this test 22 seconds of the 190-second suite for no extra config coverage.
+	prompts := []struct{ name, text string }{
+		{"default", "The transformer reads the tokens and"},
+		{"cjk", "注意力就是加权求和"},
+	}
+
+	for _, v := range configVariants(t, base) {
+		for _, p := range prompts {
+			for step := 0; step < 7; step++ {
+				step := step
+				v, p := v, p
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							t.Fatalf("%s, prompt %q, stage %d panicked: %v",
+								v.name, p.name, step+1, r)
+						}
+					}()
+					a := New(v.w)
+					a.Prompt = p.text
+					a.recompute()
+					a.Step = step
+					tr := ui.NewTester(a.View, 1500, 3000)
+					tr.Frame()
+					for _, s := range tr.Texts() {
+						// The softmax callout legitimately mentions the mask producing -Inf.
+						if strings.Contains(s, "因果掩码") {
+							continue
+						}
+						if strings.Contains(s, "NaN") || strings.Contains(s, "+Inf") ||
+							strings.Contains(s, "-Inf") || strings.Contains(s, "%!") {
+							t.Fatalf("%s, prompt %q, stage %d renders %q",
+								v.name, p.name, step+1, s)
+						}
+					}
+				}()
+			}
+		}
+	}
+}

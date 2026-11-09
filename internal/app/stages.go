@@ -915,14 +915,23 @@ func (a *App) stageSoftmax(c *ui.Context) {
 			}
 			bars(c, rows, float32(hc.SumNorm), colGreen)
 			st := a.cancellation()
+			// The cross-row sentence needs rows to have been measured. With none, Lo is still
+			// its initial +Inf and the line read "本模型 0 行里 0 行都是这样（比值 +Inf–0.00）".
+			// That is reachable from a legal file: any checkpoint whose head outputs are all
+			// zero has no cancellation to measure, and d_model=8 with zero weights does it.
+			// Measured before this guard: the sweep in TestEveryLegalConfigRendersEveryStage
+			// reported exactly that string.
+			across := fmt.Sprintf("这不是这一行碰巧如此：本模型 %d 行里 %d 行都是这样（比值 %.2f–%.2f）。",
+				st.Rows, st.Below, st.Lo, st.Hi)
+			if st.Rows == 0 {
+				across = "这个模型的头输出全是零，没有一行可以拿来比较——所以上面这个比值是这一行自己的，不是普遍现象。"
+			}
 			misconception(c,
 				fmt.Sprintf("「%s头各写一块，加起来就是它们长度的和」", headsWord(len(l.Heads))),
 				fmt.Sprintf("范数不能直接相加。%s头的长度之和是 %.2f，但它们相加后的长度只有 %.2f，"+
-					"比值 %.2f——也就是说这几个向量只有一部分指向同一方向，其余互相抵消了。"+
-					"这不是这一行碰巧如此：本模型 %d 行里 %d 行都是这样（比值 %.2f–%.2f）。"+
+					"比值 %.2f——也就是说这几个向量只有一部分指向同一方向，其余互相抵消了。"+across+
 					"所以「注意力输出 = 各头之和」是一次向量加法，不是把各份贡献堆起来。",
-					headsWord(len(l.Heads)), hc.SumNorm, hc.TotalNorm, hc.Cancellation,
-					st.Rows, st.Below, st.Lo, st.Hi))
+					headsWord(len(l.Heads)), hc.SumNorm, hc.TotalNorm, hc.Cancellation))
 		}
 	})
 }
@@ -1032,6 +1041,15 @@ func (a *App) stageResidual(c *ui.Context) {
 		lnLo, lnHi := lnNormRange(tr.Layers, len(tr.Tokens), tr.FinalNorm)
 		pin := math.Sqrt(float64(tr.Config.DModel))
 		inMean, outMean := residualNormMeans(tr)
+		// The growth factor is a ratio, so it has to cope with a zero denominator. Every norm is
+		// zero when every weight is zero — reachable from a legal file, and the sweep in
+		// TestEveryLegalConfigRendersEveryStage reported "约 NaN 倍" for it. The multiplicative
+		// framing is the whole point of this sentence, so with no ratio to quote the honest
+		// thing is to say the stream did not grow rather than to invent a factor.
+		growth := fmt.Sprintf("约 %.1f 倍，而且每一层都在变大", outMean/inMean)
+		if inMean <= 0 {
+			growth = "而这里它根本没长——这个模型的所有范数都是零，没有比值可说"
+		}
 		misconception(c,
 			"「残差是加法，所以每加一次，数值就更大一点」",
 			// %.0f is wrong for a model whose residual stream is short: random weights put inMean
@@ -1039,10 +1057,10 @@ func (a *App) stageResidual(c *ui.Context) {
 			// as "it barely moved" immediately before the same sentence says "约 2.8 倍，而且每一层
 			// 都在变大". Scale the precision to the number.
 			fmt.Sprintf("残差流确实会一路变长：各位置平均 ‖x‖ 从块输入处的 %s 长到最后一层输出的 %s，"+
-				"约 %.1f 倍，而且每一层都在变大。但每个子层之前都先做 LayerNorm，"+
+				"%s。但每个子层之前都先做 LayerNorm，"+
 				"它的输出长度几乎是常数：√d_model = %.2f，实测所有行落在 %.2f–%.2f，也就是 %.0f%%–%.0f%%。"+
 				"所以子层看到的输入幅度始终稳定，一路膨胀的只是「原始信息」那条旁路本身。",
-				normText(inMean), normText(outMean), outMean/inMean,
+				normText(inMean), normText(outMean), growth,
 				pin, lnLo, lnHi, 100*lnLo/pin, 100*lnHi/pin))
 	})
 }
