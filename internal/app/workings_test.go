@@ -1374,13 +1374,27 @@ func TestScoreStageLegendStatesTheRealScale(t *testing.T) {
 // times inside the threshold. That is the property the whole workings feature rests on — a
 // reader who redoes the line by hand must land on the printed result.
 func TestPrintedArithmeticClosesAcrossTheControls(t *testing.T) {
+	// Read the line out of the frame and redo its multiplication from those digits. The first
+	// version of this test computed p.Dot*scale against p.Score from the model's floats, which
+	// is the arithmetic before formatting — measured: restoring the four-decimal divisor, the
+	// defect two rounds back, left it green. Its comment also claimed "the worst gap ... is
+	// 2.6e-07, four thousand times inside the threshold", a figure that says the threshold was
+	// far too wide to be measuring anything.
+	//
+	// The controls are the point of this test, so they stay: every prompt, layer, head and token
+	// the reader can select.
+	re := regexp.MustCompile(`score = 点积 / √\d+ = (-?[0-9.]+) × ([0-9.]+) = (-?[0-9.]+)`)
 	worst, where := 0.0, ""
+	checked := 0
 	for _, prompt := range []string{
 		"The transformer reads the tokens and",
 		"注意力就是加权求和",
 		"hi",
 		"a",
 	} {
+		n := newTestApp(t)
+		n.Prompt = prompt
+		n.recompute()
 		for _, layer := range []int{0, 1} {
 			for _, head := range []int{0, 1, 2, 3} {
 				a := newTestApp(t)
@@ -1389,33 +1403,56 @@ func TestPrintedArithmeticClosesAcrossTheControls(t *testing.T) {
 				a.Step = 2
 				a.Layer = layer
 				a.Head = head
-				n := len(a.Trace.Tokens)
-				if n == 0 {
+				if len(a.Trace.Tokens) == 0 {
 					continue
 				}
-				scale := float64(float32(1 / math.Sqrt(float64(a.Trace.Config.DHead()))))
-				for token := 0; token < n && token < 4; token++ {
+				for token := 0; token < len(a.Trace.Tokens) && token < 4; token++ {
 					a.SelToken = token
-					h := a.layer().Heads[a.Head]
-					q, k := token, token/2
-					if q >= len(h.Q) || k >= len(h.K) {
-						continue
-					}
-					p := computeScore(h.Q[q], h.K[k], a.Trace.Config.DHead(), h.Scores[q][k])
-					if g := math.Abs(p.Dot*scale - p.Score); g > worst {
-						worst = g
-						where = fmt.Sprintf("prompt %q, layer %d, head %d, token %d",
-							prompt, layer, head, token)
+					a.KeyQ, a.KeyK = token, token/2
+					tr := ui.NewTester(a.View, 1500, 2400)
+					tr.Frame()
+					for _, line := range tr.Texts() {
+						m := re.FindStringSubmatch(line)
+						if m == nil {
+							continue
+						}
+						dot, err1 := strconv.ParseFloat(m[1], 64)
+						factor, err2 := strconv.ParseFloat(m[2], 64)
+						shown, err3 := strconv.ParseFloat(m[3], 64)
+						if err1 != nil || err2 != nil || err3 != nil {
+							t.Fatalf("cannot parse %q", line)
+						}
+						checked++
+						if g := math.Abs(dot*factor - shown); g > worst {
+							worst = g
+							where = fmt.Sprintf("prompt %q, layer %d, head %d, token %d",
+								prompt, layer, head, token)
+						}
+						break
 					}
 				}
 			}
 		}
 	}
-	if worst > 1e-3 {
+	if checked < 8 {
+		t.Fatalf("only %d score lines were read; the controls sweep is not reaching the block",
+			checked)
+	}
+	// The bound is derived from the printed precision, not picked as a small number.
+	//
+	// The score prints at four decimals, so it carries up to 5e-5 of quantisation on its own.
+	// The factor prints at six, contributing |dot| × 5e-7 — for the largest dot this model
+	// produces, about 20, that is another 1e-5. The maximum a correct line can show is therefore
+	// near 6e-5, and the measured worst across 65 lines is 5.84e-5, with the true value
+	// explained: "hi" on layer 1 head 0 at token 1.
+	//
+	// A four-decimal factor, the defect this guards, produced 2.8e-4 on the default prompt —
+	// several times the bound below, and several times what any correct line can reach.
+	if worst > 1e-4 {
 		t.Fatalf("the printed score line is off by %.2e at %s; a reader redoing it would "+
 			"not land on the printed result", worst, where)
 	}
-	t.Logf("worst gap %.2e at %s", worst, where)
+	t.Logf("%d lines read, worst gap %.2e at %s", checked, worst, where)
 }
 
 // TestWorkingsLinesDoNotRunTwoSignsTogether checks the two lines that subtract a quantity

@@ -6,6 +6,15 @@
 
 ### Added
 
+- **`TestPrintedArithmeticClosesAcrossTheControls` 是同一个病的上一层：名字说「跨控件检验打印出来的算术」，实际算的还是模型里的 float。** 上一轮刚把它的兄弟 `worstPrintedScoreGap` 改成读渲染帧，这一条漏了
+  - 实测：把除数格式化改回四位，这条**照样绿**。而它自己的注释还写着「实测最坏 2.6e-07，比阈值小四千倍」——**那句话本身就是阈值太宽的证词**：真有 2.6e-07 的偏差，`1e-3` 根本没在测东西
+  - 改法：从渲染帧正则解析那一行再乘。**扫过 4 提示词 × 2 层 × 4 头 × 4 token，读到 65 行**
+  - 改完立刻报出 **5.84e-5** 的差距——先当作缺陷查，结果发现是**可解释的**：score 印四位（量化误差 ≤5e-5），因数印六位（|dot|×5e-7，dot 最大约 20 再加 1e-5），合计上限约 6e-5，与实测 5.84e-5 吻合
+  - 所以阈值取 **1e-4**，并且**从打印精度推导**而不是拍一个小数：四位因数那个真缺陷给出 **1.52e-3**，与合法残差差 26 倍，界限清楚
+  - 破坏性验证：改回四位除数 → `the printed score line is off by 1.52e-03 at prompt "The transformer reads the tokens and", layer 1, head 2, token 3`
+  - 顺带核了剩下三处 `1e-3` 阈值（概率和、列和、LayerNorm 均值）：都是多项 float32 累加，`1e-3` 对它们合适，未动
+  - **这是连续第六轮「守卫没读它保护的东西」，也是第一次把阈值改成「从精度推导」而不是「改成更小的数」**
+
 - **`TestPrintedScoreLineRecomputes` 等一系列「Printed」测试从来没读过打印出来的字。** 五个 `TestPrinted*` 与 `worstPrinted*Gap` 辅助函数全部只比对**模型里的 float 值**（`p.Dot`、`p.Score`），注释里却写着「the block prints …」
   - 实测：把除数格式化改回四位（上一轮修的缺陷），`TestPrintedScoreLineRecomputes` **照样绿**——它测的是格式化之前的算术
   - 改法：`worstPrintedScoreGap` 改成**从渲染帧里正则解析出那一行**再乘一遍。实测解析可行：`-11.0839 × 0.204124 = -2.2625`，乘出来 `-2.262490`，差 1e-5
