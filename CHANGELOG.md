@@ -6,6 +6,13 @@
 
 ### Added
 
+- **把上一轮新增的 `TestWheelCountClearsTheTallestStage` 并进了 `TestEveryStageCanBeScrolledToItsEnd`。** 两者都要把七个阶段在两个窗口尺寸下各滚一遍，重复了整整一套滚动动画
+  - 合并方式：滚动测试本来就在遍历每个阶段，顺手记录最高的 `MaxY`，循环结束后断言「八次 400 DIP 足够、六次也够」。删掉独立测试
+  - 断言强度不变，破坏性验证通过：把轮数改成 1 → `the tallest stage (1180x720 step 5, MaxY 1805) needs 4.5 wheels of 400 DIP; this test drives 8, so it would stop short`
+  - **收益要如实写**：被删的测试单独跑是 6.20s，但套件总时长只从 213.7s 降到 211.2s（**2.5s**）。差值大概是运行间波动，也可能有缓存预热被共用了。**可确信的是那个断言现在不额外花钱了**，上限是 6.2s
+  - 这轮原本想去动「app 套件 211s ÷ CI 超时 300s」这个余量，实测各测试耗时后确认：最慢的是 `TestEveryStageCanBeScrolledToItsEnd` 21.6s、`TestClickableChipsGiveHoverFeedback` 16.9s、`TestEveryLegalConfigRendersEveryStage` 14.2s，都是**内容本身决定的**，没有明显的空转可削。**结论是余量问题不该靠删测试解决**，该由用户决定是否调 CI 超时
+  - 顺带核了 `CONTRIBUTING.md` 的「`just check` 约 3.5 分钟」：实测 211s = 3.52 分钟，**准确**
+
 - **上一轮的正向检查「README 数字能否在界面上复现」命中一个假警报，但查证过程修掉了第 34 轮我自己的一个错误判断。**
   - README 与源码注释都写着色阶「第 0 层 4.6–12.5、第 1 层 8.1–15.2」。我用 8 个提示词重量得 0.6–10.4 / 1.7–17.8，据此改 README——**结果被已有测试 `TestScoreColourRangeMatchesTheDocumentedFigures` 拦住**（它硬编码 4.6/12.5、8.1/15.2 并要求 README 必须含这几个字）
   - 用**同一提示词集**（`promptPresets`：英文、中文、长提示词、空）重测，结果正是 **4.6–12.5 / 8.1–15.2**。**两个测量都对，量的是不同提示词集**

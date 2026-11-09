@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -20,6 +21,11 @@ const (
 // every stage and window size. Find returns layout coordinates that do not shift
 // with the scroll, so the offset is the honest measurement here.
 func TestEveryStageCanBeScrolledToItsEnd(t *testing.T) {
+	// The margin check that used to live in a separate test is collected here instead: this one
+	// already wheels every stage at both sizes, so repeating the sweep cost six more seconds of
+	// scroll animation for the same numbers.
+	const perWheel = 400
+	tallest, tallestWhere := float32(0), ""
 	for _, size := range []struct{ w, h int }{{1180, 720}, {1500, 940}} {
 		for step := 0; step < 7; step++ {
 			a := newTestApp(t)
@@ -37,9 +43,9 @@ func TestEveryStageCanBeScrolledToItsEnd(t *testing.T) {
 			//
 			// The MaxY figure here was 1777 and drifted to 1805 as cards gained content. Six
 			// steps of 400 still clear it, so the choice of eight was never wrong — but nothing
-			// was watching the number that justifies the choice. TestWheelCountClearsTheTallestStage
-			// below checks the margin rather than the figure, since a card that grows past eight
-			// wheels is the failure that matters.
+			// was watching the number that justifies the choice. The margin is asserted at the
+			// end of this test rather than in a separate one, since this sweep already has the
+			// numbers and a second sweep only repeats the scroll animation.
 			for i := 0; i < 8; i++ {
 				tr.Wheel(600, 400, 0, 400)
 				tr.Advance(2e9)
@@ -54,6 +60,10 @@ func TestEveryStageCanBeScrolledToItsEnd(t *testing.T) {
 				t.Fatalf("%dx%d step %d: wheeled to %.0f of a possible %.0f, so the end of the "+
 					"stage is unreachable", size.w, size.h, step+1, forward, a.Scroll.MaxY)
 			}
+			if a.Scroll.MaxY > tallest {
+				tallest = a.Scroll.MaxY
+				tallestWhere = fmt.Sprintf("%dx%d step %d", size.w, size.h, step+1)
+			}
 			// Scrolling back up returns to the top, so the offset is a real
 			// position and not a one-way ratchet.
 			for i := 0; i < 8; i++ {
@@ -67,6 +77,18 @@ func TestEveryStageCanBeScrolledToItsEnd(t *testing.T) {
 			}
 		}
 	}
+	// The eight wheels above have to clear the tallest stage with room to spare. Asserting the
+	// margin rather than the MaxY figure keeps a card that gains a line from failing the test:
+	// what matters is that the stage still fits inside the wheels used.
+	if float32(8*perWheel) < tallest+perWheel/2 {
+		t.Fatalf("the tallest stage (%s, MaxY %.0f) needs %.1f wheels of %d DIP; this test drives "+
+			"8, so it would stop short", tallestWhere, tallest, float64(tallest)/perWheel, perWheel)
+	}
+	if float32(6*perWheel) < tallest {
+		t.Fatalf("the comment says six 400-DIP steps reach the tallest stage, but %s needs %.0f",
+			tallestWhere, tallest)
+	}
+	t.Logf("tallest stage: %s, MaxY %.0f", tallestWhere, tallest)
 }
 
 // TestMinimumWindowStillScrolls checks the tightest supported window: 1180x720 is
@@ -224,55 +246,4 @@ func TestRailScrollsToItsLastToken(t *testing.T) {
 		t.Fatalf("the rail did not scroll horizontally for a %d-token prompt "+
 			"(stayed at %.0f)", n, a.RailScroll.X)
 	}
-}
-
-// TestWheelCountClearsTheTallestStage checks the scroll margin rather than the MaxY figure.
-//
-// The comment above TestEveryStageCanBeScrolledToItsEnd justifies its eight wheels with a
-// measurement: the tallest stage needs six 400-DIP steps. That figure was quoted as "stage 5,
-// MaxY 1777" and had drifted to 1805 as cards gained content — the number was wrong while the
-// conclusion it supported was still right, which is exactly why it went unnoticed.
-//
-// Asserting the margin instead of the number is deliberate. A specific MaxY would fail every time
-// a card gains a line, which trains a reader to update the constant without asking whether the
-// choice still holds. What matters is that the tallest stage fits inside the wheels used.
-func TestWheelCountClearsTheTallestStage(t *testing.T) {
-	const wheels, perWheel = 8, 400
-	tallest, tallestStep := float32(0), 0
-	// Only the smallest window: a taller one has a larger viewport and therefore a smaller
-	// MaxY, so the margin is set here. Measuring both sizes doubled this test's time, most of
-	// which is the scroll animation, for a comparison that cannot fail on the larger one.
-	const w, h = 1180, 720
-	for step := 0; step < len(lessons); step++ {
-		a := newTestApp(t)
-		a.Step = step
-		tr := ui.NewTester(a.View, w, h)
-		tr.Frame()
-		tr.Move(600, 400)
-		tr.Frame()
-		for i := 0; i < wheels; i++ {
-			tr.Wheel(600, 400, 0, perWheel)
-			tr.Advance(2e9)
-		}
-		tr.Frame()
-		if a.Scroll.MaxY > tallest {
-			tallest, tallestStep = a.Scroll.MaxY, step+1
-		}
-	}
-	if tallest == 0 {
-		t.Fatal("no stage reported a scroll extent; the measurement is not reaching the stage area")
-	}
-	// Half a wheel of slack: the point is a comfortable margin, not an exact fit.
-	if float32(wheels*perWheel) < tallest+perWheel/2 {
-		t.Fatalf("the tallest stage (step %d, MaxY %.0f) needs %.1f wheels of %d DIP; the scroll "+
-			"test drives %d, so it would stop short — raise the count there and update this margin",
-			tallestStep, tallest, float64(tallest)/perWheel, perWheel, wheels)
-	}
-	// And the claim in that comment: six 400-DIP steps reach the tallest stage.
-	if float32(6*perWheel) < tallest {
-		t.Fatalf("the comment above TestEveryStageCanBeScrolledToItsEnd says six 400-DIP steps "+
-			"reach the tallest stage, but step %d has MaxY %.0f", tallestStep, tallest)
-	}
-	t.Logf("tallest stage: step %d, MaxY %.0f, inside %d wheels of %d",
-		tallestStep, tallest, wheels, perWheel)
 }
