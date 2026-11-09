@@ -54,16 +54,19 @@ test:
     go vet ./...
     go test ./...
 
-# 本地门槛：gofmt 检查 + vet + 测试。CI 另外跑 go mod tidy 检查、
-# internal/model 的 -race、以及 GOEXPERIMENT=simd —— 想一次对齐跑 just check-ci
+# CI 另外跑 go mod tidy 检查、internal/model 的 -race、以及 GOEXPERIMENT=simd；
+# 想一次对齐全部就跑 just check-ci。
+
+# 本地门槛：gofmt 检查 + vet + 测试
 check:
     @files="$(gofmt -l .)"; if [ -n "$files" ]; then echo "未格式化："; echo "$files"; exit 1; fi
     go vet ./...
     go test ./...
 
-# CI 的全部检查，逐条对应 .github/workflows/ci.yml。比 check 慢大约一分钟
-# （SIMD 一遍要重跑整个测试集），所以两者分开：日常提交用 check，动到模块依赖、
-# 并发或 SIMD 内核时用这个，避免「本地全绿、CI 变红」。
+# 比 check 多三到四分钟：SIMD 那一步要把整个测试集（含 internal/app 的两百秒）再跑一遍。
+# 两者分开是有意的——日常提交用 check，动到模块依赖、并发或 SIMD 内核时用这个。
+
+# CI 的全部检查，逐条对应 .github/workflows/ci.yml
 check-ci: check
     go mod tidy
     git diff --exit-code -- go.mod go.sum
@@ -78,8 +81,9 @@ fmt:
 bench:
     go test ./internal/model ./internal/app -run '^$' -bench . -benchmem -count 5
 
-# 复现 README「性能」一节引用的数字（单核 / 4 核，标量与 SIMD）。
 # 上面那个 bench 用机器默认 GOMAXPROCS（这台 128），量与 README 引用的不是同一组条件。
+
+# 复现 README「性能」一节引用的数字（单核 / 4 核，标量与 SIMD）
 bench-cores:
     just _bench-cores ""
     just _bench-cores "GOEXPERIMENT=simd"
@@ -122,20 +126,21 @@ snapshots dir="/tmp/llm-lab-shots":
     RENDER=1 RENDER_DIR="{{dir}}" go test ./internal/app -run 'TestRenderSteps|TestRenderSizes' -count=1
     @echo "截图已写入 {{dir}}（$(ls {{dir}}/*.png | wc -l) 张）"
 
+# 它们是仓库资产，不是每次运行现生成的，所以界面变了没人更新——第 229 轮发现六张全在
+# 展示一个已经不存在的界面：侧栏从 0 编号、没有数据流卡片、没有常见误解块。
+# TestDocsImagesAreCurrent 会在忘记时变红。
+
 # 重新生成 README 引用的 6 张截图（写进 docs/）
-#
-# 它们是仓库资产，不是每次运行现生成的，所以界面变了没人更新——第 229 轮发现六张
-# 全在展示一个已经不存在的界面：侧栏从 0 编号、没有数据流卡片、没有常见误解块。
-# 改完界面后跑一次这个。
 docs:
     RENDER_DOCS=1 go test ./internal/app -run TestRenderDocs -count=1
     @echo "docs/ 已更新（$(ls docs/*.png | wc -l) 张）"
 
 # 与另一份截图逐字节对比：just snapshots-diff <基线目录> [新目录]
-#
 # 改界面时先说清楚预期：不改变视觉的改动应当 0 差异，故意改视觉的应当只差在
-# 动手的那几个阶段。两者都靠这个配方核对，比手写 cmp 循环可靠——手写时漏掉
-# 一张、或者把空目录当基线（会误报「全部变化」）都不会有人发现。
+# 动手的那几个阶段。两者都靠这个配方核对，比手写 cmp 循环可靠——手写时漏掉一张、
+# 或者把空目录当基线（会误报「全部变化」）都不会有人发现。
+
+# 对比两次截图，逐张报告变化
 snapshots-diff base new="/tmp/llm-lab-shots":
     #!/usr/bin/env bash
     if [ ! -d "{{base}}" ]; then echo "基线目录不存在：{{base}}"; exit 1; fi

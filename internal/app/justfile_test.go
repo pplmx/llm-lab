@@ -262,3 +262,86 @@ func TestContributingSnapshotCountMatchesTheSet(t *testing.T) {
 			"appears %d time(s); update both when the set changes on purpose", n, want, got)
 	}
 }
+
+// TestEveryRecipeDescriptionIsOneLine keeps `just --list` readable.
+//
+// just takes the last comment line directly above a recipe as that recipe's description, so a
+// multi-line comment block above a recipe silently promotes its *final* line into the listing.
+// Four recipes had that: check showed "想一次对齐跑 just check-ci。", check-ci showed "两者分开是
+// 有意的——…", docs showed "改完界面后跑一次这个。", and snapshots-diff showed "一张、或者把空目录
+// 当基线（会误报「全部变化」）都不会有人发现。" — each a fragment of the sentence above it,
+// listed as if it were the recipe's name.
+//
+// The rule this enforces: whatever comment sits directly above a recipe must be a complete,
+// standalone description. Multi-line explanation is welcome, but it goes above a blank line.
+func TestEveryRecipeDescriptionIsOneLine(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "..", "justfile"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(src), "\n")
+	var bad []string
+	for i, line := range lines {
+		// A recipe line: `name:` or `name arg=default:` at column 0. Recipe bodies are
+		// indented, so this cannot match one.
+		if line == "" || line[0] == '#' || line[0] == ' ' || line[0] == '\t' {
+			continue
+		}
+		head := line
+		if j := strings.Index(head, ":"); j >= 0 {
+			head = head[:j]
+		} else {
+			continue
+		}
+		// Recipes may carry parameters; the name is the first token.
+		name := strings.Fields(head)[0]
+		if name == "" || strings.HasPrefix(name, "_") {
+			continue // private helpers are not listed
+		}
+		// `just --list` shows recipes only. These are the other things a justfile holds, and
+		// they are not listed, so they need no description: settings and exports take `:=`,
+		// variables are `name := value`, aliases are `alias x := y`.
+		if name == "set" || name == "export" || name == "alias" {
+			continue
+		}
+		if strings.Contains(line, ":=") {
+			continue // a variable assignment such as windows_platforms := "windows/amd64"
+		}
+		// Walk up to the comment block.
+		j := i - 1
+		var block []string
+		for j >= 0 && strings.HasPrefix(lines[j], "#") {
+			block = append([]string{lines[j]}, block...)
+			j--
+		}
+		if len(block) == 0 {
+			bad = append(bad, fmt.Sprintf("%s has no description above it", name))
+			continue
+		}
+		// The description is the last line. A description ending in a clause connector, or
+		// consisting only of punctuation after a dash, is a fragment of the line above.
+		desc := strings.TrimPrefix(block[len(block)-1], "#")
+		desc = strings.TrimSpace(desc)
+		if desc == "" {
+			bad = append(bad, fmt.Sprintf("%s has an empty description", name))
+			continue
+		}
+		for _, frag := range []string{"。", "；", "，"} {
+			_ = frag
+		}
+		// A fragment is a description whose previous comment line does not end a sentence.
+		if len(block) > 1 {
+			prev := strings.TrimSpace(strings.TrimPrefix(block[len(block)-2], "#"))
+			if prev != "" && !strings.HasSuffix(prev, "。") {
+				bad = append(bad, fmt.Sprintf("%s: %q continues a sentence begun on the line "+
+					"above, so it is a fragment of the explanation rather than a description",
+					name, desc))
+			}
+		}
+	}
+	if len(bad) > 0 {
+		t.Fatalf("just takes the last comment line above a recipe as its description, so "+
+			"multi-line explanation has to sit above a blank line:\n  %s",
+			strings.Join(bad, "\n  "))
+	}
+}

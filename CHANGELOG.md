@@ -6,6 +6,13 @@
 
 ### Added
 
+- **`just --list` 里四条 recipe 的说明是半句话——其中一条是我自己在第 17 轮改出来的。** `just` 取 recipe 上方**最后一行**注释当说明，所以我给 `bench-cores` 写多行注释时，被取走的是解释的最后一句
+  - 四条分别是：`check` → 「想一次对齐跑 just check-ci。」、`check-ci` → 「两者分开是有意的——…」、`docs` → 「改完界面后跑一次这个。」、`snapshots-diff` → 「一张、或者把空目录当基线（…）都不会有人发现。」——每一句都是上面那句的尾巴，却被当成 recipe 的名字列出来
+  - 改法：短的说明放在紧贴 recipe 的那一行，长解释挪到上面、用空行隔开。24 条 recipe 现在每条读起来都是一句完整的话
+  - `TestEveryRecipeDescriptionIsOneLine` 钉住这条规则：紧贴 recipe 的注释必须是完整说明；若它上面还有注释且上一行不以「。」结尾，就判为「上一句的碎片」。守卫只针对 `just --list` 会列出的 recipe——`set` / `export` / `alias` / `变量赋值` 不列出，跳过
+  - 破坏性验证：把 `check` 的多行注释放回去，`just --list` 立刻显示那半句，守卫报 `check: "internal/model 的 -race、…" continues a sentence begun on the line above`
+  - **这条和第 17 轮是同一处改动的前后两半**：那轮我加 `bench-cores` 时引入了这个回归，当时没发现，因为验收只看「recipe 能不能跑」而不看「说明读不读得通」
+
 - **`TestEveryStageCanBeScrolledToItsEnd` 从来没检查过「滚到末尾」。** 它只断言 `Scroll.Y >= 0`——这一条在柱子卡在顶部时同样成立——以及回滚后回到 0
   - 实测每个阶段确实精确到达 `MaxY`（7 个阶段全部 `Scroll.Y == MaxY`，如 stage 5 的 1777），所以这个弱断言**从没被问过一个它可以失败的问题**
   - 改成 `forward != a.Scroll.MaxY` 就报错。演示差别：若柱子只滚到一半（889 / 1777），旧断言 `889 >= 0` 通过，新断言 `889 != 1777` 失败
