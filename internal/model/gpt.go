@@ -47,6 +47,16 @@ type Trace struct {
 }
 
 // Forward runs the model over ids and records every stage.
+//
+// Each id is a byte and must be in 0..255. The conversion below is `byte(id)`, which silently
+// wraps anything outside that range rather than failing: measured, 256 becomes token 0, 999
+// becomes 231, and -1 becomes 255. Nothing panics, so a caller passing a vocabulary id from some
+// other tokenizer gets a plausible-looking trace of the wrong bytes.
+//
+// Every current caller builds its ids from []byte, so the range always holds. The truncation is
+// kept as-is because a bounds check would fire on the middle of a forward pass, where there is no
+// useful way to report it — but the contract is written down here instead of being implied by the
+// call sites.
 func Forward(w *Weights, ids []int) *Trace {
 	c := w.Config
 	d, dh := c.DModel, c.DHead()

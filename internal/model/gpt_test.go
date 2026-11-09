@@ -425,3 +425,33 @@ func TestUnembedDiffersPerPosition(t *testing.T) {
 // defaultTestPrompt is the prompt the app opens with, repeated here so the model
 // package's tests do not import the app package (which would be a cycle).
 const defaultTestPrompt = "The transformer reads the tokens and"
+
+// TestForwardWrapsOutOfRangeIDsRatherThanFailing pins the documented id contract.
+//
+// Forward converts each id with byte(id). Out-of-range values therefore wrap instead of failing:
+// measured, 256 becomes token 0, 999 becomes 231 and -1 becomes 255. Every caller builds ids from
+// []byte so the range always holds, but the wrapper is silent, and a caller handing over ids from
+// another tokenizer would get a well-formed trace of the wrong bytes with nothing to indicate it.
+//
+// This test exists so the behaviour is a recorded decision rather than a surprise: if the
+// conversion ever changes to a bounds check, this fails and the doc comment above Forward has to
+// change with it.
+func TestForwardWrapsOutOfRangeIDsRatherThanFailing(t *testing.T) {
+	w, err := Bundled()
+	if err != nil {
+		t.Skip("no bundled weights")
+	}
+	for _, tc := range []struct{ in, want int }{
+		{256, 0}, {257, 1}, {999, 231}, {-1, 255},
+	} {
+		tr := Forward(w, []int{tc.in})
+		if tr == nil || len(tr.Tokens) != 1 {
+			t.Fatalf("Forward(%d) produced no token", tc.in)
+		}
+		if got := tr.Tokens[0].ID; got != tc.want {
+			t.Fatalf("Forward(%d) produced token id %d; the documented wrapping gives %d. If this "+
+				"became a bounds check, update the comment on Forward, which says out-of-range ids "+
+				"wrap silently", tc.in, got, tc.want)
+		}
+	}
+}
