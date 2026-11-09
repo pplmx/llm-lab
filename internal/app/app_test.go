@@ -7841,7 +7841,7 @@ func TestStatusLineHasThreeStates(t *testing.T) {
 	}
 
 	normal := statusOf("hi")
-	if !strings.Contains(normal, "2 tokens") || !strings.Contains(normal, "前向完成") {
+	if !strings.Contains(normal, "2 个 token") || !strings.Contains(normal, "前向完成") {
 		t.Fatalf("a two-token prompt reports %q", normal)
 	}
 
@@ -8431,7 +8431,8 @@ func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 		1: {"I-", "H-", "-\\x", "右边那条色带每一格是一个维度", "这张表里没有这回事"},
 		// the per-weights attention description, and the four-head comparison verdict,
 		// which reads "差别明显" for one weight set and "很接近" for another
-		3: {"第 # 层的头 #", "四个头差别明显", "四个头在这一层上很接近", "这里换两个能区分行为的量"},
+		3: {"第 # 层的头 #", "四个头差别明显", "四个头在这一层上很接近", "这里换两个能区分行为的量",
+			"这里换两个能区分行为的量"},
 		// gamma and beta learned versus identity, plus the logit lens ladder: it
 		// describes what these particular weights say at each depth, so every one of
 		// its sentences moves with them — which rungs agree with the final answer,
@@ -8646,7 +8647,11 @@ func TestProseDiffersAcrossPromptLengthsOnlyWhereDesigned(t *testing.T) {
 			// The head-independence card needs a second position to compare any two heads
 			// over; with one token it draws nothing.
 			"四个头说的是同一件事吗", "不是彼此的副本", "两两之间最大的平均余弦",
-			"这里换两个能区分行为的量", "前一位权重", "押注超过半数"},
+			"这里换两个能区分行为的量", "前一位权重", "押注超过半数",
+			// A one-token prompt has no row 1, so the entropy note says that rather than
+			// pointing there. The diff runs both ways — the long prompt's version is reported
+			// as missing from the short set — so both forms are listed.
+			"没有第 # 行", "从第 # 行起才有可比较的分配"},
 		// Confidence follows maxP; the last-position note appears only when the selected token is
 		// not the last one, which a one-token prompt makes impossible.
 		// The per-position card needs two tokens to have anything to check; a one-token prompt gets

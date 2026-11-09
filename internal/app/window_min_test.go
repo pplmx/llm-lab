@@ -472,7 +472,7 @@ func TestSidebarSurvivesALongWeightsPath(t *testing.T) {
 			switch {
 			case strings.HasPrefix(s, "权重："):
 				weightsRect, sawWeights = tr.Find(s)
-			case strings.Contains(s, "tokens ·"):
+			case isStatusLine(s):
 				statusRect, sawStatus = tr.Find(s)
 			}
 		}
@@ -491,4 +491,18 @@ func TestSidebarSurvivesALongWeightsPath(t *testing.T) {
 				size.w, size.h, statusRect.Y+statusRect.H, size.h)
 		}
 	}
+}
+
+// isStatusLine recognises the sidebar's status line in its three shapes: a truncated prompt, a
+// normal forward pass, and the empty prompt. Matching on "token ·" alone also caught the shortcut
+// hint's "Shift+← → 切换 token · 空格 …", which pushed a different line into the assertion —
+// measured: the test reported the status line at y=907 with zero height.
+func isStatusLine(s string) bool {
+	if strings.HasPrefix(s, "还没有提示词 ·") {
+		return true
+	}
+	if !strings.Contains(s, " 个 token ·") && !strings.Contains(s, "个 token ·") {
+		return false
+	}
+	return strings.Contains(s, "层 ×") && strings.Contains(s, "头")
 }

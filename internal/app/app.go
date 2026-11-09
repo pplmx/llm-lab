@@ -325,7 +325,11 @@ func (a *App) recompute() {
 	case len(a.Prompt) > a.W.Config.Ctx:
 		a.Status = fmt.Sprintf("已截断到最近 %d 个 token · %d 层 × %d 头", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
 	default:
-		a.Status = fmt.Sprintf("%d tokens · %d 层 × %d 头 · 前向完成", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
+		// "%d 个 token" rather than "%d tokens". The rest of the line is Chinese and counts in
+		// measure words ("2 层 × 4 头"), and the English plural was wrong for the one case a
+		// reader is most likely to land on: a single-token prompt rendered "1 tokens". Measured
+		// on prompt "a".
+		a.Status = fmt.Sprintf("%d 个 token · %d 层 × %d 头 · 前向完成", len(ids), a.W.Config.NLayer, a.W.Config.NHead)
 	}
 }
 

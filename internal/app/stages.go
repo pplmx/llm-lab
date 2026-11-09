@@ -2042,8 +2042,16 @@ func (a *App) inspectorAttention(c *ui.Context, tr *model.Trace) {
 		// chart is four empty bars against a log(1) = 0 scale. State the reason instead of
 		// drawing it: the causal mask, not the model, is what makes this row trivial.
 		if i == 0 {
-			mutedText(c, fmt.Sprintf("第 0 行只能看到它自己，%s头的熵必然都是 0——从第 1 行起才有可比较的分配。",
-				headsWord(len(a.Trace.Layers[0].Heads))))
+			// With a one-token prompt there is no row 1, so sending the reader there points at
+			// something that can never exist. Measured on prompt "a": the note still said "从第
+			// 1 行起才有可比较的分配" while the whole trace was a single row.
+			note := fmt.Sprintf("第 0 行只能看到它自己，%s头的熵必然都是 0——从第 1 行起才有可比较的分配。",
+				headsWord(len(a.Trace.Layers[0].Heads)))
+			if len(tr.Tokens) == 1 {
+				note = "第 0 行只能看到它自己，所以熵必然是 0。这个提示词只有一个 token，" +
+					"没有第 1 行——熵和头与头的比较都要再多几个字才谈得上。"
+			}
+			mutedText(c, note)
 			return
 		}
 		// The four heads are a segmented control above the stage, and switching
