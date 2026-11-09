@@ -2372,8 +2372,21 @@ func (a *App) stageHeadProfiles(c *ui.Context) {
 			}
 		}
 		spread := hi - lo
-		verdict := fmt.Sprintf("四个头在这一层上很接近（%.0f%%–%.0f%%），看不出分工——"+
-			"换到第 0 层看看，那里的头差别明显得多", 100*lo, 100*hi)
+		// The advice names a layer to switch to, so it has to know which layer the reader is
+		// already on. Saying "换到第 0 层" while showing layer 0 asks them to go where they
+		// already are — measured on prompt "ab", whose layer 0 spread is 75%-92%, comfortably
+		// under the 0.2 threshold that selects this branch. On the first layer there is no
+		// further layer to point at, so the card says what the flat spread means instead of
+		// sending the reader somewhere.
+		var verdict string
+		if a.Layer == 0 {
+			verdict = fmt.Sprintf("四个头在这一层上很接近（%.0f%%–%.0f%%），看不出分工。"+
+				"第 0 层就是第一层，再往下没有可比的层——所以这里不是「还没看够」，"+
+				"而是这一层的四个头确实在做同一件事的不同强度版本", 100*lo, 100*hi)
+		} else {
+			verdict = fmt.Sprintf("四个头在这一层上很接近（%.0f%%–%.0f%%），看不出分工——"+
+				"换到第 0 层看看，那里的头差别明显得多", 100*lo, 100*hi)
+		}
 		if spread >= 0.2 {
 			verdict = fmt.Sprintf("四个头差别明显：%.0f%%–%.0f%%，也就是有的头主要在盯前一个 token、"+
 				"有的在整句里找别的位置——这就是「每个头学到不同的模式」在这份权重里的具体样子",

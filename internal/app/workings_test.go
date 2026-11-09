@@ -4160,3 +4160,68 @@ func TestEmbeddingVerdictFollowsTheMeasurement(t *testing.T) {
 		}
 	}
 }
+
+// TestHeadProfilesAdviceNeverNamesTheCurrentLayer keeps the low-spread verdict from telling the
+// reader to switch to the layer they are already looking at.
+//
+// The verdict has two branches. The wide-spread one describes what the heads are doing. The
+// narrow-spread one used to end "换到第 0 层看看，那里的头差别明显得多" — reasonable when shown
+// on layer 1, which is where the default prompt triggers it, and nonsensical on layer 0, which
+// the default prompt never reaches because its layer 0 spread is wide.
+//
+// Prompt "ab" does reach it: layer 0 measures 75%-92%, well under the 0.2 threshold, so the
+// card said "this layer has no division of labour — switch to layer 0 and look". The existing
+// both-verdicts test could not see this, because it only ever renders the default prompt and
+// only ever expects "差别明显" on layer 0.
+//
+// What is asserted is that on layer 0 the advice names no layer at all, since there is no
+// other layer to point down to. Any wording is allowed; pointing at the current layer is not.
+func TestHeadProfilesAdviceNeverNamesTheCurrentLayer(t *testing.T) {
+	for _, prompt := range []string{"ab", "The transformer reads the tokens and"} {
+		for layer := 0; layer < 2; layer++ {
+			a := newTestApp(t)
+			a.Prompt = prompt
+			a.recompute()
+			a.Step = 3
+			a.Layer = layer
+			tr := ui.NewTester(a.View, 1500, 3000)
+			tr.Frame()
+
+			var verdict string
+			for _, s := range tr.Texts() {
+				if strings.Contains(s, "看不出分工") {
+					verdict = s
+				}
+			}
+			if verdict == "" {
+				continue // this prompt/layer renders the wide-spread branch
+			}
+			selfRef := fmt.Sprintf("换到第 %d 层", layer)
+			if strings.Contains(verdict, selfRef) {
+				t.Fatalf("%q layer %d: the card tells the reader to switch to layer %d while "+
+					"showing layer %d:\n%s", prompt, layer, layer, layer, verdict)
+			}
+		}
+	}
+
+	// And the branch has to exist to be tested: prompt "ab" at layer 0 must render the
+	// narrow-spread verdict, or this test is vacuous.
+	a := newTestApp(t)
+	a.Prompt = "ab"
+	a.recompute()
+	a.Step = 3
+	a.Layer = 0
+	tr := ui.NewTester(a.View, 1500, 3000)
+	tr.Frame()
+	found := false
+	for _, s := range tr.Texts() {
+		if strings.Contains(s, "看不出分工") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("prompt \"ab\" at layer 0 no longer renders the narrow-spread verdict, so the " +
+			"self-reference this test exists to catch is no longer reachable and the check " +
+			"above proves nothing")
+	}
+}
