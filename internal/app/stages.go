@@ -1275,6 +1275,16 @@ func residualWorkings(c *ui.Context, dim int, steps []residualStep, isLast bool,
 	}
 	lines = append(lines, fmt.Sprintf("每一次加法都不覆盖原值，所以层 %d 的输出完整%s", layer, next))
 	workingsLinesCopyable(c, lines)
+	// The lines above are meant to be re-added by hand — that is the whole form of this block —
+	// so the precision has to be stated. Each value is rounded to four decimals, and two of them
+	// re-added from their printed forms do not always give the printed sum: measured over every
+	// dimension of every token and both layers on the default prompt, 3451 of 13824 additions
+	// (25%) disagree in the last digit. Without the note a reader who checks the arithmetic finds
+	// a mismatch one time in four and concludes the app is wrong.
+	//
+	// The FFN workings block already carried this warning; this one, which invites the same
+	// checking more directly, did not.
+	mutedText(c, "各行按四位小数显示，自己相加时末位可能差一两个单位——差额来自四舍五入，不是加法算错了。")
 }
 
 // residualNormMeans returns the mean L2 norm of the residual stream at the block

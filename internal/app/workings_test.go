@@ -4372,3 +4372,46 @@ func TestWeightDerivedTitlesFollowTheLoadedConfig(t *testing.T) {
 			base.Config.DModel, narrow.Config.DModel)
 	}
 }
+
+// TestRoundedArithmeticBlocksSaySo covers the blocks that invite the reader to re-add the numbers.
+//
+// Several cards print a sum broken into terms at four decimals — the residual chain, the FFN
+// output breakdown, the embedding sum — precisely so the reader can follow along. The printed
+// terms do not always re-add to the printed total: each is independently rounded, and measured
+// over every dimension of every token and both layers on the default prompt, 3451 of 13824
+// residual additions (25%) disagree in the last digit. A reader who checks finds a mismatch one
+// time in four.
+//
+// The FFN block had carried a warning since it was written. The residual chain, which invites the
+// same checking more directly by ending on "每一次加法都不覆盖原值", did not — measured: no
+// rounding disclaimer appeared anywhere on the residual stage.
+//
+// The check is on rendered text, and it names each block by a phrase unique to it, so a block
+// that is renamed fails here rather than passing vacuously.
+func TestRoundedArithmeticBlocksSaySo(t *testing.T) {
+	blocks := []struct {
+		step int
+		// anchor is a phrase that appears only in that block's workings.
+		anchor string
+		what   string
+	}{
+		{4, "每一次加法都不覆盖原值", "the residual chain"},
+		{5, "余项是精确补足的和", "the FFN output breakdown"},
+	}
+	for _, b := range blocks {
+		a := newTestApp(t)
+		a.Step = b.step
+		tr := ui.NewTester(a.View, 1500, 4000)
+		tr.Frame()
+		joined := strings.Join(tr.Texts(), "\n")
+		if !strings.Contains(joined, b.anchor) {
+			t.Fatalf("stage %d does not render %q any more, so this test cannot tell whether %s "+
+				"warns about rounding", b.step+1, b.anchor, b.what)
+		}
+		if !strings.Contains(joined, "四位小数") || !strings.Contains(joined, "末位") {
+			t.Fatalf("stage %d shows %s with four-decimal terms and no word about rounding, so a "+
+				"reader who re-adds them finds a mismatch in one case out of four and has no way "+
+				"to know it is the printing", b.step+1, b.what)
+		}
+	}
+}
