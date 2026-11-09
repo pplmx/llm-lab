@@ -6,6 +6,14 @@
 
 ### Added
 
+- **Top-12 卡片「其余 244 个合计」的写法依赖一个没人说过的前提：softmax 不会返回负数。**
+  - 这个数字是**累加**非 top-12 的概率得来的，不是 `1 - sum(top)`。两者在 T=0.1 上有 1e-13 的差：用减法形式会渲染成 **`-0.0000%`**（实测复现）
+  - 累加形式之所以不会印出负号，是因为每个概率都非负——**但这条前提此前既没写下来，也没有测试盯着**
+  - 新增 `TestTop12TailCannotPrintNegative`：在多档温度下断言 softmax 输出非负、且累加和不为负
+  - 破坏性验证：让 `softmaxCopy` 返回一个负值 → 立刻红：`T=0.80: probability 0 is -1.1385036e-19; softmax cannot produce a negative value`
+  - **过程中两次 mutation 没红，都是改错了函数**：`Softmax()` 只是 `softmaxCopy` 的包装，而 `Trace.Probabilities` 直接调 `softmaxCopy`，绕过了 `Softmax`。这正是上一轮写进 CONTRIBUTING 的那条，自己又踩了一次
+- **本轮先做的是「只验证、不改动」的核对，结论记录**：温度极值下三个格式化分支都正常——`0%`（< 1e-9）、科学记数法（< 0.01，默认温度 T=0.80 显示 `1.3e-05%`）、四位小数（T=2.0 显示 `0.2999%`）；Top-12 尾部分布在各温度下都与卡片一致；**没有发现缺陷**
+
 - **本轮没有找到缺陷，但把上一轮的教训坐实了：`TestStageDotHoverDoesNotMoveTheRow` 是对的，我先前两次「测试没红」是自己改错了控件。**
   - 这个测试守的是主面板进度轨的圆点「只许变颜色、不许变宽度」。我先给**侧栏** `stepper()` 加了两次内距，都不红——因为那不是它观察的控件
   - 改成把主面板圆点从 6 DIP 撑到 18 DIP（正是注释里说"reverted"的那个改动）→ 立刻红：`hovering a dot at x=266 redraws the step label region`

@@ -4200,6 +4200,45 @@ func TestTop12StatesTheVocabularySize(t *testing.T) {
 	}
 }
 
+// TestTop12TailCannotPrintNegative checks the invariant behind how the tail is summed.
+//
+// The header's remainder is accumulated from the individual non-top probabilities rather than
+// taken as 1 - sum(top). The difference is not academic: at T = 0.1 the two disagree at 1e-13, and
+// a reader would see "-0.0000%" if the subtraction form were used — measured, and reproducible with
+// `1 - sum(top)` on the default prompt.
+//
+// Accumulating makes the remainder non-negative only because softmax never returns a negative
+// probability. That premise is what keeps "-0%" off the screen, and nothing stated it before.
+func TestTop12TailCannotPrintNegative(t *testing.T) {
+	a := newTestApp(t)
+	for _, temp := range []float64{0.01, 0.05, 0.1, 0.3, 0.8, 1.0, 2.0, 4.0} {
+		a.Temp = temp
+		probs := a.Trace.Probabilities(temp)
+		for id, v := range probs {
+			if v < 0 {
+				t.Fatalf("T=%.2f: probability %d is %v; softmax cannot produce a negative value, "+
+					"and the Top-12 remainder is summed from these, so a negative here would be "+
+					"printed as a negative share", temp, id, v)
+			}
+		}
+		top := model.TopK(probs, 12)
+		inTop := map[int]bool{}
+		for _, id := range top {
+			inTop[id] = true
+		}
+		var rest float32
+		for id, p := range probs {
+			if !inTop[id] {
+				rest += p
+			}
+		}
+		if rest < 0 {
+			t.Fatalf("T=%.2f: the accumulated tail is %v, which the header would print as a "+
+				"negative percentage", temp, rest)
+		}
+	}
+}
+
 // TestTop12TailIsActuallySmall pins the premise of the test above: if the tail
 // were ever a meaningful share, the wording would need to change.
 func TestTop12TailIsActuallySmall(t *testing.T) {
