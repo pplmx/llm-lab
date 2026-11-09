@@ -405,30 +405,69 @@ func TestPrintedResidualChainCloses(t *testing.T) {
 func TestEveryPrintedArithmeticBlockStaysClose(t *testing.T) {
 	// Each entry returns the worst gap between what is printed and what a reader
 	// gets by substituting it.
-	blocks := map[string]func(*testing.T) float64{
-		"score":    worstPrintedScoreGap,
-		"softmax":  worstPrintedSoftmaxGap,
-		"weighted": worstPrintedWeightedGap,
-		"ffn":      worstPrintedFFNGap,
-		"ln":       worstPrintedLNGap,
+	// The tolerance has to fit the block. Two of them are a single product of printed numbers —
+	// score is dot × factor, softmax is numerator ÷ denominator — where a rounding step is the
+	// most that can legitimately appear. The other three re-add several independently rounded
+	// terms, so their residue compounds: measured worst cases are 7.9e-5 for weighted, 1.5e-4 for
+	// ffn and 2.2e-4 for ln, all of them legitimate and all warned about in their own blocks.
+	//
+	// The old single threshold of 1e-3 was loose enough to sit above a full visible digit wrong:
+	// a four-decimal divisor produced a gap of 3e-4 and the test passed. That is the defect an
+	// earlier round fixed by eye, which this test existed to catch and did not.
+	blocks := []struct {
+		name    string
+		measure func(*testing.T) float64
+		tol     float64
+	}{
+		{"score", worstPrintedScoreGap, 5e-5},
+		{"softmax", worstPrintedSoftmaxGap, 5e-5},
+		{"weighted", worstPrintedWeightedGap, 1.5e-4},
+		{"ffn", worstPrintedFFNGap, 3e-4},
+		{"ln", worstPrintedLNGap, 3e-4},
 	}
-	for name, measure := range blocks {
-		if gap := measure(t); gap > 1e-3 {
-			t.Errorf("%s block: the printed arithmetic is off by %.2e, which changes "+
-				"a printed digit", name, gap)
+	for _, b := range blocks {
+		if gap := b.measure(t); gap > b.tol {
+			t.Errorf("%s block: the printed arithmetic is off by %.2e, past the %.1e a reader "+
+				"re-adding the printed digits should have to absorb", b.name, gap, b.tol)
 		}
 	}
 }
 
+// worstPrintedScoreGap reads the score line out of the rendered frame and redoes its
+// multiplication from those digits.
+//
+// It used to compute from the model's own float values instead — p.Dot times scale against
+// p.Score — which is the arithmetic before any formatting. That version stayed green when the
+// divisor was printed at four decimals, the defect an earlier round fixed: the printed line read
+// "-11.0839 × 0.2041 = -2.2625", where the visible numbers multiply to -2.2622, and no test
+// noticed because none of them looked at the text.
+//
+// The name of every test in this family says "printed"; they should mean it.
 func worstPrintedScoreGap(t *testing.T) float64 {
 	t.Helper()
 	a := newTestApp(t)
 	a.Step = 2
-	h := a.layer().Heads[a.Head]
-	q, k := a.SelToken, a.SelToken/2
-	p := computeScore(h.Q[q], h.K[k], a.Trace.Config.DHead(), h.Scores[q][k])
-	scale := float64(float32(1 / math.Sqrt(float64(a.Trace.Config.DHead()))))
-	return math.Abs(p.Dot*scale - p.Score)
+	a.SelToken = 10
+	a.KeyQ, a.KeyK = 10, 4
+	tr := ui.NewTester(a.View, 1500, 4000)
+	tr.Frame()
+
+	re := regexp.MustCompile(`score = 点积 / √\d+ = (-?[0-9.]+) × ([0-9.]+) = (-?[0-9.]+)`)
+	for _, s := range tr.Texts() {
+		m := re.FindStringSubmatch(s)
+		if m == nil {
+			continue
+		}
+		dot, err1 := strconv.ParseFloat(m[1], 64)
+		scale, err2 := strconv.ParseFloat(m[2], 64)
+		shown, err3 := strconv.ParseFloat(m[3], 64)
+		if err1 != nil || err2 != nil || err3 != nil {
+			t.Fatalf("cannot parse the score line %q", s)
+		}
+		return math.Abs(dot*scale - shown)
+	}
+	t.Fatal("the score workings block did not render; the reader has nothing to check")
+	return 0
 }
 
 func worstPrintedSoftmaxGap(t *testing.T) float64 {
