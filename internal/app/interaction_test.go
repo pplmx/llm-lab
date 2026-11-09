@@ -1311,7 +1311,7 @@ func TestHeatmapPointerLandsOnTheDrawnCell(t *testing.T) {
 				t.Fatalf("%dx%d step %d: the heatmap painter did not run", size.w, size.h, step+1)
 			}
 			tokens := len(a.Trace.Tokens)
-			grid := heatmapGrid(r, heatmapGutter, tokens)
+			grid := heatmapGrid(r, heatmapGutter)
 			cw, ch := grid.W/float32(tokens), grid.H/float32(tokens)
 
 			// A spread of cells rather than all of them: enough to catch a shift on

@@ -444,7 +444,7 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 			// requested size: a long prompt makes the box wider than the card,
 			// and the layout shrinks it. Drawing with the requested cell then
 			// silently cut the right-hand columns off the matrix.
-			grid := heatmapGrid(r, gutter, T)
+			grid := heatmapGrid(r, gutter)
 			cw, ch := grid.W/float32(T), grid.H/float32(T)
 			// The masked cells are colPanel at 45% over the card's colPanel,
 			// which is colPanel again, so they paint nothing the card does not
@@ -528,7 +528,7 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 		// cell at all. Every hover and every click-to-pin was off by up to two
 		// cells in both axes, while the inspector printed a plausible-looking
 		// score for whatever cell the pointer "was" on.
-		grid := heatmapGrid(b, gutter, T)
+		grid := heatmapGrid(b, gutter)
 		cw, ch := grid.W/float32(T), grid.H/float32(T)
 		if x, y, ok := el.PointerPosition(); ok {
 			// Relative to the grid, so the label gutter is not a cell.
@@ -587,8 +587,14 @@ var heatmapGutter = ui.Rect{X: 20, Y: 9}
 // heatmapGrid is the rectangle the cells are drawn in: the element's box, less the
 // label gutter. Both the painter and the pointer hit test go through this so they
 // cannot describe different grids.
-func heatmapGrid(box, gutter ui.Rect, cells int) ui.Rect {
-	_ = cells
+// heatmapGrid is the area inside a heatmap's axis-label gutter. The cell size is derived from
+// what this returns, so a box narrower than the card — which a long prompt produces — shrinks the
+// cells instead of clipping the right-hand columns.
+//
+// It used to take a `cells` parameter and discard it. Both call sites passed the token count,
+// which suggested the function did something with it; the division happened at each site instead.
+// Dropping the parameter makes the one job this has visible.
+func heatmapGrid(box, gutter ui.Rect) ui.Rect {
 	return ui.Rect{X: box.X + gutter.X, Y: box.Y + gutter.Y,
 		W: box.W - gutter.X, H: box.H - gutter.Y}
 }
