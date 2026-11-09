@@ -661,14 +661,20 @@ func (a *App) stageScores(c *ui.Context) {
 				// about this matrix: state it, since it moves with the prompt and
 				// with the layer — and nothing else on the stage implies it.
 				//
-				// Measured across eight prompts (the default, "attention is all you need", "hi",
-				// "ab", "a", a Chinese sentence and two long English ones):
+				// Measured across the bundled prompt presets:
 				//
-				//	colour scale 0.6–10.4 on layer 0 and 1.7–17.8 on layer 1
+				//	colour scale 4.6–12.5 on layer 0 and 8.1–15.2 on layer 1
 				//
-				// The figures used to read 4.6 to 12.5 and 8.1 to 15.2, which the weights have
-				// since left behind. TestScoreColorScaleRangeMatchesTheWeights parses the line
-				// above and compares it with a fresh measurement, so the next weight change
+				// These are the same figures the README table quotes, and the same prompt set
+				// the README means by "this model". An earlier attempt measured eight ad-hoc
+				// prompts instead and concluded the documented range was stale; it was not —
+				// a different prompt set simply produces different extremes (0.6–10.4 and
+				// 1.7–17.8 for those eight). Both measurements were correct and only one of
+				// them described what the reader sees, which is why the prompt set is now
+				// stated here and in the test rather than left implicit.
+				//
+				// TestScoreColorScaleRangeMatchesTheWeights parses the line above and compares
+				// it with a fresh measurement over promptPresets, so the next weight change
 				// updates the number rather than leaving a stale figure in a comment.
 				if sc := scoreColorScale(h); sc > 0 {
 					kv(c, "色深上限", fmt.Sprintf("|分数| = %.2f", sc))

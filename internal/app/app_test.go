@@ -9824,17 +9824,13 @@ func TestNoLiteralMarkdownInRenderedText(t *testing.T) {
 // this test and the comment it guards — the two are one fact stated twice, so a failure should
 // say so rather than looking like a regression in the painting.
 func TestScoreColorScaleRangeMatchesTheWeights(t *testing.T) {
-	// The prompt set the comment describes: the default, three short ones, a Chinese sentence
-	// and two long English ones.
-	prompts := []string{
-		"The transformer reads the tokens and",
-		"attention is all you need",
-		"hi",
-		"ab",
-		"a",
-		"注意力就是加权求和",
-		"The quick brown fox jumps over the lazy dog.",
-		"Hello, World! This is a test of the model.",
+	// The prompt set the comment describes, which is the set the README means by "this model":
+	// the four presets the app ships. An earlier version of this test used eight ad-hoc prompts
+	// and concluded the documented range was stale; it was not. Different prompt sets produce
+	// different extremes, so the set is part of the claim.
+	var prompts []string
+	for _, p := range promptPresets {
+		prompts = append(prompts, p.prompt)
 	}
 	lo := map[int]float64{}
 	hi := map[int]float64{}
