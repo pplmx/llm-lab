@@ -247,3 +247,47 @@ func TestRailScrollsToItsLastToken(t *testing.T) {
 			"(stayed at %.0f)", n, a.RailScroll.X)
 	}
 }
+
+// TestWideWindowsUseTheirWidth covers 2560 and 3840, which no other test reaches.
+//
+// Every size list in this package stops at 1920x1080. The heatmap grew from a hard 420-DIP bound
+// and only ever shrank from it, so it stayed 440 DIP wide at 1500, 2560 and 3840 alike — 13% of
+// the stage at 4K — and nothing failed, because no test rendered a window that wide. Widening the
+// matrix then exposed a truncation bug in the gutter hit test that the 1920 case happened to catch.
+//
+// Two properties are asserted here, both of which the ultrawide sizes are the first to exercise:
+// the content reaches most of the available width rather than clustering on the left, and the
+// heatmap keeps growing with the window until the cell cap stops it.
+func TestWideWindowsUseTheirWidth(t *testing.T) {
+	for _, size := range []struct{ w, h int }{{2560, 1440}, {3840, 2160}} {
+		a := newTestApp(t)
+		a.Prompt = "The transformer reads the tokens and"
+		a.recompute()
+		a.Step = 3
+		a.SelToken = 20
+		tr := ui.NewTester(a.View, size.w, size.h)
+		tr.Frame()
+
+		// The stage's content should reach into the right-hand part of the window. The inspector
+		// is a fixed column on the right, so "most of the width" means up to roughly where it
+		// starts.
+		right := float32(0)
+		for _, s := range tr.Texts() {
+			if r, ok := tr.Find(s); ok && r.X >= 240 && r.X+r.W > right {
+				right = r.X + r.W
+			}
+		}
+		wantRight := float32(size.w) * 0.95
+		if right < wantRight {
+			t.Fatalf("%dx%d: the stage's widest row ends at x=%.0f, only %.0f%% of the window — "+
+				"the content is clustering on the left instead of using the width",
+				size.w, size.h, right, 100*right/float32(size.w))
+		}
+
+		// And the matrix itself must be wider than the old fixed bound allowed.
+		if r := a.lastHeatmapRect; r.W < 500 {
+			t.Fatalf("%dx%d: the heatmap is only %.0f DIP wide; it used to cap at 440 whatever the "+
+				"window did, and this test exists to keep it from capping again", size.w, size.h, r.W)
+		}
+	}
+}
