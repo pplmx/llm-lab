@@ -110,11 +110,17 @@ func TestContributingDoesNotRestateTheColourRange(t *testing.T) {
 	}
 }
 
-// TestContributingCountsEveryTooltip keeps the guide's "六处 .Tooltip(...)" honest.
+// TestContributingCountsEveryTooltip keeps the guide's "九处 .Tooltip(...)" honest.
 //
 // The guide tells a reader that tooltips cannot be observed headless and must be checked by eye, and gives the count so
-// they know how much that is. A seventh tooltip with the guide still saying six would send someone away believing they had
+// they know how much that is. A tenth tooltip with the guide still saying nine would send someone away believing they had
 // checked them all.
+//
+// The count is computed from every non-test file in the package. It used to be computed from a
+// hard-coded list of three, which had silently lost theme.go — the workings block's 复制 button
+// lives there. The guard counted 8 while the package had 9, the guide had been written to agree
+// with the guard, and both were wrong together for as long as the check stayed green. Counting
+// "the files I remember" is not counting.
 func TestContributingCountsEveryTooltip(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "CONTRIBUTING.md"))
 	if err != nil {
@@ -125,8 +131,22 @@ func TestContributingCountsEveryTooltip(t *testing.T) {
 		t.Fatal("the guide no longer mentions tooltips; if they became testable, remove this test")
 	}
 
+	// Every non-test file in the package, discovered rather than listed.
+	//
+	// The list used to be hard-coded to app.go, stages.go and widgets.go, and it had
+	// silently lost a file: theme.go builds the workings block's 复制 button and calls
+	// .Tooltip on it. The guard therefore counted 8 while the package had 9, and because
+	// the guide's count had been written to agree with the guard, both were wrong together
+	// and the check stayed green. A count is only a check if the count is of everything.
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
 	n := 0
-	for _, name := range []string{"app.go", "stages.go", "widgets.go"} {
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
 		src, err := os.ReadFile(name)
 		if err != nil {
 			t.Fatal(err)

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -204,5 +205,60 @@ func TestSnapshotRecipesExist(t *testing.T) {
 	if !strings.Contains(src, "基线目录是空的") {
 		t.Fatal("snapshots-diff no longer rejects an empty baseline; an empty directory " +
 			"would report every file as changed")
+	}
+}
+
+// TestContributingSnapshotCountMatchesTheSet keeps the guide's "43 张" honest.
+//
+// The count is a claim of the same shape as the tooltip number, and of the same shape as the
+// Tab-stop heading that was once "五个" over a six-row table: a number written beside a list,
+// which nothing re-derives when an entry is added. It is unusually easy to get wrong here
+// because the set is produced by *two* test functions — `just snapshots` runs TestRenderSteps
+// and TestRenderSizes together — so counting either alone gives 8 or 35 and neither is the
+// number the guide means.
+//
+// Counting writeSnapshot call sites in the source does not work: several of them sit inside
+// loops (three window sizes, seven stages, two widths), so 13 call sites produce 43 files. The
+// count has to come from the render itself. That is affordable — about 3.5 seconds, once — and
+// it is the only number that cannot drift from the set.
+func TestContributingSnapshotCountMatchesTheSet(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "CONTRIBUTING.md"))
+	if err != nil {
+		t.Fatalf("read CONTRIBUTING.md: %v", err)
+	}
+	doc := string(b)
+
+	dir := t.TempDir()
+	// The two functions `just snapshots` runs, together, into a scratch directory. This is
+	// the same command the recipe issues, so the number counted here is the number a reader
+	// gets from `just snapshots`.
+	cmd := exec.Command("go", "test", ".", "-run", "TestRenderSteps|TestRenderSizes", "-count=1")
+	cmd.Env = append(os.Environ(), "RENDER=1", "RENDER_DIR="+dir)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("rendering the snapshot set failed: %v\n%s", err, out)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read the rendered set: %v", err)
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".png") {
+			n++
+		}
+	}
+	if n == 0 {
+		t.Fatal("the snapshot set is empty; the guide's count is stale")
+	}
+
+	// Both mentions have to agree with the set, not just one. The guide states the number
+	// twice (the recipe paragraph and the "screenshots cannot judge taste" note), and a check
+	// that only looks for *a* match passes while the other copy says something else — verified
+	// by mutation: changing one of the two to 44 left this test green until it counted them.
+	want := fmt.Sprintf("%d 张", n)
+	if got := strings.Count(doc, want); got != 2 {
+		t.Fatalf("`just snapshots` writes %d PNGs, so CONTRIBUTING.md should say %q twice — "+
+			"once in the recipe paragraph and once in the pixel-diff note — but the string "+
+			"appears %d time(s); update both when the set changes on purpose", n, want, got)
 	}
 }
