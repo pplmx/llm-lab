@@ -8,9 +8,10 @@
 
 - **README「这些卡片量到了什么」那一节的数字此前一个都没有守卫。** 八张卡片的教学数字——logit lens 的 62.6%/93.0%、权重绑定 25.770 = 9.973 × 9.351 × 0.2763、头独立 0.027–0.144、FFN 名次 103.4→4.5、位置编码 0.040、嵌入 0.0213、掩码 51%–84%、单元 130/384、层改写 0.23/3.17——全部是「写下时量过、之后没人再看」的状态
   - **为什么原有的卡片测试抓不到**：`workings_test.go` 里那批 `...CardQuotesItsOwnNumbers` 检查的是「卡片打印的数等于它自己算的数」，这是**另一个性质**。它们会在「README 描述的是上一份权重」时照样全绿
-  - 新增 `internal/app/readme_cards_test.go`，11 个测试，每个都**从 README 里把数字解析出来**，再用卡片同一个函数重算比对。重算走的是 `computeLogitLens` / `computeWeightTying` / `computeHeadIndependence` / `computeFFNAnswerDirection` / `computeFFNConcentration` / `computeLayerRewrite` / `computePosEncodingShape` / `computeEmbeddingStructure` / `meanFutureShare` / `computeHeadProfiles`，与界面同源
+  - 新增 `internal/app/readme_cards_test.go`，12 个测试，每个都**从 README 里把数字解析出来**，再用卡片同一个函数重算比对。重算走的是 `computeLogitLens` / `computeWeightTying` / `computeHeadIndependence` / `computeFFNAnswerDirection` / `computeFFNConcentration` / `computeLayerRewrite` / `computePosEncodingShape` / `computeEmbeddingStructure` / `meanFutureShare` / `computeHeadProfiles`，与界面同源
   - **数字按 README 的精度比较**：写 `0.040` 就要求四舍五入到 `0.040`，而不是另发明一个容差
   - **19 个破坏性验证全部变红**：每个测试取一个 README 里的数，改最后一位（62.6→61.6、25.770→25.771、563→562、103.4→103.5、130→131、0.040→0.041、51%→50%、k34 47%→48%、跨度 44→43 等），逐一确认对应测试失败
+  - 第 12 个测试补上了「图上每个元素怎么读」表里 FFN 那行的 `239/384` 与 `4% 轴宽`——卡片自己的说明有守卫，README 抄的那份没有
   - 测试同时钉住了论证成立的前提，不只是数字：相邻嵌入余弦不得高出随机参考两个标准差、学出来的位置编码相邻余弦必须**小于**随机参考（否则「几乎互不相干」不成立）、权重绑定的三因子乘积必须等于 logit
 - **顺带发现 README 的 logit lens 那两行又是「引用了读者看不到的温度」。** `62.6% / 93.0%` 和 `76 个` 都是 **T = 1.00** 的值，而卡片按读者当前温度画、应用打开在 **T = 0.80**，屏幕上实际是 `66.6% / 97.0%` 与 `77 个`（有一个刚好落在 90% 这条线上）
   - 与上一轮修掉的「逐位置卡片 1.121 nats」**完全同一类错误**，说明这是个会反复出现的模式：**凡是随温度变化的数字，搬运进文档时限定条件会丢**

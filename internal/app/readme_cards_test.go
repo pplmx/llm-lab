@@ -666,3 +666,46 @@ func TestReadmeHeadProfileTableMatchesTheHeads(t *testing.T) {
 		}
 	}
 }
+
+// TestReadmeFFNHistogramFiguresMatchTheRow guards the figure-reading table's FFN row:
+// "本模型一行里 239/384 个负值只分布在 0 左侧 4% 的宽度内".
+//
+// The card's own caption is checked by TestFFNHistogramExplainsTheCompressedNegativeHalf, and
+// the 239/384 figure has been carried in that test's doc comment since it was written — but the
+// README's copy of it had no owner, which is the same gap this file closes for the other
+// figures.
+func TestReadmeFFNHistogramFiguresMatchTheRow(t *testing.T) {
+	doc := readmeCardSections(t)
+
+	re := regexp.MustCompile(`本模型一行里 (\d+)/(\d+) 个负值只分布在 0 左侧 (\d+)% 的宽度内`)
+	m := re.FindStringSubmatch(doc)
+	if m == nil {
+		t.Fatal("the README no longer states the FFN histogram's negative-region figures in the " +
+			"form this test knows")
+	}
+
+	a := newTestApp(t)
+	a.Step = 5
+	h := a.layer().Hidden[a.SelToken]
+	lo, hi := minMaxFloat(h)
+	if !(lo < 0 && hi > 0) {
+		t.Skipf("the default row has no negative half (lo=%.4f hi=%.4f)", lo, hi)
+	}
+	neg := 0
+	for _, v := range h {
+		if v < 0 {
+			neg++
+		}
+	}
+	if got := int(mustNumber(t, m[1])); got != neg {
+		t.Fatalf("the README says %d negative values in one row; the row has %d", got, neg)
+	}
+	if got := int(mustNumber(t, m[2])); got != len(h) {
+		t.Fatalf("the README says the row is %d wide; it is %d", got, len(h))
+	}
+	axisShare := 100 * (0 - float64(lo)) / (float64(hi) - float64(lo))
+	if got := int(mustNumber(t, m[3])); got != int(axisShare+0.5) {
+		t.Fatalf("the README says the negative half occupies %d%% of the axis; it occupies %.2f%%",
+			got, axisShare)
+	}
+}
