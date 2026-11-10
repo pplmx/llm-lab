@@ -8489,6 +8489,12 @@ func TestProseAboutConfidenceAndSqueezeFollowsTheData(t *testing.T) {
 // It renders all seven stages under both weight sets, strips the numbers out (their digits legitimately differ),
 // and requires every remaining difference to be one of the branches the app is supposed to have. A new hard-coded
 // sentence that only holds for trained weights shows up here as an unexpected difference.
+//
+// What it cannot see, and deliberately so: wording that is wrong in the same way under both weight sets. Both
+// renderings change together, no difference appears, and the sentence passes. Verified by rewording a claim
+// (决定注意力的是同一行里的大小顺序，不是正负) into a synonym — the test stayed green, because its subject is
+// divergence between two renders, not the correctness of either. Reading the prose is still a human job; this
+// only guarantees the two paths do not quietly disagree.
 func TestProseDiffersBetweenWeightsOnlyWhereDesigned(t *testing.T) {
 	trained := mustBundled(t)
 	random := model.Random(model.DefaultConfig, 42)
