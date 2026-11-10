@@ -6,6 +6,11 @@
 
 ### Added
 
+- **README 说「第 6 步只有一张卡片，所以没有卡片索引行」——那句话早就不是事实了。** 第 6 步（FFN）现在有三张卡片，而且**七个阶段每一个**都至少有 3 张、每一个都画那一行
+  - 它写下的那一年是真的。后来那个阶段加了两张卡，句子没跟着改，于是它举了一个**应用里已经不存在的例子**
+  - `TestCardRowIsHiddenOnSingleCardStages` 抓不到：它是对着 `stageCards` 表写的，表说什么它就同意什么；单卡阶段清零之后，它只剩「两张以上要有行」那一半在起作用
+  - 改成「目前七个阶段都至少有三张」，并新增 `TestReadmeCardRowClaimsMatchTheStageTable` 把它钉住。破坏性验证：把第 6 步的表项删到只剩一张 → `the README says every stage has at least three cards, but 1 stage(s) have fewer than two and therefore draw no index row`
+  - 这类措辞值得警惕：**举例子比下结论更容易过期**——「有两张就画」是不变量，「第 6 步只有一张」是某一天的快照
 - **`TestEveryTabStopDrawsSomething` 走的是写死的 6 个停点，而默认阶段的循环有 8 个——后两个从来没被检查过，而且它的收尾断言永远不可能失败。**
   - 那条收尾是 `seen != 6`，而 `seen` 是循环自己加的计数：它数的是「我跑了几圈」，不是「环有几站」。**一个只数自己的断言永远为真**
   - 停点数现在从像素里量（复用 `focusRings`），所以环变长时测试会自动走完整个环；收尾改成「再按一次 Tab 必须回到第一站的**整帧**」，`focusRings` 只比包围盒，两站理论上可能共用一个盒子，整帧比较把这个缝堵上

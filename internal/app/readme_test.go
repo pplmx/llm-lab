@@ -777,3 +777,46 @@ func TestReadmeSkillFiguresMatchTheDefaultView(t *testing.T) {
 			wantOtherLoss, got)
 	}
 }
+
+// TestReadmeCardRowClaimsMatchTheStageTable keeps the index row's parenthetical honest.
+//
+// The README described when the row appears and added, as the example, "第 6 步只有一张，
+// 所以没有这一行". That was true when it was written. The FFN stage later grew two more cards
+// and the sentence stayed, so it named a stage as an example of a case that no longer existed
+// anywhere in the app — every stage now has at least three cards and every stage draws the row.
+//
+// TestCardRowIsHiddenOnSingleCardStages cannot catch this: it is written against the stage
+// table, so it agrees with whatever the table says, and with no single-card stage left it
+// checks only the "at least two cards gets a row" half. The README's example is the part that
+// had no owner, which is why this test exists separately.
+func TestReadmeCardRowClaimsMatchTheStageTable(t *testing.T) {
+	doc := readREADME(t)
+
+	// Whatever example the README gives, it must be a stage that really has no row. Rather
+	// than parse prose, check the claim that is easy to state and hard to drift: the ones the
+	// row's rule excludes.
+	few := 0
+	for _, chips := range stageCards {
+		if len(chips) < 2 {
+			few++
+		}
+	}
+
+	// The README now states that every stage currently draws the row. If that stops being
+	// true, the sentence has to change — and a single-card stage is the only way it can.
+	const claim = "目前七个阶段都至少有三张"
+	if !strings.Contains(doc, claim) {
+		t.Fatal("the README no longer states how many cards each stage carries; update this " +
+			"test with the sentence you wrote about when the index row appears")
+	}
+	if few != 0 {
+		t.Fatalf("the README says every stage has at least three cards, but %d stage(s) have "+
+			"fewer than two and therefore draw no index row", few)
+	}
+	for step, chips := range stageCards {
+		if len(chips) < 3 {
+			t.Fatalf("the README says every stage has at least three cards, but stage %d has %d",
+				step+1, len(chips))
+		}
+	}
+}
