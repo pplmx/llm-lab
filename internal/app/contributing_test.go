@@ -301,3 +301,60 @@ func focusRings(t *testing.T, step, w, h int) [][4]float32 {
 	t.Fatal("the Tab cycle did not repeat within 24 presses, so it has no length to state")
 	return rings
 }
+
+// TestContributingTestCountStaysAboveItsStatedBound keeps the guide's "五百多个测试函数"
+// from becoming false in the direction that matters.
+//
+// The guide states this count so a contributor can judge what running the package costs.
+// It used to state it exactly — "489 个测试函数" — and that was wrong within a couple of
+// commits, because nothing re-derived it: the package had 510 by the time anyone looked.
+// An exact count in prose is a number with no owner. A lower bound can be checked, and,
+// being a bound, it does not need editing every time a test is added.
+//
+// Only the lower bound is enforced. Growth is the normal case and needs no action; a count
+// that falls below what the guide promises means either tests were deleted or the sentence
+// is now an overstatement, and both are worth a failure.
+func TestContributingTestCountStaysAboveItsStatedBound(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "CONTRIBUTING.md"))
+	if err != nil {
+		t.Fatalf("read CONTRIBUTING.md: %v", err)
+	}
+	doc := string(b)
+
+	// "五百多" promises strictly more than 500.
+	const bound = 500
+	if !strings.Contains(doc, "五百多") {
+		t.Fatal("CONTRIBUTING no longer states the order of magnitude of the app's test count; " +
+			"update this test with the wording you used")
+	}
+	// And no copy of the number may state a different bound. The guide mentions it twice —
+	// the timing paragraph and the note explaining why it is a bound — and checking only
+	// that *a* "五百多" exists passes while the other copy says something else. Verified by
+	// mutation: changing one of the two left this test green until every occurrence was
+	// required to agree.
+	if got := strings.Count(doc, "五百多"); got != 2 {
+		t.Fatalf("the guide states the test-count bound %d time(s); it should state it twice, "+
+			"in the timing paragraph and in the note about why it is a bound", got)
+	}
+
+	files, err := filepath.Glob("*_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := regexp.MustCompile(`(?m)^func Test`)
+	n := 0
+	for _, f := range files {
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		n += len(decl.FindAllIndex(src, -1))
+	}
+	if n == 0 {
+		t.Fatal("found no test functions; this guard is no longer checking anything")
+	}
+	if n <= bound {
+		t.Fatalf("the guide says 五百多个测试函数, but this package has %d; either tests were "+
+			"removed or the sentence needs correcting", n)
+	}
+}

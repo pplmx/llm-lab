@@ -47,9 +47,9 @@ GOEXPERIMENT=simd go test ./...     # 实验性 SIMD 内核
 
 两个门槛分开是有意的：`just check` 约 **3.5 分钟**，`just check-ci` 冷缓存约 **7 分钟**。日常提交跑前者；动到模块依赖、并发或 SIMD 内核时跑后者。
 
-这两个数是从「约 35 秒 / 约 75 秒」改过来的，原来的值低估了六倍。差别主要在 `internal/app`：它现在有 489 个测试函数、跑一遍约 206 秒，而 `just check-ci` 会把它**跑两遍**（标量一遍、`GOEXPERIMENT=simd` 一遍），各 207 秒，再加上 vet、`go mod tidy`、`-race` 的 model 包，冷缓存下总共 422 秒。实测命令：`go clean -testcache && time just check-ci`。
+这两个数是从「约 35 秒 / 约 75 秒」改过来的，原来的值低估了六倍。差别主要在 `internal/app`：它有五百多个测试函数、跑一遍约 200 秒，而 `just check-ci` 会把它**跑两遍**（标量一遍、`GOEXPERIMENT=simd` 一遍），再加上 vet、`go mod tidy`、`-race` 的 model 包，冷缓存下总共约 7 分钟。实测命令：`go clean -testcache && time just check-ci`。
 
-这个数字值得写准：它是读者决定「这次改动要不要跑全量」的依据，写小了会让人以为顺手跑一下没关系。
+这个数字值得写准：它是读者决定「这次改动要不要跑全量」的依据，写小了会让人以为顺手跑一下没关系。测试函数写成「五百多个」而不是精确值，是因为精确值每加一个测试就会过期——上一版写的是「489 个」，二十多个测试之后就成了假话，而没有任何测试盯着它。`TestContributingTestCountStaysAboveItsStatedBound` 现在盯着这个下界，低于它就会失败并提示改写这句话。
 
 `-race` 只跑 `internal/model`：`internal/app` 是单线程 UI 代码，而在 race 检测器下一次 `ui.Tester.Frame()` 要 24ms（正常 0.8ms），整个包会跑到 11 分钟，超过 Go 默认的 10 分钟测试超时。
 

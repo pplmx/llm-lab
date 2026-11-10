@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"fmt"
+	"image"
 	"strings"
 	"testing"
 	"time"
@@ -754,36 +755,57 @@ func TestEmptyAttentionStageDoesNotAdvertiseCellKeys(t *testing.T) {
 // the ring with no visible focus would leave a keyboard reader pressing Tab through an
 // invisible cursor — the same failure, just further in.
 //
-// Measured: the ring has six stops and every one repaints between 1096 and 6083 pixels.
-// The test requires a minimum far below the smallest, so a restyle can shrink the ring
-// without failing this, but a stop that paints nothing cannot pass.
+// Measured: the smallest repaint along the ring is about 1100 pixels. The test requires a
+// minimum far below that, so a restyle can shrink the ring without failing this, but a stop
+// that paints nothing cannot pass.
+//
+// The length of the ring comes from the pixels rather than from a literal. It used to walk a
+// fixed six while the default stage's cycle is eight, so the last two stops went unchecked —
+// and the closing "walked %d tab stops, expected 6" could not fail either, since it counted
+// its own loop iterations. Verified by mutation: making the theme's focus colour the panel
+// colour turns this red at the first stop with "repainted only 0 pixels".
+//
+// What this still cannot see is a control that stops taking focus at all. Then the cycle gets
+// shorter and every remaining stop is checked correctly, so the walk adapts instead of
+// complaining. That case belongs to TestContributingFocusTableMatchesTheApp, which compares
+// the cycle against the guide's independent table.
 func TestEveryTabStopDrawsSomething(t *testing.T) {
 	a := newTestApp(t)
+	rings := focusRings(t, a.Step, 1500, 940)
+	if len(rings) < 2 {
+		t.Fatalf("Tab found %d focus rings; there is no ring to walk", len(rings))
+	}
+
 	tr := ui.NewTester(a.View, 1500, 940)
 	tr.Frame()
 
 	const minPixels = 100
-	prev := append([]byte(nil), tr.Image().Pix...)
-	seen := 0
-	for i := 0; i < 6; i++ {
+	prev := tr.Image()
+	var first *image.RGBA
+	for i := range rings {
 		tr.Key(0, ui.KeyTab)
 		tr.Frame()
-		cur := tr.Image().Pix
-		changed := 0
-		for j := 0; j+3 < len(prev) && j+3 < len(cur); j += 4 {
-			if prev[j] != cur[j] || prev[j+1] != cur[j+1] || prev[j+2] != cur[j+2] {
-				changed++
-			}
+		cur := tr.Image()
+		if changed := diffCount(prev, cur); changed < minPixels {
+			t.Fatalf("tab stop %d of a %d-stop ring repainted only %d pixels; that control "+
+				"has no visible focus", i+1, len(rings), changed)
 		}
-		if changed < minPixels {
-			t.Fatalf("tab stop %d repainted only %d pixels; that control has no visible "+
-				"focus", i+1, changed)
+		if i == 0 {
+			first = cur
 		}
-		seen++
-		prev = append([]byte(nil), cur...)
+		prev = cur
 	}
-	if seen != 6 {
-		t.Fatalf("walked %d tab stops, expected 6", seen)
+
+	// One more press has to return to the first stop, so the ring really is as long as the
+	// number of stops this test checked. focusRings stops at the first repeated bounding
+	// box, and a box is a coarser signal than the frame: two stops could in principle share
+	// one. Comparing whole frames closes that gap.
+	tr.Key(0, ui.KeyTab)
+	tr.Frame()
+	if got := diffCount(first, tr.Image()); got != 0 {
+		t.Fatalf("after %d Tab presses the ring did not return to its first stop (%d pixels "+
+			"differ), so the cycle is longer than the %d stops this test walked",
+			len(rings), got, len(rings))
 	}
 }
 
@@ -1503,12 +1525,17 @@ func TestWorkingsBlocksCanBeCopied(t *testing.T) {
 	}
 }
 
-// TestCopyControlExistsOnEveryStageWithAWorkingsBlock: eleven blocks across the
-// seven stages, and a reader should find 复制 on each of them rather than on some.
+// TestCopyControlExistsOnEveryStageWithAWorkingsBlock: every stage carries a workings
+// block, and a reader should find 复制 on each of them rather than on some.
 //
 // This counts the control per stage instead of spot-checking one, because the
 // failure mode is a call site left on the old helper — which renders fine and
 // simply has no way to copy.
+//
+// The header used to say "eleven blocks across the seven stages", which was a count of
+// call sites rather than of rendered blocks: several call sites are inside loops, so the
+// bundled prompt draws far more. A number in a comment that nothing re-derives drifts, so
+// the header no longer carries one.
 func TestCopyControlExistsOnEveryStageWithAWorkingsBlock(t *testing.T) {
 	// Every stage renders at least one workings block, but not unconditionally: the
 	// score stage's block only exists once a cell is selected, and says so in its

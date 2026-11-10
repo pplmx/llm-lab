@@ -218,12 +218,18 @@ func kvW(c *ui.Context, k, v string, width float32) {
 //
 // The control shares the last line's row instead of taking a row of its own. That
 // is not cosmetic: every stage's column already overflows the window (measured
-// MaxY 184–870 DIP at 1180×720), so eleven new rows would push real teaching
-// content further out of reach to make room for a convenience.
+// MaxY 184–870 DIP at 1180×720), so a row per workings block would push real
+// teaching content further out of reach to make room for a convenience.
 //
-// It is a Text with a tooltip rather than a Button because Buttons are focusable,
-//
-//	adding eleven Tab stops to a cycle that CONTRIBUTING documents as six.
+// It is a Text with a tooltip rather than a Button because Buttons are focusable:
+// each block would add its own Tab stop to a cycle the guide already measures in
+// the double digits (see the focus table in CONTRIBUTING). Both numbers here were
+// once written down — "eleven rows" and "a cycle of six" — and both had gone stale:
+// the bundled prompt renders far more than eleven blocks, and the attention stage's
+// cycle is twelve stops. Counting call sites is not counting either, since several
+// sit inside loops. So the comment states the reason and leaves the measurement to
+// the guards that re-derive it (TestCopyControlExistsOnEveryStageWithAWorkingsBlock,
+// TestContributingFocusTableMatchesTheApp).
 func workingsLinesCopyable(c *ui.Context, lines []string, gap ...float32) {
 	g := float32(workingsGap)
 	if len(gap) > 0 {

@@ -6,6 +6,19 @@
 
 ### Added
 
+- **`TestEveryTabStopDrawsSomething` 走的是写死的 6 个停点，而默认阶段的循环有 8 个——后两个从来没被检查过，而且它的收尾断言永远不可能失败。**
+  - 那条收尾是 `seen != 6`，而 `seen` 是循环自己加的计数：它数的是「我跑了几圈」，不是「环有几站」。**一个只数自己的断言永远为真**
+  - 停点数现在从像素里量（复用 `focusRings`），所以环变长时测试会自动走完整个环；收尾改成「再按一次 Tab 必须回到第一站的**整帧**」，`focusRings` 只比包围盒，两站理论上可能共用一个盒子，整帧比较把这个缝堵上
+  - 破坏性验证：把 `t.Focus` 改成面板底色（焦点环不可见）→ 立刻红：`tab stop 3 of a 6-stop ring repainted only 0 pixels; that control has no visible focus`
+  - **顺带记下它仍然测不到的**：某个控件彻底失去焦点时，环会变短而每一站照样画环，这个测试会自适应地少走几站而不是报错。那种情况归 `TestContributingFocusTableMatchesTheApp`，它拿环去对手写的表
+- **CONTRIBUTING 的「489 个测试函数」已经过期 21 个（实际 510），而且没有任何东西盯着它。** 上一版（提交 `de9f86b`）特意把这个数写准，理由写得很对——它是读者判断「要不要跑全量门槛」的依据——但一个精确值在散文里没有主人，加二十个测试就会变成假话
+  - 改成「五百多个」，并新增 `TestContributingTestCountStaysAboveItsStatedBound`：低于 500 就失败，并提示是「删了测试」还是「这句话该改」
+  - **守卫第一版只能抓一半**：`strings.Contains` 只要求**某处**出现过「五百多」，而这句话在文档里出现两次（正文一次、解释为什么写下界一次）。mutation 只改第一处时测试**仍然通过**。改成 `Count(doc, "五百多") == 2` 之后，mutation 立刻红：`the guide states the test-count bound 1 time(s)`
+  - 这是本仓库第三次踩同一个坑（tooltip 计数、截图张数），规律一致：**同一句话的两份拷贝，只查一份等于没查**
+- **两处代码注释里的计数也过期了，而且都是「数调用点」得来的假数字。**
+  - `theme.go` 写「eleven new rows」，实际打包提示词渲染出 28 个 workings 块（按「复制算式 N 行」从渲染里数）；同一个注释还写「a cycle that CONTRIBUTING documents as six」，而 CONTRIBUTING 的表早已是十一个、默认阶段循环是八个
+  - `TestCopyControlExistsOnEveryStageWithAWorkingsBlock` 的头注释写「eleven blocks across the seven stages」，而当时 21 个 `workingsLinesCopyable` 调用点里有好几个在循环里——**调用点数不是块数**
+  - 两处都改成只讲理由、不写数，并把量法指向已有的守卫（`TestCopyControlExistsOnEveryStageWithAWorkingsBlock`、`TestContributingFocusTableMatchesTheApp`）
 - **查清了 `TestProseDiffersBetweenWeightsOnlyWhereDesigned` 的能力边界，并写进它的注释。**
   - 把一句文案「决定注意力的是同一行里的大小顺序，不是正负」改成「跟正负没关系」，测试**仍然通过**
   - 不是缺陷，是设计：它的主语是**两次渲染之间的差异**，不是任一次渲染的对错。同时影响两套权重的改动不产生差异，自然看不见
