@@ -723,11 +723,14 @@ func (a *App) handleKeys(c *ui.Context) {
 	// PageUp/PageDown/Home/End scroll the stage column.
 	//
 	// This exists because the stage column holds the lesson text and the workings
-	// blocks, and at 1180×720 those are up to 870 DIP below the fold — more than a
-	// full viewport. Mouse scrolling works, but mygo only routes those keys to a
-	// scroller that is under the pointer or in the focus chain: measured, a
-	// keyboard-only reader (pointer parked at 0,0) could not move the column at all,
-	// with PageDown, Down, End, Space and the wheel all leaving Scroll.Y at 0.
+	// blocks, and at 1180×720 the tallest stage puts over 1800 DIP below the fold —
+	// more than three full viewports. Mouse scrolling works, but mygo only routes
+	// those keys to a scroller that is under the pointer or in the focus chain:
+	// measured, a keyboard-only reader (pointer parked at 0,0) could not move the
+	// column at all, with PageDown, Down, End, Space and the wheel all leaving
+	// Scroll.Y at 0. The figure here was once 870 DIP, which the stages outgrew;
+	// the README quotes the current one and TestReadmeViewportOverflowMatchesTheLayout
+	// re-derives it, so this comment deliberately gives the order of magnitude only.
 	//
 	// Measured: these four reach the app even while the prompt field has focus —
 	// unlike Space and Enter, which a focused input consumes, because those two do

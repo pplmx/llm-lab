@@ -74,8 +74,8 @@ func TestScrollingAStageKeepsTheHeaderOnScreen(t *testing.T) {
 // one long enough to be noticed.
 //
 // Round 183 measured step 5 because it is the tallest. The other stages scroll too — at 1180×720
-// step 4's viewport holds about 870 DIP of content — and a header that scrolled on one of them
-// would be the same defect there.
+// every stage but the first holds content below the fold — and a header that scrolled on one of
+// them would be the same defect there.
 func TestEveryStageKeepsItsHeaderWhileScrolled(t *testing.T) {
 	for step := 0; step < len(lessons); step++ {
 		a := newTestApp(t)
@@ -114,7 +114,8 @@ func TestEveryStageKeepsItsHeaderWhileScrolled(t *testing.T) {
 // offset in a page of a different height — which would open on a slice of the middle.
 //
 // Three routes reach a new stage: selectStep, the arrow keys, and the digit shortcuts. All three
-// reset; measured from offset 870 to 0.
+// reset the offset to 0. The 870 this comment used to quote was the stage's scroll extent back
+// then; the test drives 5000 and lets the container clamp, so no figure here can go stale.
 func TestChangingStageResetsTheScroll(t *testing.T) {
 	routes := []struct {
 		name string

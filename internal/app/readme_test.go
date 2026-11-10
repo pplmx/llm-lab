@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -817,6 +819,117 @@ func TestReadmeCardRowClaimsMatchTheStageTable(t *testing.T) {
 		if len(chips) < 3 {
 			t.Fatalf("the README says every stage has at least three cards, but stage %d has %d",
 				step+1, len(chips))
+		}
+	}
+}
+
+// TestReadmeViewportOverflowMatchesTheLayout keeps the PageUp/PageDown row's figure honest.
+//
+// The README justified the scroll keys with "1180×720 下这一列最多有 870 DIP 的内容在视口外".
+// 870 was the tallest stage's scroll extent when the sentence was written; the stages have
+// grown since, and the tallest is now 1805 — the claim understated the problem it was
+// describing by more than a factor of two, in the direction that makes the feature look less
+// necessary than it is.
+//
+// Nothing was watching it: TestEveryStageCanBeScrolledToItsEnd drives the scroll and asserts
+// the end is reachable, but never compared the extent to what the README says. This does.
+func TestReadmeViewportOverflowMatchesTheLayout(t *testing.T) {
+	doc := readREADME(t)
+	const claim = "最多有 1805 DIP 的内容在视口外"
+	if !strings.Contains(doc, claim) {
+		t.Fatal("the README no longer quotes the tallest stage's overflow at 1180×720 in the " +
+			"form this test knows; update it with the sentence you wrote")
+	}
+
+	tallest := float32(0)
+	for step := 0; step < 7; step++ {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, 1180, 720)
+		tr.Frame()
+		if a.Scroll.MaxY > tallest {
+			tallest = a.Scroll.MaxY
+		}
+	}
+	if math.Abs(float64(tallest-1805)) > 0.5 {
+		t.Fatalf("the README says the tallest stage puts 1805 DIP below the fold at 1180×720, "+
+			"but the tallest measures %.0f; update the sentence", tallest)
+	}
+}
+
+// TestReadmeSkillLossMatchesTheOpenedTemperature keeps the per-position card's loss honest.
+//
+// The README quoted "24/35、1.121 nats" for the every-position card. 1.121 is the figure at
+// T = 1.00; the app opens at Temp = 0.80, where that same card prints 1.184. The card is
+// computed with the reader's temperature, so the sentence was quoting a number the reader
+// would not see at startup — and CHANGELOG records 1.121 explicitly as "T=1.0", so the
+// qualifier was dropped rather than mis-measured.
+//
+// TestReadmeSkillFiguresMatchTheDefaultView pins the *word-boundary* figures at the default
+// temperature but never looked at this sentence. This does.
+func TestReadmeSkillLossMatchesTheOpenedTemperature(t *testing.T) {
+	doc := readREADME(t)
+	const claim = "默认打开的 T = 0.80 下是 **1.184 nats**、T = 1.00 下是 1.121"
+	if !strings.Contains(doc, claim) {
+		t.Fatal("the README no longer states the per-position loss at both the opened and the " +
+			"T=1 temperature in the form this test knows; update it with the sentence you wrote")
+	}
+
+	a := newTestApp(t)
+	if a.Temp != 0.80 {
+		t.Fatalf("the app opens at T = %.2f, but the README says it opens at 0.80", a.Temp)
+	}
+	opened := computeNextByteSkill(a.W, a.Trace, a.Temp)
+	if got := fmt.Sprintf("%.3f", opened.MeanLoss); got != "1.184" {
+		t.Fatalf("the README says the card reads 1.184 nats at the opened temperature, but it "+
+			"reads %s at T = %.2f", got, a.Temp)
+	}
+	atOne := computeNextByteSkill(a.W, a.Trace, 1.0)
+	if got := fmt.Sprintf("%.3f", atOne.MeanLoss); got != "1.121" {
+		t.Fatalf("the README says the card reads 1.121 nats at T = 1.00, but it reads %s", got)
+	}
+	if opened.Hits != 24 || opened.Scored != 35 {
+		t.Fatalf("the README says 24/35 positions guess right, the card finds %d/%d",
+			opened.Hits, opened.Scored)
+	}
+}
+
+// TestDocsOnlyShowJustCommandsThatWork keeps documentation from naming just invocations that
+// fail outright.
+//
+// The bug report template told a reporter to run "just run -w 1180 -h 720". The run recipe is
+// `go run .` with no argument passthrough, and just does not forward unknown arguments to a
+// recipe: `just run -w 1180 -h 720` exits with "justfile does not contain recipe '-w'" before
+// Go starts. A repro command that cannot run is worse than no command, because the reporter
+// concludes the app is broken rather than the instruction.
+//
+// The check is against just itself rather than against a hard-coded recipe list, so it also
+// catches a recipe being renamed out from under the docs.
+func TestDocsOnlyShowJustCommandsThatWork(t *testing.T) {
+	if _, err := exec.LookPath("just"); err != nil {
+		t.Skip("just is not installed")
+	}
+	docs := map[string]string{
+		"bug_report.yml":  filepath.Join("..", "..", ".github", "ISSUE_TEMPLATE", "bug_report.yml"),
+		"README.md":       filepath.Join("..", "..", "README.md"),
+		"CONTRIBUTING.md": filepath.Join("..", "..", "CONTRIBUTING.md"),
+	}
+	// Only invocations that pass arguments are interesting: `just check` and friends are
+	// covered by TestEveryRecipeDescriptionIsOneLine and by CI itself.
+	re := regexp.MustCompile("`(just +[a-z][a-z-]* +-[^`]*)`")
+	for name, path := range docs {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+			cmd := m[1]
+			fields := strings.Fields(cmd)
+			dry := exec.Command("just", append([]string{"--dry-run"}, fields[1:]...)...)
+			dry.Dir = filepath.Join("..", "..")
+			if out, err := dry.CombinedOutput(); err != nil {
+				t.Fatalf("%s documents `%s`, which just rejects: %v\n%s", name, cmd, err, out)
+			}
 		}
 	}
 }

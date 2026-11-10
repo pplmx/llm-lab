@@ -44,7 +44,7 @@ body:
       label: 复现步骤
       description: 提示词、窗口尺寸、层/头/温度设置等，越具体越好
       placeholder: |
-        1. 运行 `just run -w 1180 -h 720` 或 `go run . -w 1180 -h 720`
+        1. 运行 `go run . -w 1180 -h 720`（`just run` 不接受额外参数，窗口尺寸要直接传给 go run）
         2. 输入 "The transformer reads"
         3. 切到第 4 步
         4. ……

@@ -1378,16 +1378,18 @@ func TestHeatmapPointerLandsOnTheDrawnCell(t *testing.T) {
 }
 
 // TestKeyboardScrollsTheStageColumn covers the reachability gap this round found:
-// at 1180×720 the stage column holds up to 870 DIP of content below the fold —
-// more than a full viewport — and mygo only routes scroll keys to a scroller that
-// is under the pointer or in the focus chain.
+// at 1180×720 the tallest stage column puts over 1800 DIP of content below the
+// fold — more than three full viewports — and mygo only routes scroll keys to a
+// scroller that is under the pointer or in the focus chain.
 //
 // Measured before this change: with the pointer parked in a corner, PageDown,
 // Down, End, Space and the wheel all left Scroll.Y at 0, so a keyboard-only reader
 // could not reach the lesson card, the workings blocks or the shortcut line.
 func TestKeyboardScrollsTheStageColumn(t *testing.T) {
 	const w, h = 1180, 720
-	// The residual stage is the tallest at this size (measured MaxY 856).
+	// The residual stage is the tallest at this size (measured MaxY 1805, which is what
+	// TestReadmeViewportOverflowMatchesTheLayout re-derives for the README's figure; this
+	// comment used to say 856, from before the stage gained its analysis cards).
 	scrollable := func(a *App, tr *ui.Tester) {
 		tr.Move(0, 0) // pointer out of the column, so nothing else can scroll it
 		tr.Frame()

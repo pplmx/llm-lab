@@ -19,4 +19,4 @@ LLM Lab 是一个本地桌面应用：模型权重编译进二进制，运行时
 
 - 官方 release 的 macOS 包默认未签名/未公证，首次打开需要右键「打开」。自行配置 Developer ID 后可用 `just mac` 产出签名版本。
 - Windows 安装包未做代码签名，SmartScreen 会提示未知发布者。
-- 校验下载完整性请比对 release 页面的 SHA-256。
+- 校验下载完整性：release 页面上每个附件旁由 GitHub 显示的 SHA-256 摘要就是官方值。仓库本身不额外上传校验和文件，所以不要去找一个 `.sha256`——没有。

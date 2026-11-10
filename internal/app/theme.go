@@ -217,9 +217,9 @@ func kvW(c *ui.Context, k, v string, width float32) {
 // reading it off the screen and retyping it.
 //
 // The control shares the last line's row instead of taking a row of its own. That
-// is not cosmetic: every stage's column already overflows the window (measured
-// MaxY 184–870 DIP at 1180×720), so a row per workings block would push real
-// teaching content further out of reach to make room for a convenience.
+// is not cosmetic: every stage's column already overflows the window at
+// 1180×720 (the tallest runs past 1800 DIP), so a row per workings block would
+// push real teaching content further out of reach to make room for a convenience.
 //
 // It is a Text with a tooltip rather than a Button because Buttons are focusable:
 // each block would add its own Tab stop to a cycle the guide already measures in
