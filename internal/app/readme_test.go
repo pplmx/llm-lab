@@ -903,33 +903,74 @@ func TestReadmeSkillLossMatchesTheOpenedTemperature(t *testing.T) {
 // Go starts. A repro command that cannot run is worse than no command, because the reporter
 // concludes the app is broken rather than the instruction.
 //
-// The check is against just itself rather than against a hard-coded recipe list, so it also
-// catches a recipe being renamed out from under the docs.
+// The first version of this test only looked for documented invocations that pass a flag, and
+// the fix for that bug removed the last one — leaving a guard that parsed three files and found
+// nothing, which is the failure mode CONTRIBUTING warns about: an assertion no mutation can turn
+// red reports safety it has not established. Two things fixed that. Every `just <recipe>` the
+// docs name is now checked against the justfile itself, so a rename breaks it; and the guard
+// fails if it finds no invocations at all, so it cannot quietly become a no-op again.
 func TestDocsOnlyShowJustCommandsThatWork(t *testing.T) {
 	if _, err := exec.LookPath("just"); err != nil {
 		t.Skip("just is not installed")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
 	}
 	docs := map[string]string{
 		"bug_report.yml":  filepath.Join("..", "..", ".github", "ISSUE_TEMPLATE", "bug_report.yml"),
 		"README.md":       filepath.Join("..", "..", "README.md"),
 		"CONTRIBUTING.md": filepath.Join("..", "..", "CONTRIBUTING.md"),
 	}
-	// Only invocations that pass arguments are interesting: `just check` and friends are
-	// covered by TestEveryRecipeDescriptionIsOneLine and by CI itself.
-	re := regexp.MustCompile("`(just +[a-z][a-z-]* +-[^`]*)`")
+	// `just <recipe> [args]` inside backticks. A bare global flag (`just --list`) has no recipe
+	// name, so it is not matched.
+	re := regexp.MustCompile("`(just +[a-z][a-z0-9-]*( +[^`]*)?)`")
+	// Placeholders are documentation syntax, not arguments to run.
+	placeholder := regexp.MustCompile(`[<>\[\]{}]`)
+
+	checked, invocations := 0, 0
 	for name, path := range docs {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
 		for _, m := range re.FindAllStringSubmatch(string(b), -1) {
-			cmd := m[1]
+			cmd := strings.TrimSpace(m[1])
 			fields := strings.Fields(cmd)
+			invocations++
+
+			// The recipe must exist under the name the docs use. This is what notices a
+			// recipe being renamed out from under the documentation.
+			show := exec.Command("just", "--show", fields[1])
+			show.Dir = root
+			if out, err := show.CombinedOutput(); err != nil {
+				t.Fatalf("%s documents `%s`, but just has no recipe %q:\n%s",
+					name, cmd, fields[1], out)
+			}
+			checked++
+
+			// And if the docs pass arguments, just must accept them. Skipped when they are
+			// placeholders rather than literal arguments.
+			args := fields[2:]
+			if len(args) == 0 || placeholder.MatchString(strings.Join(args, " ")) {
+				continue
+			}
 			dry := exec.Command("just", append([]string{"--dry-run"}, fields[1:]...)...)
-			dry.Dir = filepath.Join("..", "..")
+			dry.Dir = root
 			if out, err := dry.CombinedOutput(); err != nil {
 				t.Fatalf("%s documents `%s`, which just rejects: %v\n%s", name, cmd, err, out)
 			}
 		}
+	}
+	if invocations == 0 || checked == 0 {
+		t.Fatalf("found %d documented just invocation(s) and checked %d recipes; the docs "+
+			"stopped naming recipes, so this test has nothing left to verify", invocations, checked)
+	}
+	// A reader gets these from the docs; the count is asserted only loosely, to notice a
+	// wholesale rewrite that drops the instructions rather than to pin the current number.
+	if checked < 10 {
+		t.Fatalf("only %d documented just invocations checked; the docs used to name at least "+
+			"ten recipes, so either they lost their instructions or the pattern stopped matching",
+			checked)
 	}
 }

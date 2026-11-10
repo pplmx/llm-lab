@@ -6,6 +6,11 @@
 
 ### Added
 
+- **上一轮新加的 `TestDocsOnlyShowJustCommandsThatWork` 在它自己的修复落地后变成了空转的。** 它的正则只找「带参数的 `just` 调用」，而修掉 `just run -w` 之后文档里**一条都不剩**——三个文件、0 个匹配、永远通过
+  - 这正是 CONTRIBUTING 里写明的那条反面教训：**一个通不过 mutation 的新覆盖，只是让人以为测过了**。是我上一轮自己造出来的
+  - 改成两段判据：①每一个 `just <recipe>` 都要用 `just --show <recipe>` 验存在（改名会红）②带**字面**参数的要真跑 `just --dry-run`（占位符如 `[新目录]` 跳过）。当前覆盖 19 处调用、19 个 recipe 名，其中 `just build windows/amd64` 会走参数分支
+  - **加了下限断言**：检查到的 recipe 少于 10 个就失败，所以它没法再悄悄退化成空转
+  - 三种破坏性验证：改 `just linux` → `just linuxxx`（`just has no recipe "linuxxx"`）、给 `just build windows/amd64` 加不存在的 flag（`just rejects`）、把下限抬到 100（`only 19 documented just invocations checked`）
 - **一轮文档审计，四条「文档说的和代码做的不一样」，其中一条会让 bug 报告者直接跑不动命令。**
   - **`bug_report.yml` 教人运行 `just run -w 1180 -h 720`，这条命令根本不存在。** `run` 配方是 `go run .`，没有参数透传，而 just 不会把未知参数转给配方：实测 `just --dry-run run -w 1180 -h 720` 报 `error: justfile does not contain recipe '-w'`，`-- ` 也一样。**这是坏掉的指令，不是过期的数字**——照它做的人会以为应用坏了。已改成直接写 `go run . -w 1180 -h 720`
   - **README 断言 PageUp 那一行「最多有 870 DIP 的内容在视口外」，实测是 1805。** 870 是写下这句话时最高阶段的滚动量，之后阶段长了一倍多；而且这个方向写小了，正好让这个功能看起来没必要。同一句话里的「比一整屏还多」也随之改成「超过三个整屏」
