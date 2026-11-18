@@ -20,6 +20,11 @@
 - `justfile` 新增 `mobile` / `android` / `ios` 三个配方，**不进默认构建**：iOS 要 macOS + Xcode，Android 要 SDK / NDK / JDK 17，而桌面三端不需要。默认 `just` 和以前一样只出三端桌面包
 - `mygo.json` 加了 `ios.orientations`（竖屏 + 横屏）与 `android.splash`（`#0E1117`，与背景同色，启动时不闪白）
 - README 新增「手机与平板」一节：需要什么工具链、怎么打包、布局在手机上换成了什么样、默认签名是调试密钥（Play 会拒）
+- **真机验证：在 Android 模拟器（android-36 / x86_64 / API 36）上装了 `.apk` 并跑起来。** 用 `wm size 2200x1200` + `wm density 160` 把屏幕换成 2200×1200 DIP，走的是桌面三栏分支；用默认的 1080×2400 @ 420 dpi（≈411×914 DIP）走的是单栏分支——两条分支在设备上都出了图，这是 `compact.go` 之外唯一能证明「换布局」不是只在无窗口渲染里成立的方式
+  - **单栏分支在设备上的样子**：顶栏「☰ 阶段 / LLM Lab / 1 / 7 · 分词」、整行输入框、重置 + 采样（+ 可换行）、层/头/温度、token 条、阶段标题与公式、卡片索引、三张卡片，最底下是进度点与「← ▶ →」
+  - **桌面分支在设备上的样子**：侧栏阶段列表、中栏、右侧检查器三栏齐全，字号与间距与 Linux 上的 2200×1200 渲染一致
+  - **这台机器的模拟器自身不稳**：RenderThread 在 swiftshader 下 segfault 过三次，每次留下 7 GB 的 core dump 把磁盘吃到 99%，进而 OOM。`ulimit -c 0` 之后不再写 core。这是容器环境的问题，与这个 app 无关，记在这里是为了下一个人不用再排查一遍
+  - **一处没能确认的现象**：截图里偶尔看不到「层 / 头 / 温度」那一行（它在 y≈123 的位置留出一条空白），但同一帧里 `LayoutBounds` 报的是 `{X:239 Y:123 W:1616 H:29}` —— **控件在布局里，位置也对**；相邻一次强制重绘就露出了「头 H0 H1 H2 H3」。无窗口渲染在同一尺寸下这一行始终在。判断是模拟器软件渲染的局部重绘问题，不是布局问题，但没有更硬的证据，所以如实记在这里而不是写成「已验证无缺陷」
 - **README「这些卡片量到了什么」那一节的数字此前一个都没有守卫。** 八张卡片的教学数字——logit lens 的 62.6%/93.0%、权重绑定 25.770 = 9.973 × 9.351 × 0.2763、头独立 0.027–0.144、FFN 名次 103.4→4.5、位置编码 0.040、嵌入 0.0213、掩码 51%–84%、单元 130/384、层改写 0.23/3.17——全部是「写下时量过、之后没人再看」的状态
   - **为什么原有的卡片测试抓不到**：`workings_test.go` 里那批 `...CardQuotesItsOwnNumbers` 检查的是「卡片打印的数等于它自己算的数」，这是**另一个性质**。它们会在「README 描述的是上一份权重」时照样全绿
   - 新增 `internal/app/readme_cards_test.go`，12 个测试，每个都**从 README 里把数字解析出来**，再用卡片同一个函数重算比对。重算走的是 `computeLogitLens` / `computeWeightTying` / `computeHeadIndependence` / `computeFFNAnswerDirection` / `computeFFNConcentration` / `computeLayerRewrite` / `computePosEncodingShape` / `computeEmbeddingStructure` / `meanFutureShare` / `computeHeadProfiles`，与界面同源
