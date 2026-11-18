@@ -2,6 +2,8 @@
 
 用 **MyGo** 的原生 UI（纯 Go、GPU 绘制、没有 WebView、没有 HTML/JS）写的一个 Transformer 架构学习工具：输入一句话，然后逐层剥开它——分词、嵌入、Q/K/V、注意力矩阵、残差与 LayerNorm、FFN、logits 与采样，每一步都能看到真实的数字。
 
+同一份代码也跑在 iPhone、iPad 和 Android 上：手机与平板用一栏布局（阶段列表收进浮层、检查器移到课程下方），界面在 375 DIP 宽也能读，见[手机与平板](#手机与平板)。
+
 ![注意力矩阵](docs/attention.png)
 
 <details>
@@ -39,6 +41,10 @@ go run . -step 6
 
 # 开发模式（改代码自动重启）
 go tool mygo dev
+
+# 手机：iOS 模拟器 / 插着的 Android 设备或模拟器
+go tool mygo dev -platform ios
+go tool mygo dev -platform android
 ```
 
 `-w` / `-h` 会被夹到不小于 1180×720，因为布局只在这个尺寸以上验证过——但夹取时会在 stderr 上打一行说明实际用的尺寸，不会默默换掉你要的尺寸；`-step` 则**校验而不是夹取**——写一个不存在的步数会直接退出并列出 0-6 的合法值与每一步的名字，而不是默默打开第一步。两者的区别是有意的：小窗口的意图在 1180×720 上仍然成立，而「打开第 99 步」没有任何合法解释。
@@ -53,6 +59,7 @@ just build      # 同上；也可只构建指定平台
 just linux      # linux/amd64 + linux/arm64
 just windows    # windows/amd64
 just mac        # darwin/universal（Intel + Apple Silicon）
+just mobile     # iOS 模拟器包 + Android .apk/.aab（arm64）
 just artifacts  # 列出已有产物与体积
 just clean      # 清空 build/
 ```
@@ -64,6 +71,8 @@ just clean      # 清空 build/
 | `linux/amd64`、`linux/arm64` | 可执行文件、`llm-lab_<ver>_<arch>.deb`、带 `install.sh` 的 `.tar.gz`、`PKGBUILD` |
 | `windows/amd64` | `LLM Lab.exe`；在 Windows 上构建时自动补 `LLM Lab-setup-<ver>-amd64.exe`（NSIS） |
 | `darwin/universal` | `LLM Lab.app`（同时含 arm64 与 amd64）；在 macOS 上构建时额外产出 `.dmg`，可配置签名/公证 |
+| `android/arm64` | `llm-lab-<ver>.apk` 与 `llm-lab-<ver>.aab`（Play 用后者）；默认用调试密钥签名，见[手机与平板](#手机与平板) |
+| `ios/simulator` | 模拟器用的 `LLM Lab.app`；真机与 App Store 要 `-platform ios`，另需签名身份与描述文件 |
 
 MyGo 不依赖 cgo，所以**在任意系统上都能交叉编译三端**，不需要 macOS 机器也能出 `.app`。只有三件事必须在 macOS 本机完成：`.dmg` 打包、Developer ID 签名、公证。Windows 安装包需要 `makensis`，Linux/macOS 上没装就跳过，不影响 exe 本体。
 
@@ -74,6 +83,24 @@ MyGo 不依赖 cgo，所以**在任意系统上都能交叉编译三端**，不�
 ```bash
 go tool mygo build -platform linux/amd64,linux/arm64,windows/amd64,darwin/universal
 ```
+
+## 手机与平板
+
+同一份 `ui.View` 跑在 iPhone、iPad 和 Android 上（MyGo v0.9 起支持）。手机要各自的原生工具链，所以它们是**显式目标**，不进默认构建：
+
+| 平台 | 需要 | 命令 |
+| --- | --- | --- |
+| iOS 模拟器 | macOS + Xcode | `just ios` / `go tool mygo dev -platform ios` |
+| iPhone、iPad、App Store | 以上 + Apple 开发者团队与描述文件 | `go tool mygo build -platform ios`，再 `go tool mygo publish -platform ios` |
+| Android | SDK + NDK + JDK 17（任意系统，`ANDROID_HOME` / `ANDROID_NDK_HOME`） | `just android` / `go tool mygo dev -platform android` |
+
+`go tool mygo doctor` 会逐项检查这些，缺什么就说什么，不会因为桌面构建不需要它们而失败。
+
+**布局在手机上换了一套。** 三栏（阶段列表 / 课程 / 检查器）要 1180 DIP 才摆得下，而手机是 375–430 DIP、竖屏平板是 744–1024 DIP，所以在 `CompactWidth`（= 桌面最小宽度 1180）以下换成单栏：阶段列表变成顶栏「☰ 阶段」打开的浮层，检查器接在课程下方，步骤条只留进度点和「← / ▶ / →」——手机没有方向键，那三个按钮是唯一的换步方式。两个布局共用同一个 `View`、同一份状态、同一批卡片，差别只在摆放。
+
+`main.go` 的 `-w` / `-h` 仍然夹到 1180×720：那是**桌面**布局的下限，手机的窗口尺寸由系统给，走的是单栏布局。两个分支都有渲染测试盯着：桌面 1180–1920，手机 375–1024（`internal/app/compact_test.go`）。
+
+**默认签名是调试密钥**，Google Play 会拒绝。要发版就在 `mygo.json` 里配 `android.keystore` / `keyAlias`，密码从 `MYGO_ANDROID_KEYSTORE_PASSWORD` 和 `MYGO_ANDROID_KEY_PASSWORD` 读；iOS 侧的签名与公证见 MyGo 自己的 `docs/mobile/building.md`。
 
 ## 开发
 

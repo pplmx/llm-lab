@@ -423,7 +423,17 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 	const maxCell = 20      // a cell larger than this is harder to scan, not easier
 	avail := maxCell * float32(T)
 	if w, h := c.Size(); w > 0 && h > 0 {
-		if room := w - a.SidebarW - a.InspectorW - 2 - 32 - 28 - 240; room < avail {
+		// The panels the window spends before the matrix gets any: none on a phone, where
+		// the compact layout puts one column across the whole screen. Subtracting the desktop
+		// sidebar and inspector there asked for a negative width and the matrix fell to its
+		// 160-DIP floor at every phone size — measured at 393 DIP: 393 − 224 − 330 − 302 is
+		// less than zero, so the matrix was 160 DIP wide with cells under 5 DIP in a column
+		// that had 361 DIP to give.
+		chrome := a.SidebarW + a.InspectorW + 2 + 32 + 28 + 240
+		if a.compact(c) {
+			chrome = 32 + 28 + 160
+		}
+		if room := w - chrome; room < avail {
 			avail = room
 		}
 		if room := h - stageChrome - leaving; room > 0 && room < avail {

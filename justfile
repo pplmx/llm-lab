@@ -5,12 +5,16 @@
 #   just linux        只构建 Linux（amd64 + arm64）
 #   just windows      只构建 Windows（amd64）
 #   just mac          只构建 macOS（universal，Intel + Apple Silicon）
+#   just mobile       构建 iOS（模拟器）+ Android（arm64），见 README「手机与平板」
+#   just android      只构建 Android（arm64）
+#   just ios          只构建 iOS 模拟器版
 #   just run          本机运行；just dev 热重载
 #   just test         静态检查 + 全部测试
 #   just clean        清掉 build/
 #
-# MyGo 不依赖 cgo，任意系统都能交叉编译三端；只有 macOS 的 .dmg
-# 和签名需要在 macOS 上完成。
+# 桌面三端不需要 cgo：任意系统都能交叉编译。手机要各自的原生工具链——
+# iOS 要 macOS + Xcode，Android 要 SDK + NDK + JDK 17，所以 just 默认不构建它们，
+# 用 just mobile 显式跑；只有 macOS 的 .dmg 和签名需要在 macOS 上完成。
 
 set shell := ["bash", "-uc"]
 
@@ -18,10 +22,13 @@ set shell := ["bash", "-uc"]
 # 想固定版本就 GOTOOLCHAIN=go1.27.3 just build。
 export GOTOOLCHAIN := env("GOTOOLCHAIN", "auto")
 
-linux_platforms   := "linux/amd64,linux/arm64"
-windows_platforms := "windows/amd64"
-mac_platforms     := "darwin/universal"
-all_platforms     := linux_platforms + "," + windows_platforms + "," + mac_platforms
+linux_platforms    := "linux/amd64,linux/arm64"
+windows_platforms  := "windows/amd64"
+mac_platforms      := "darwin/universal"
+android_platforms  := "android/arm64"
+ios_platforms      := "ios/simulator"
+mobile_platforms   := ios_platforms + "," + android_platforms
+all_platforms      := linux_platforms + "," + windows_platforms + "," + mac_platforms
 
 # 默认目标：三端全量构建
 default: build
@@ -40,6 +47,19 @@ mac: (_build mac_platforms)
 
 alias macos := mac
 alias win := windows
+
+# 两条手机工具链都在各自的原生环境里：iOS 只能 macOS + Xcode，Android 用任意系统 +
+# SDK / NDK / JDK 17。它们是显式目标而不是默认目标，所以没有工具链的机器上
+# `just` 照样能出三端桌面包。
+
+# 手机与平板：iOS 模拟器包 + Android .apk/.aab（arm64）
+mobile: (_build mobile_platforms)
+
+# 只构建 Android（arm64）
+android: (_build android_platforms)
+
+# 只构建 iOS 模拟器包；真机与 App Store 的签名包另见 README
+ios: (_build ios_platforms)
 
 # 本机直接运行
 run:

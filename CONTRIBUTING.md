@@ -15,6 +15,7 @@ just dev          # 热重载
 just test         # go vet + go test
 just check        # gofmt 检查 + vet + test（CI 的主要门槛）
 just build        # 三端构建
+just mobile       # iOS 模拟器包 + Android arm64（要 Xcode、SDK/NDK）
 just fmt          # gofmt -w
 just bench        # 基准测试（前向 + 整帧渲染，多轮；用机器默认 GOMAXPROCS，适合前后对比）
 just bench-cores  # 按 README 性能一节的「单核 / 4 核」条件量（标量与 SIMD 各一遍）
@@ -29,7 +30,7 @@ just run-simd     # 用实验性 SIMD 本机运行
 | 路径 | 职责 |
 | --- | --- |
 | `internal/model/` | 纯 Go 前向：张量运算、tokenizer、`Forward` 与 `Trace`、权重加载 |
-| `internal/app/` | MyGo 界面：`app.go` 布局与交互、`stages.go` 七个阶段视图、`widgets.go` 自绘组件 |
+| `internal/app/` | MyGo 界面：`app.go` 布局与交互、`stages.go` 七个阶段视图、`widgets.go` 自绘组件、`compact.go` 单栏（手机 / 竖屏平板）布局 |
 | `tools/train.py` | PyTorch 训练并导出 `weights.json`（含参考 logits） |
 | `tools/parity.py` | 导出逐层中间张量，供 Go 侧对拍 |
 
@@ -55,7 +56,9 @@ GOEXPERIMENT=simd go test ./...     # 实验性 SIMD 内核
 
 **README 的截图**：`just docs` 重新生成 `docs/` 下 README 引用的 6 张。它们是仓库资产、不随每次运行更新，所以**改了界面或文案后要跑一次**——第 229 轮发现六张全在展示一个已经不存在的界面（侧栏从 0 编号、没有数据流卡片、没有常见误解块），因为没人注意到它们需要跟着改。
 
-**界面改动的截图对比**：`just snapshots` 把整套截图（七阶段 × 三种窗口尺寸，加上 CJK、长提示词、空提示词、截断、未训练等变体，目前 43 张）渲染到一个目录，`just snapshots-diff <基线> [新目录]` 逐字节比对，列出变化的文件名与「缺失/新增」。不改变视觉的改动应当 0 变化；故意改视觉的应当只差在动手的那几个阶段。比对前会先检查基线目录存在且非空——把空目录当基线会误报「全部变化」。
+**手机布局**：`internal/app/compact_test.go` 在 375–1024 DIP（iPhone SE / iPhone 15 / Pixel 9 / iPad mini / iPad Air / iPad Pro 11）上渲染七个阶段，要求：没有文字画出右边界、`← ▶ →` 一直在视口内、阶段浮层能开能关、检查器能被滚到、每个阶段都能滚到底。改了 `compact.go` 或任何卡片布局都要跑它（约 1 分钟）。它和桌面布局的测试**不互相覆盖**：1180 以上不会走单栏分支，早期正是因为只在 1180+ 渲染，手机布局的越界没被任何测试发现。
+
+**界面改动的截图对比**：`just snapshots` 把整套截图（七阶段 × 三种桌面窗口尺寸 + 七阶段 × 两种手机尺寸 + 手机浮层，加上 CJK、长提示词、空提示词、截断、未训练等变体，目前 58 张）渲染到一个目录，`just snapshots-diff <基线> [新目录]` 逐字节比对，列出变化的文件名与「缺失/新增」。不改变视觉的改动应当 0 变化；故意改视觉的应当只差在动手的那几个阶段。比对前会先检查基线目录存在且非空——把空目录当基线会误报「全部变化」。
 
 ```bash
 just snapshots /tmp/before        # 改之前
@@ -99,7 +102,7 @@ RENDER=1 RENDER_DIR=/tmp/after go test ./internal/app -run 'TestRenderSteps|Test
 
 **3. 热力图轴标签的步长。** 轴上的数字用 `Painter.RichText` 画，**不进 `Texts()`**，所以「每几个标一次」这个数只能看图数。第 255 轮把它从绘制回调里提成 `labelStride(cw)` 这个纯函数，规则（相邻标签间距不小于 26 DIP）因此可以被单测钉住，README 引用的三个步长也有了依据。**仍然测不到的是标签实际画在哪、有没有重叠**——那是像素。
 
-**4. 图片与文字的细微差别。** 逐像素比对能告诉你「变了」，不能告诉你「变得对不对」。`just snapshots-diff` 的 43 张是回归护栏，不是审美判断；改动涉及排版、间距、颜色时，**至少亲眼看 1180×720 和 1500×940 两张**。
+**4. 图片与文字的细微差别。** 逐像素比对能告诉你「变了」，不能告诉你「变得对不对」。`just snapshots-diff` 的 58 张是回归护栏，不是审美判断；改动涉及排版、间距、颜色时，**至少亲眼看 1180×720、1500×940 和一张手机尺寸（393×852）**。
 
 **5. 真实窗口下的焦点与输入法。** `ui.Tester` 的 `Key`/`Move` 是合成事件，走不到平台的焦点链和输入法组合。Tab **顺序**本身是能测的（上面那张表就是测出来的），测不到的是平台怎么把 Tab 分派给真实控件、以及输入法的组合过程。
 

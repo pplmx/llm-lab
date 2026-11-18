@@ -87,6 +87,11 @@ type App struct {
 	SidebarW   float32
 	InspectorW float32
 
+	// StageSheet is whether the compact layout's list of stages is open. The desktop layout
+	// shows that list as a permanent sidebar; a phone has no room for one, so it is a sheet
+	// over the lesson, opened from the header and closed by picking a stage.
+	StageSheet bool
+
 	Scroll ui.ScrollState
 	// StageViewportH is the height of the scrolling stage column as the last frame
 	// laid it out, in DIPs. The keyboard scrolls by one of these for PageUp/PageDown,
@@ -609,14 +614,33 @@ func (a *App) scrollStageBy(delta float32) {
 	a.Scroll.Y = y
 }
 
+// selectStep takes the reader to a stage, and stops the automatic advance.
+//
+// Every route to a stage by hand comes through here: the sidebar rows, the sheet's rows, the
+// dots, the prev/next buttons, the number keys. Autoplay uses moveTo directly, because it is
+// the advance it is making rather than something that should cancel itself.
 func (a *App) selectStep(step int) {
-	if step < 0 || step >= len(lessons) {
+	if !a.moveTo(step) {
 		return
+	}
+	a.stopPlayback()
+}
+
+// moveTo moves the reader to a stage and returns whether it did. It is the part of selectStep
+// that autoplay shares: the stage, the scroll reset, the hover and the stage list's sheet.
+//
+// The sheet is closed here rather than where it is opened, because leaving it open is worse than
+// it looks: it covers the whole window, so it also covers the 下一步 button, and a reader who
+// jumped from the sheet to a stage would have no visible way to move on from it.
+func (a *App) moveTo(step int) bool {
+	if step < 0 || step >= len(lessons) {
+		return false
 	}
 	a.Step = step
 	a.Scroll.X, a.Scroll.Y = 0, 0
-	a.stopPlayback()
 	a.clearHover()
+	a.StageSheet = false
+	return true
 }
 
 // playStepInterval is how long each stage stays up while the lesson plays itself.
@@ -635,13 +659,10 @@ func (a *App) play(c *ui.Context) {
 		a.NextAt = now.Add(playStepInterval)
 	}
 	if !now.Before(a.NextAt) {
-		if a.Step >= len(lessons)-1 {
+		if !a.moveTo(a.Step + 1) {
 			a.Playing = false
 			return
 		}
-		a.Step++
-		a.Scroll.X, a.Scroll.Y = 0, 0
-		a.clearHover()
 		a.NextAt = now.Add(playStepInterval)
 	}
 	c.After(a.NextAt.Sub(now))
@@ -665,40 +686,57 @@ func (a *App) View(c *ui.Context) {
 	a.handleKeys(c)
 	a.play(c)
 	ui.Themed(c, a.theme).Fill().Children(func() {
-		ui.Row(c).Fill().Background(colBg).AlignItems(ui.Stretch).Children(func() {
-			a.sidebar(c)
-			ui.Box(c).Width(1).FillHeight().Background(colBorder)
-			// FillHeight bounds the column to the window. With only Grow(1) the
-			// column sized itself to its content and the overflow was centred,
-			// which cut the top bar off the top of a 720px window.
-			ui.Column(c).Grow(1).FillHeight().Children(func() {
-				a.topbar(c)
-				a.tokenRail(c)
-				a.stepbar(c)
-				// MinHeight(0) lets the scroll view give up height; without it
-				// the fixed rows above are squeezed to nothing at 1180×720.
-				stage := ui.Scroll(c).Grow(1).MinHeight(0).Padding(16, 16, 24).Gap(12).
-					TrackScroll(&a.Scroll)
-				if b := stage.LayoutBounds(); b.H > 0 {
-					a.StageViewportH = b.H
-				}
-				stage.Children(func() {
-					// One key per stage, so switching rebuilds this subtree as
-					// new content and it fades in rather than swapping
-					// instantly. The motion is opacity only, never position:
-					// the whole point of the lab is comparing two stages' data,
-					// and content that slides would make that harder to follow.
-					ui.Column(c).Key(a.Step).Gap(12).FillWidth().
-						Transition(a.stageTransition(c)).Children(func() {
-						a.stageHeader(c)
-						a.cardRow(c)
-						a.stage(c)
-						a.lesson(c)
-					})
-				})
-			})
-			ui.Box(c).Width(1).FillHeight().Background(colBorder)
-			a.inspector(c)
+		if a.compact(c) {
+			a.compactView(c)
+			return
+		}
+		a.wideView(c)
+	})
+}
+
+// wideView is the three-column layout: the stage list, the lesson and the inspector, side by
+// side. It is what desktops get and what every width from MinWindowWidth up is verified at.
+func (a *App) wideView(c *ui.Context) {
+	ui.Row(c).Fill().Background(colBg).AlignItems(ui.Stretch).Children(func() {
+		a.sidebar(c)
+		ui.Box(c).Width(1).FillHeight().Background(colBorder)
+		// FillHeight bounds the column to the window. With only Grow(1) the
+		// column sized itself to its content and the overflow was centred,
+		// which cut the top bar off the top of a 720px window.
+		ui.Column(c).Grow(1).FillHeight().Children(func() {
+			a.topbar(c)
+			a.tokenRail(c)
+			a.stepbar(c)
+			a.stageColumn(c)
+		})
+		ui.Box(c).Width(1).FillHeight().Background(colBorder)
+		a.inspector(c)
+	})
+}
+
+// stageColumn is the middle column of the desktop layout: the fixed bars, then the scrolling
+// lesson. The compact layout builds the same scroll container, so this is where the scroll
+// bookkeeping lives once.
+func (a *App) stageColumn(c *ui.Context) {
+	// MinHeight(0) lets the scroll view give up height; without it
+	// the fixed rows above are squeezed to nothing at 1180×720.
+	stage := ui.Scroll(c).Grow(1).MinHeight(0).Padding(16, 16, 24).Gap(12).
+		TrackScroll(&a.Scroll)
+	if b := stage.LayoutBounds(); b.H > 0 {
+		a.StageViewportH = b.H
+	}
+	stage.Children(func() {
+		// One key per stage, so switching rebuilds this subtree as
+		// new content and it fades in rather than swapping
+		// instantly. The motion is opacity only, never position:
+		// the whole point of the lab is comparing two stages' data,
+		// and content that slides would make that harder to follow.
+		ui.Column(c).Key(a.Step).Gap(12).FillWidth().
+			Transition(a.stageTransition(c)).Children(func() {
+			a.stageHeader(c)
+			a.cardRow(c)
+			a.stage(c)
+			a.lesson(c)
 		})
 	})
 }
@@ -847,10 +885,11 @@ func digitRangeFor(n int) string {
 func (a *App) togglePlay() {
 	a.Playing = !a.Playing
 	a.NextAt = time.Time{}
+	// Pressing play on the last stage starts the pass again; the stage move goes through the
+	// same function every other route uses, so it also closes the compact layout's sheet. A
+	// sheet left open over stage 1 would cover the pause button that started the pass.
 	if a.Playing && a.Step == len(lessons)-1 {
-		a.Step = 0
-		a.Scroll.X, a.Scroll.Y = 0, 0
-		a.clearHover()
+		a.moveTo(0)
 	}
 }
 
@@ -858,14 +897,20 @@ func (a *App) togglePlay() {
 // it teaches, and the formula it derives.
 func (a *App) stageHeader(c *ui.Context) {
 	l := lessons[a.Step]
-	ui.Row(c).FillWidth().AlignItems(ui.Center).Gap(10).Children(func() {
+	// The row wraps, because on a phone the title and the formula cannot share a line: at 393
+	// DIP the title was squeezed to one character per line ("变 / 成 / 权 / 重 / 再 / 混 / 合")
+	// while the formula held its full width, which is the worst of both — the title is what
+	// says where the reader is, and the formula is the reference they look at second. Wrapped,
+	// the formula moves to its own line and both stay readable. On a desktop the two fit and
+	// the row is a single line as before.
+	ui.Row(c).FillWidth().Wrap().AlignItems(ui.Center).Gap(10).Children(func() {
 		ui.Text(c, fmt.Sprintf("第 %d / %d 步", a.Step+1, len(lessons))).
 			FontSize(fontMicro).Bold().TextColor(colBg).
 			Padding(4, 8).Radius(5).Background(colAccent).Shrink(0)
-		ui.Text(c, l.title).FontSize(fontTitle).Bold().TextColor(colText)
+		ui.Text(c, l.title).FontSize(fontTitle).Bold().TextColor(colText).Shrink(0)
 		ui.Spacer(c).Grow(1)
 		ui.Text(c, l.formula).FontSize(fontSmall).TextColor(colAccent2).
-			Padding(4, 8).Radius(5).Background(colPanel2).Shrink(0)
+			Padding(4, 8).Radius(5).Background(colPanel2)
 	})
 }
 
@@ -990,44 +1035,26 @@ func (a *App) topbar(c *ui.Context) {
 		if a.untrained() {
 			a.untrainedBanner(c)
 		}
-		ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
-			field := ui.TextInput(c, &a.Prompt).Grow(1).Label("输入").SingleLine()
-			if field.Changed() {
+		if a.compact(c) {
+			// On a phone the field takes a line of its own. Sharing the row with the three
+			// buttons left it 142 DIP wide at 375 — two characters of a 36-character prompt —
+			// because a text field's minimum width is small and Grow(1) only hands it what is
+			// left. Wrapping the row does not help: the four elements' minimum widths still fit
+			// on one line, so nothing wraps. Its own row is what gives it the window's width.
+			if field := (ui.TextInput(c, &a.Prompt).FillWidth().Label("输入").SingleLine()); field.Changed() {
 				a.promptChanged()
 			}
-			if ui.Button(c, "重置").Clicked() {
-				a.applyPromptAs(defaultPrompt, "重置")
-			}
-			// The undo lives here, beside 重置, because this bar is the one thing on
-			// screen at every stage. It used to exist only on the output stage's
-			// sampling card, which meant Ctrl+Z was advertised on all seven stages
-			// while its only clickable path was on one of them — and at 1180×720 even
-			// that one was below the fold (measured y=1151 in a 940-tall window).
-			// This app's own rule is that every shortcut has something on screen to
-			// click instead; the note in the shortcut line is not a substitute.
-			//
-			// The label is short because the top row is the tightest space in the
-			// window: measured at 1180 wide, the buttons ended 28 DIP from the stage
-			// column's edge, so a long label would shrink the prompt field badly. The
-			// tooltip names the action being taken back.
-			if a.undo != nil {
-				// The tooltip is built from the undo record BEFORE the click is handled.
-				// undoPrompt() clears a.undo, and this closure keeps running after it, so
-				// reading a.undo.what afterwards dereferenced a nil pointer and clicking
-				// 撤销 crashed the window. Measured: the button was rendered, the click
-				// panicked in topbar at app.go:883, and the whole app went down — from the
-				// control the README advertises on every stage.
-				what := a.undo.what
-				undoBtn := ui.Button(c, "撤销")
-				if undoBtn.Clicked() {
-					a.undoPrompt()
+			a.promptActions(c)
+		} else {
+			// The desktop top row: the field, then the buttons that act on the whole prompt.
+			ui.Row(c).Gap(8).AlignItems(ui.Center).Children(func() {
+				field := ui.TextInput(c, &a.Prompt).Grow(1).Label("输入").SingleLine()
+				if field.Changed() {
+					a.promptChanged()
 				}
-				undoBtn.Tooltip("撤销「" + what + "」（Ctrl+Z）")
-			}
-			if ui.PrimaryButton(c, "采样下一个 token").Clicked() {
-				a.sampleNext()
-			}
-		})
+				a.promptButtons(c)
+			})
+		}
 
 		// Each group is dimmed and disabled outside the stages that read it:
 		// the layer and head select nothing while tokenising, and the
@@ -1040,6 +1067,50 @@ func (a *App) topbar(c *ui.Context) {
 			a.tempControl(c)
 		})
 	})
+}
+
+// promptActions is the compact top bar's two rows: the field on its own, then the buttons.
+func (a *App) promptActions(c *ui.Context) {
+	ui.Row(c).Gap(8).Wrap().AlignItems(ui.Center).Children(func() {
+		a.promptButtons(c)
+	})
+}
+
+// promptButtons builds 重置, 撤销 and 采样, which act on the whole prompt. Both layouts draw them,
+// so the two cannot disagree about what is offered — only about where it sits.
+func (a *App) promptButtons(c *ui.Context) {
+	if ui.Button(c, "重置").Clicked() {
+		a.applyPromptAs(defaultPrompt, "重置")
+	}
+	// The undo lives here, beside 重置, because this bar is the one thing on
+	// screen at every stage. It used to exist only on the output stage's
+	// sampling card, which meant Ctrl+Z was advertised on all seven stages
+	// while its only clickable path was on one of them — and at 1180×720 even
+	// that one was below the fold (measured y=1151 in a 940-tall window).
+	// This app's own rule is that every shortcut has something on screen to
+	// click instead; the note in the shortcut line is not a substitute.
+	//
+	// The label is short because the top row is the tightest space in the
+	// window: measured at 1180 wide, the buttons ended 28 DIP from the stage
+	// column's edge, so a long label would shrink the prompt field badly. The
+	// tooltip names the action being taken back.
+	if a.undo != nil {
+		// The tooltip is built from the undo record BEFORE the click is handled.
+		// undoPrompt() clears a.undo, and this closure keeps running after it, so
+		// reading a.undo.what afterwards dereferenced a nil pointer and clicking
+		// 撤销 crashed the window. Measured: the button was rendered, the click
+		// panicked in topbar at app.go:883, and the whole app went down — from the
+		// control the README advertises on every stage.
+		what := a.undo.what
+		undoBtn := ui.Button(c, "撤销")
+		if undoBtn.Clicked() {
+			a.undoPrompt()
+		}
+		undoBtn.Tooltip("撤销「" + what + "」（Ctrl+Z）")
+	}
+	if ui.PrimaryButton(c, "采样下一个 token").Clicked() {
+		a.sampleNext()
+	}
 }
 
 // untrainedBanner warns that the numbers on screen come from random weights.
@@ -1156,40 +1227,7 @@ func (a *App) stepbar(c *ui.Context) {
 		// sidebar already names every stage, and at 1180×720 a wrapped chip
 		// row pushed the lesson below the fold.
 		ui.Row(c).Gap(4).AlignItems(ui.Center).Children(func() {
-			for i := range lessons {
-				i := i
-				var dot ui.Element
-				switch {
-				case i == a.Step:
-					dot = ui.Box(c).Size(18, 6).Radius(3).Background(colAccent)
-				case i < a.Step:
-					dot = ui.Box(c).Size(6, 6).Radius(3).Background(colMuted)
-				default:
-					dot = ui.Box(c).Size(6, 6).Radius(3).Background(colBorder)
-				}
-				// These are 6-DIP dots that jump to a stage, and they gave no sign
-				// of being reachable: no hover change, no tooltip, nothing to
-				// separate them from the label beside them.
-				//
-				// Only the colour changes, never the width. Growing the dot to the
-				// current dot's 18 DIPs did move the row, so it was reverted.
-				// Hovered() has to be asked on the element that is already laid
-				// out, before painting — asking it after building a replacement
-				// shifts every later dot, because the replacement is a new element
-				// in the flex row.
-				hovered := i != a.Step && dot.Hovered()
-				if hovered {
-					dot = dot.Background(colText.Alpha(0.8))
-				}
-				if dot.Clicked() {
-					a.selectStep(i)
-				}
-				// Same text as the sidebar's row tooltip. The two controls
-				// reach the same place, so they should not describe it differently:
-				// the stage's name is already visible in the bar beside the dots,
-				// and the title says what the stage teaches.
-				dot.Tooltip(fmt.Sprintf("第 %d / %d 步 · %s", i+1, len(lessons), lessons[i].title))
-			}
+			a.stepDots(c)
 		})
 		ui.Text(c, fmt.Sprintf("%d / %d · %s", a.Step+1, len(lessons), lessons[a.Step].name)).
 			FontSize(fontSmall).TextColor(colMuted).NoWrap()
@@ -1233,6 +1271,47 @@ func (a *App) stepbar(c *ui.Context) {
 	})
 }
 
+// stepDots is the progress trail: one dot per stage, the current one wider. Both layouts draw
+// it — the desktop step bar and the compact one — so the two cannot drift apart in what a dot
+// means.
+func (a *App) stepDots(c *ui.Context) {
+	for i := range lessons {
+		i := i
+		var dot ui.Element
+		switch {
+		case i == a.Step:
+			dot = ui.Box(c).Size(18, 6).Radius(3).Background(colAccent)
+		case i < a.Step:
+			dot = ui.Box(c).Size(6, 6).Radius(3).Background(colMuted)
+		default:
+			dot = ui.Box(c).Size(6, 6).Radius(3).Background(colBorder)
+		}
+		// These are 6-DIP dots that jump to a stage, and they gave no sign
+		// of being reachable: no hover change, no tooltip, nothing to
+		// separate them from the label beside them.
+		//
+		// Only the colour changes, never the width. Growing the dot to the
+		// current dot's 18 DIPs did move the row, so it was reverted.
+		// Hovered() has to be asked on the element that is already laid
+		// out, before painting — asking it after building a replacement
+		// shifts every later dot, because the replacement is a new element
+		// in the flex row.
+		hovered := i != a.Step && dot.Hovered()
+		if hovered {
+			dot = dot.Background(colText.Alpha(0.8))
+		}
+		if dot.Clicked() {
+			a.selectStep(i)
+		}
+		// Same text as the sidebar's row tooltip. The two controls
+		// reach the same place, so they should not describe it differently:
+		// the stage's name is already visible in the bar beside the dots,
+		// and the title says what the stage teaches.
+		dot.Label(fmt.Sprintf("第 %d 步 %s", i+1, lessons[i].name))
+		dot.Tooltip(fmt.Sprintf("第 %d / %d 步 · %s", i+1, len(lessons), lessons[i].title))
+	}
+}
+
 // ---------------------------------------------------------------- inspector
 
 // inspector follows the lesson: each step shows the tensors that step is
@@ -1240,65 +1319,78 @@ func (a *App) stepbar(c *ui.Context) {
 // still tokenizing.
 func (a *App) inspector(c *ui.Context) {
 	ui.Scroll(c).Width(a.InspectorW).FillHeight().Padding(14).Gap(12).Children(func() {
-		ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-			ui.Text(c, "检查器").FontSize(fontBody).Bold().TextColor(colMuted)
-			ui.Text(c, lessons[a.Step].name).FontSize(fontMicro).TextColor(colFaint)
-			// The stage area now names the layer in its card headings; the
-			// inspector reads the same tensors and has the same problem, more so
-			// because the top bar's controls are what select them and the panel
-			// is on the far side of the window. State the scope once here rather
-			// than repeating it in every card below.
-			//
-			// Only when there is something to scope: with no prompt every tensor
-			// is empty, and "层 0 · 头 0" beside an empty-state paragraph reads as
-			// though those two controls still select something.
-			if len(a.Trace.Tokens) > 0 {
-				if scope := a.inspectorScope(); scope != "" {
-					ui.Box(c).Grow(1)
-					ui.Text(c, scope).FontSize(fontMicro).TextColor(colAccent2).Shrink(0)
-				}
-			}
-		})
-		ui.Box(c).FillWidth().Height(1).Background(colBorder)
+		a.inspectorHeading(c)
+		a.inspectorBody(c)
+	})
+}
 
-		tr := a.Trace
-		if a.SelToken < 0 || a.SelToken >= len(tr.Tokens) {
-			// Both empty states are dead ends unless they name the next
-			// action: with no tokens there is nothing to click, and with no
-			// selection the reader needs to know what to click.
-			if len(tr.Tokens) == 0 {
-				mutedText(c, "检查器跟着选中的 token 走。先在上方输入一句提示词，"+
-					"中栏会列出从这里开始的几条路。")
-				return
+// inspectorHeading introduces the panel and states the layer and the head its cards
+// describe. It is apart from the body because the compact layout draws the two without a
+// scroll container: on a phone the inspector scrolls with the lesson, as one more section
+// of the stage column, rather than standing beside it.
+func (a *App) inspectorHeading(c *ui.Context) {
+	ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
+		ui.Text(c, "检查器").FontSize(fontBody).Bold().TextColor(colMuted)
+		ui.Text(c, lessons[a.Step].name).FontSize(fontMicro).TextColor(colFaint)
+		// The stage area now names the layer in its card headings; the
+		// inspector reads the same tensors and has the same problem, more so
+		// because the top bar's controls are what select them and the panel
+		// is on the far side of the window. State the scope once here rather
+		// than repeating it in every card below.
+		//
+		// Only when there is something to scope: with no prompt every tensor
+		// is empty, and "层 0 · 头 0" beside an empty-state paragraph reads as
+		// though those two controls still select something.
+		if len(a.Trace.Tokens) > 0 {
+			if scope := a.inspectorScope(); scope != "" {
+				ui.Box(c).Grow(1)
+				ui.Text(c, scope).FontSize(fontMicro).TextColor(colAccent2).Shrink(0)
 			}
-			mutedText(c, "点击 token 或热力图的格子，这里会显示它的数值。")
+		}
+	})
+	ui.Box(c).FillWidth().Height(1).Background(colBorder)
+}
+
+// inspectorBody is the cards: the selected token, whatever the stage explains about it, and
+// the cell under the pointer.
+func (a *App) inspectorBody(c *ui.Context) {
+	tr := a.Trace
+	if a.SelToken < 0 || a.SelToken >= len(tr.Tokens) {
+		// Both empty states are dead ends unless they name the next
+		// action: with no tokens there is nothing to click, and with no
+		// selection the reader needs to know what to click.
+		if len(tr.Tokens) == 0 {
+			mutedText(c, "检查器跟着选中的 token 走。先在上方输入一句提示词，"+
+				"中栏会列出从这里开始的几条路。")
 			return
 		}
-		// The same faint-fade as the stage area, under the same key, so the
-		// two panels that describe one stage change together instead of one
-		// snapping while the other eases.
-		ui.Column(c).Key(a.Step).Gap(12).FillWidth().
-			Transition(a.stageTransition(c)).Children(func() {
-			a.inspectorToken(c, tr)
-			switch a.Step {
-			case 0:
-				a.inspectorBytes(c, tr)
-			case 1:
-				a.inspectorEmbed(c, tr)
-			case 2:
-				a.inspectorScores(c, tr)
-			case 3:
-				a.inspectorAttention(c, tr)
-			case 4:
-				a.inspectorResidual(c)
-			case 5:
-				a.inspectorFFN(c)
-			case 6:
-				a.inspectorLogits(c, tr)
-				a.inspectorPrediction(c)
-			}
-			a.inspectorHoverCell(c)
-		})
+		mutedText(c, "点击 token 或热力图的格子，这里会显示它的数值。")
+		return
+	}
+	// The same faint-fade as the stage area, under the same key, so the
+	// two panels that describe one stage change together instead of one
+	// snapping while the other eases.
+	ui.Column(c).Key(a.Step).Gap(12).FillWidth().
+		Transition(a.stageTransition(c)).Children(func() {
+		a.inspectorToken(c, tr)
+		switch a.Step {
+		case 0:
+			a.inspectorBytes(c, tr)
+		case 1:
+			a.inspectorEmbed(c, tr)
+		case 2:
+			a.inspectorScores(c, tr)
+		case 3:
+			a.inspectorAttention(c, tr)
+		case 4:
+			a.inspectorResidual(c)
+		case 5:
+			a.inspectorFFN(c)
+		case 6:
+			a.inspectorLogits(c, tr)
+			a.inspectorPrediction(c)
+		}
+		a.inspectorHoverCell(c)
 	})
 }
 
@@ -1660,7 +1752,10 @@ func (a *App) cardRow(c *ui.Context) {
 	// top corner sliced off flush under the chips (seen in a 1180x720 render).
 	ui.Column(c).FillWidth().Shrink(0).Background(colBg).Sticky().Top(0).
 		Padding(0, 0, 10, 0).Children(func() {
-		ui.Row(c).FillWidth().Gap(6).AlignItems(ui.Center).Children(func() {
+		// The chips wrap for the same reason the stage header does: at 393 DIP the five-card
+		// stage ran "加权求和" off the right edge, which is worse than a second line — a chip
+		// past the edge has no scroll to find it (only the token rail scrolls).
+		ui.Row(c).FillWidth().Wrap().Gap(6).AlignItems(ui.Center).Children(func() {
 			ui.Text(c, "本步").FontSize(fontMicro).TextColor(colFaint).NoWrap()
 			for _, chip := range chips {
 				chip := chip

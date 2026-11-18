@@ -623,7 +623,12 @@ func (a *App) stageScores(c *ui.Context) {
 		// the window: once the page is scrolled the control is out of sight, and
 		// every number below belongs to one specific layer.
 		sectionTitle(c, "分数矩阵", fmt.Sprintf("层 %d · 行 = query，列 = key，右上三角被掩码", a.Layer))
-		ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
+		// The two halves wrap: on a phone the matrix and the legend cannot share a line at
+		// 393 DIP, where the bars' caption took every pixel the matrix left (measured: the
+		// matrix fell to 90 DIP and its column labels overlapped). A flex row with Wrap
+		// moves the second half below only when it does not fit, so the desktop frame is
+		// unchanged.
+		ui.Row(c).Wrap().Gap(14).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
 				a.heatmapAxed(c, h.Scores, "score", true)
 			})
@@ -874,7 +879,8 @@ func (a *App) stageSoftmax(c *ui.Context) {
 
 	a.cardNamed(c, "注意力矩阵", func() {
 		sectionTitle(c, "注意力矩阵", fmt.Sprintf("层 %d · 头 %d", a.Layer, a.Head))
-		ui.Row(c).Gap(14).AlignItems(ui.Start).Children(func() {
+		// Wrapped for the reason the score matrix's pair is: see its call site.
+		ui.Row(c).Wrap().Gap(14).AlignItems(ui.Start).Children(func() {
 			ui.Column(c).Gap(4).Children(func() {
 				a.heatmapAxed(c, h.Attn, "attn", true)
 			})

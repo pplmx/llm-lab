@@ -6,6 +6,20 @@
 
 ### Added
 
+- **本仓库现在真的跑在 iPhone、iPad 和 Android 上，而不只是「能编译」。** MyGo v0.9 起支持手机，v0.8.3 → v0.10.0 升级后 Android 的 `.apk` / `.aab` 能在这台机器上真打出来（SDK + NDK 29 + JDK 17 + Gradle 8.14.3），但**原来的界面在手机上不可用**：三栏布局（224 DIP 侧栏 + 课程 + 330 DIP 检查器）在 393 DIP 宽的手机上把检查器画到 x=521，整块在窗口外；热力图按 `w − SidebarW − InspectorW − …` 算可用宽度，这个减法在手机上得负值，矩阵塌到 160 DIP 的下限
+  - 新增 `internal/app/compact.go`：`CompactWidth`（= 桌面最小宽度 `MinWindowWidth` 1180）以下换单栏布局。阶段列表变成顶栏「☰ 阶段」打开的浮层，检查器接在课程下方，步骤条只留进度点和「← ▶ →」
+  - **两个布局共用同一个 `View`、同一份状态、同一批卡片**：`View` 只判断宽度后分派到 `wideView` 或 `compactView`，`stageColumn` / `inspectorHeading` / `inspectorBody` / `stepDots` / `promptButtons` 都是两边共用的原语，所以内容不会在两个布局里漂移
+  - **窄屏下真正坏掉的三处，都是先在渲染里看见才修的**：标题被公式挤成一字一行（`stageHeader` 改成 `Wrap`）；热力图与图例、矩阵与条形列表在 393 DIP 下互相挤压（两处 `ui.Row` 加 `Wrap`）；输入框只剩 142 DIP（手机上单独一行 + `FillWidth`，因为 `Wrap` 救不了——四个元素的最小宽度仍能挤在同一行）
+  - **「← 下一步 →」在手机上是唯一的路**。桌面可以用方向键和 1–7，手机没有键盘，所以步骤条按钮必须一直在视口内，`compactStepbar` 因此保留它们、只去掉键位提示和阶段名（后者移到顶栏）
+  - 浮层的关闭放在 `selectStep` 调用的 `moveTo` 里，而不是浮层自己：浮层覆盖整个窗口，留着它同时也盖住「下一步」，读者会卡在跳过去的那一步
+- **`internal/app/compact_test.go`，14 个测试盯着单栏布局。** 在 375 / 393 / 412 / 744 / 834 / 1024 DIP 六个真实设备宽度上渲染七个阶段：没有文字画出右边界、`← ▶ →` 始终在视口内、浮层能开能关、检查器能滚到、每个阶段都能滚到底、输入框宽度可用、进度点齐全、空提示词状态不丢面板
+  - **为什么原来的测试一个都抓不到**：桌面测试的最小尺寸是 1180×720，单栏分支在 1180 以上根本不执行；`TestNoHorizontalClipping` 的注释里已经承认「我构造不出能失败的破坏」，而手机宽度恰好是它的一句话反例
+  - 破坏性验证：把 `CompactWidth` 改成 1180 以下 → `TestCompactLayoutIsChosenExactlyBelowTheDesktopMinimum` 报「every width between them is drawn by a layout nothing renders」；删掉 `moveTo` 里的 `StageSheet = false` → 浮层那两条报「left the stage sheet open」
+- **截图集从 43 张扩到 58 张**：加了七阶段 × 两种手机尺寸（375×667、393×852）和一张浮层打开的帧。`CONTRIBUTING` 里的张数同步改了，`TestContributingSnapshotCountMatchesTheSet` 会重新渲染再数一遍
+  - **桌面帧 0 变化**：`just snapshots-diff` 对 43 张基线逐字节比对，全部相同。这轮改的 `stageHeader` / `cardRow` 两处 `Wrap` 在 1180 以上不触发换行，所以桌面视觉不该动——现在是量过的
+- `justfile` 新增 `mobile` / `android` / `ios` 三个配方，**不进默认构建**：iOS 要 macOS + Xcode，Android 要 SDK / NDK / JDK 17，而桌面三端不需要。默认 `just` 和以前一样只出三端桌面包
+- `mygo.json` 加了 `ios.orientations`（竖屏 + 横屏）与 `android.splash`（`#0E1117`，与背景同色，启动时不闪白）
+- README 新增「手机与平板」一节：需要什么工具链、怎么打包、布局在手机上换成了什么样、默认签名是调试密钥（Play 会拒）
 - **README「这些卡片量到了什么」那一节的数字此前一个都没有守卫。** 八张卡片的教学数字——logit lens 的 62.6%/93.0%、权重绑定 25.770 = 9.973 × 9.351 × 0.2763、头独立 0.027–0.144、FFN 名次 103.4→4.5、位置编码 0.040、嵌入 0.0213、掩码 51%–84%、单元 130/384、层改写 0.23/3.17——全部是「写下时量过、之后没人再看」的状态
   - **为什么原有的卡片测试抓不到**：`workings_test.go` 里那批 `...CardQuotesItsOwnNumbers` 检查的是「卡片打印的数等于它自己算的数」，这是**另一个性质**。它们会在「README 描述的是上一份权重」时照样全绿
   - 新增 `internal/app/readme_cards_test.go`，12 个测试，每个都**从 README 里把数字解析出来**，再用卡片同一个函数重算比对。重算走的是 `computeLogitLens` / `computeWeightTying` / `computeHeadIndependence` / `computeFFNAnswerDirection` / `computeFFNConcentration` / `computeLayerRewrite` / `computePosEncodingShape` / `computeEmbeddingStructure` / `meanFutureShare` / `computeHeadProfiles`，与界面同源

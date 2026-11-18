@@ -1,5 +1,11 @@
 {
   "name": "LLM Lab",
   "identifier": "dev.llmlab.app",
-  "out": "build"
+  "out": "build",
+  "ios": {
+    "orientations": ["portrait", "landscape"]
+  },
+  "android": {
+    "splash": "#0E1117"
+  }
 }

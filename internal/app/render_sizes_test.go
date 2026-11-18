@@ -41,6 +41,24 @@ func TestRenderSizes(t *testing.T) {
 		}
 	}
 
+	// The compact layout: every stage at a phone's size and at the narrowest size the
+	// app can be asked to draw. These are the frames that would have shown the inspector
+	// hanging off the right edge before compact.go existed — and the reason the desktop
+	// sizes above cannot: nothing under 1180 renders the three columns at all.
+	for _, s := range []struct{ w, h int }{{375, 667}, {393, 852}} {
+		for _, step := range []int{0, 1, 2, 3, 4, 5, 6} {
+			a.Step = step
+			writeSnapshot(t, dir, fmt.Sprintf("compact-%dx%d-step%d.png", s.w, s.h, step),
+				ui.Render(a.View, s.w, s.h, 1))
+		}
+	}
+	// The sheet open, which is the one state the compact layout cannot show in a frame of
+	// a stage: it covers the stage, so a stack of stage frames never contains it.
+	a.Step = 3
+	a.StageSheet = true
+	writeSnapshot(t, dir, "compact-393x852-sheet.png", ui.Render(a.View, 393, 852, 1))
+	a.StageSheet = false
+
 	// The LayerNorm histograms: the one card whose two charts share an axis, and
 	// the stage-4 frame at 1920 is the only size that shows it above the fold.
 	a.Step = 4
