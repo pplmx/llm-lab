@@ -6,7 +6,7 @@
 
 ### Added
 
-- **本仓库现在真的跑在 iPhone、iPad 和 Android 上，而不只是「能编译」。** MyGo v0.9 起支持手机，v0.8.3 → v0.10.0 升级后 Android 的 `.apk` / `.aab` 能在这台机器上真打出来（SDK + NDK 29 + JDK 17 + Gradle 8.14.3），但**原来的界面在手机上不可用**：三栏布局（224 DIP 侧栏 + 课程 + 330 DIP 检查器）在 393 DIP 宽的手机上把检查器画到 x=521，整块在窗口外；热力图按 `w − SidebarW − InspectorW − …` 算可用宽度，这个减法在手机上得负值，矩阵塌到 160 DIP 的下限
+- **本仓库现在真的跑在 iPhone、iPad 和 Android 上，而不只是「能编译」。** MyGo v0.10.0 才带 `internal/mobile`（v0.9.0 / v0.9.1 都没有），所以 v0.8.3 → v0.10.0 是这一步跨过两个版本；升级后 Android 的 `.apk` / `.aab` 能在这台机器上真打出来（SDK + NDK 29 + JDK 17 + Gradle 8.14.3），但**原来的界面在手机上不可用**：三栏布局（224 DIP 侧栏 + 课程 + 330 DIP 检查器）在 393 DIP 宽的手机上把检查器画到 x=521，整块在窗口外；热力图按 `w − SidebarW − InspectorW − …` 算可用宽度，这个减法在手机上得负值，矩阵塌到 160 DIP 的下限
   - 新增 `internal/app/compact.go`：`CompactWidth`（= 桌面最小宽度 `MinWindowWidth` 1180）以下换单栏布局。阶段列表变成顶栏「☰ 阶段」打开的浮层，检查器接在课程下方，步骤条只留进度点和「← ▶ →」
   - **两个布局共用同一个 `View`、同一份状态、同一批卡片**：`View` 只判断宽度后分派到 `wideView` 或 `compactView`，`stageColumn` / `inspectorHeading` / `inspectorBody` / `stepDots` / `promptButtons` 都是两边共用的原语，所以内容不会在两个布局里漂移
   - **窄屏下真正坏掉的三处，都是先在渲染里看见才修的**：标题被公式挤成一字一行（`stageHeader` 改成 `Wrap`）；热力图与图例、矩阵与条形列表在 393 DIP 下互相挤压（两处 `ui.Row` 加 `Wrap`）；输入框只剩 142 DIP（手机上单独一行 + `FillWidth`，因为 `Wrap` 救不了——四个元素的最小宽度仍能挤在同一行）

@@ -86,7 +86,7 @@ go tool mygo build -platform linux/amd64,linux/arm64,windows/amd64,darwin/univer
 
 ## 手机与平板
 
-同一份 `ui.View` 跑在 iPhone、iPad 和 Android 上（MyGo v0.9 起支持）。手机要各自的原生工具链，所以它们是**显式目标**，不进默认构建：
+同一份 `ui.View` 跑在 iPhone、iPad 和 Android 上（MyGo v0.10 起支持，v0.9.1 及更早没有 `internal/mobile`）。手机要各自的原生工具链，所以它们是**显式目标**，不进默认构建：
 
 | 平台 | 需要 | 命令 |
 | --- | --- | --- |
