@@ -116,3 +116,78 @@ jobs:
           path: build/
           if-no-files-found: error
           retention-days: 7
+
+  # The phone targets: mygo v0.10 added iOS and Android, and this app's UI now has a
+  # layout for them (internal/app/compact.go). Nothing verified that until now — the
+  # test job runs on desktops only, and a phone build that stopped compiling would be
+  # found by whoever next tried to package one.
+  #
+  # These are build jobs, not run jobs: no simulator boots here, so this proves the
+  # toolchains link the app, not that it renders. The layout itself is covered by
+  # compact_test.go at six device widths.
+  mobile:
+    name: mobile (${{ matrix.platform }})
+    needs: test
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # iOS links with Xcode's clang, so it needs a macOS runner. The simulator
+          # build is unsigned, which is the one that needs no Apple developer team:
+          # a device or App Store build wants a provisioning profile this repository
+          # does not carry, and a fork's secrets are not the maintainer's.
+          - os: macos-latest
+            platform: ios/simulator
+          # Android links with the NDK's clang and Gradle builds the APK; any runner can
+          # do it. arm64 is what Google Play requires of an app with native code.
+          - os: ubuntu-latest
+            platform: android/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The Android SDK, the NDK the app links with and a JDK 17 for Gradle. The versions
+      # are the ones the build was verified with on this machine (SDK 36, NDK 29, Gradle
+      # 8.14.3); `mygo doctor` names any that is missing.
+      #
+      # The ubuntu runner already has the SDK and a JDK, so this only adds the two
+      # packages the build needs and points the build at them. `mygo` finds the SDK in
+      # ANDROID_HOME or its usual place, the NDK in ANDROID_NDK_HOME or the SDK, and the
+      # JDK in JAVA_HOME or Android Studio's.
+      - name: 安装 Android SDK 包与 JDK 17
+        if: matrix.platform == 'android/arm64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openjdk-17-jdk-headless
+          echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
+          # GITHUB_ENV is read by the next step, not this one: set it locally too.
+          sdk=/usr/local/lib/android/sdk
+          yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
+          "$sdk/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865"
+
+      # The build below is the real check; this runs first so a missing SDK, NDK or JDK is
+      # one clear line instead of Gradle's wall of text. Only the phone toolchain's lines
+      # matter here: `mygo doctor` exits non-zero when anything is missing, and a Linux
+      # runner always lacks GTK 3 and WebKitGTK — neither is used by native UI, and the
+      # desktop build job installs GTK only because the tests need it.
+      - name: 环境自检（手机工具链）
+        run: go tool mygo doctor || true
+
+      - name: 构建 ${{ matrix.platform }}
+        shell: bash
+        run: go tool mygo build -platform "${{ matrix.platform }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llm-lab-${{ strategy.job-index }}-${{ replace(matrix.platform, '/', '-') }}
+          path: build/
+          if-no-files-found: error
+          retention-days: 7
