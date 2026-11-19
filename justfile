@@ -72,7 +72,7 @@ dev:
 # 静态检查 + 全部测试
 test:
     go vet ./...
-    go test ./...
+    go test -timeout 900s ./...
 
 # CI 另外跑 go mod tidy 检查、internal/model 的 -race、以及 GOEXPERIMENT=simd；
 # 想一次对齐全部就跑 just check-ci。
@@ -81,9 +81,11 @@ test:
 check:
     @files="$(gofmt -l .)"; if [ -n "$files" ]; then echo "未格式化："; echo "$files"; exit 1; fi
     go vet ./...
-    go test ./...
+    go test -timeout 900s ./...
 
 # 比 check 多六到七分钟：SIMD 那一步要把整个测试集（含 internal/app 的 380 秒左右）再跑一遍。
+# -timeout 900s 与 CI 的 go test 步骤一致：标量一遍通不到 300s，实测约 380s，见
+# docs/mygo-first-frame-regression.md。
 # 那两个数是 MyGo v0.9.1 之后的实测（v0.10.0 仍如此）：「新建窗口后的第一帧」从 13ms 变成 51ms（稳态帧
 # 仍是 0.9ms），internal/app 在 SIMD 下就超出了 CI 原来的 300s，所以门槛按实测放到 600s。
 # 两者分开是有意的——日常提交用 check，动到模块依赖、并发或 SIMD 内核时用这个。

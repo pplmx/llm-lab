@@ -58,8 +58,15 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # 900s, not 300: the same first-frame cost that raised the SIMD step to 600s
+      # applies here, and internal/app now takes about 380s for one pass on a fast
+      # machine — measured with `go clean -testcache && go test ./...`. The scalar run
+      # is a little slower than the SIMD one, and a 300s limit turned into "panic: test
+      # timed out after 5m0s" on macOS and Windows while every test in the package
+      # passed when given time. Raised for the same reason as the SIMD step and not
+      # instead of it: see docs/mygo-first-frame-regression.md.
       - name: go test
-        run: go test -timeout 300s ./...
+        run: go test -timeout 900s ./...
 
       # Only internal/model has goroutines: the matrix multiply and the
       # per-head attention loop fan out with sync.WaitGroup. internal/app is

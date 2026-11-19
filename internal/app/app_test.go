@@ -9177,52 +9177,49 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 	// dimension while the reader sees nothing change, and a field-only assertion stays green
 	// (verified by mutation). The two together are what "pointing at an element names it" means.
 	//
-	// Where the elements are is a fact about the fonts, and the earlier attempts at guessing
-	// it all failed on that: a literal start y=320 that landed inside the chip row on macOS;
-	// an x range of 300..1150 that already began past the strips' left edge (measured at 275
-	// here), so a stage only passed where its strip happened to run wide enough to cross 300.
-	// So the sweep covers the stage column — x 200..1250, y from below the heading — and it
-	// runs in two passes: a coarse one that settles most stages, and a fine one only for a
-	// stage the coarse pass missed, which is the narrow per-position strip of the last stage.
+	// Where the elements are is a fact about the fonts, and three earlier guesses all failed
+	// on that on macOS CI: a literal start y=320 that landed inside the chip row, an x range
+	// whose left edge (300) was already past the strips' own start (measured 275), and a
+	// coarse grid that stepped over the output stage's narrow strip.
 	//
-	// A whole-window sweep at the fine pitch costs about a minute; two passes cost 20 seconds
-	// and cover more than either did alone.
+	// The elements are horizontal strips that span most of the card, so the search does not
+	// need a rectangle: one column of probes down the card finds every one of them, whichever
+	// row each sits on. Two columns are swept — one near the card's left edge and one in its
+	// middle — because a strip's readout can be narrow even where the strip is not, and the
+	// window is 2400 tall so a stage's cards are all on screen at once and no scrolling is
+	// needed to reach them.
 	reaches := func(step int, read func(*App) int) (bool, string) {
 		a := newTestApp(t)
 		a.Step = step
 		a.SelToken = 20
-		tr := ui.NewTester(a.View, 1500, 2300)
+		tr := ui.NewTester(a.View, 1500, 2400)
 		tr.Frame()
 		base := tr.Texts()
 		silentAt := ""
-		for pass := 0; pass < 2; pass++ {
-			yStep, xStep := 40, 100
-			if pass == 1 {
-				yStep, xStep = 20, 50
-			}
-			for y := 120; y < 2200; y += yStep {
-				for x := 200; x < 1250; x += xStep {
-					if pass == 1 && x%100 == 0 && y%40 == 0 {
-						continue // the coarse pass covered this point
+		for _, x := range []int{320, 620} {
+			for y := 120; y < 2300; y += 10 {
+				tr.Move(float32(x), float32(y))
+				tr.Frame()
+				if read(a) < 0 {
+					continue
+				}
+				now := tr.Texts()
+				n := len(base)
+				if len(now) < n {
+					n = len(now)
+				}
+				for i := 0; i < n; i++ {
+					if base[i] != now[i] {
+						return true, ""
 					}
-					tr.Move(float32(x), float32(y))
-					tr.Frame()
-					if read(a) < 0 {
-						continue
-					}
-					now := tr.Texts()
-					n := len(base)
-					if len(now) < n {
-						n = len(now)
-					}
-					for i := 0; i < n; i++ {
-						if base[i] != now[i] {
-							return true, ""
-						}
-					}
-					if silentAt == "" {
-						silentAt = fmt.Sprintf("(%d,%d)", x, y)
-					}
+				}
+				// The field was written but nothing on screen moved. Recorded rather than
+				// returned: one such point can sit at a strip's edge where another element
+				// takes the hover while its readout is elsewhere, and the stage still carries
+				// its feedback where the reader points. Only a stage with no working point at
+				// all is a failure.
+				if silentAt == "" {
+					silentAt = fmt.Sprintf("(%d,%d)", x, y)
 				}
 			}
 		}
