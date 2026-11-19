@@ -6,6 +6,19 @@
 
 ### Added
 
+- **手机布局逐张看过之后，修掉两处同一类缺陷：会在窄屏换行的那一行，仍按「第二列还在旁边」算宽度。**
+  - **FFN 卡片的标题被说明挤成两行**：375 DIP 下「升维 → GELU → 降维」被画成「升维 → GELU」/「降维」，一个箭头被读成两个步骤。`sectionTitle` 改成标题 `Shrink(0)` + 行 `Wrap`，让说明换行而不是标题
+  - **热力图为旁边的图例预留了 160 DIP**：手机上图例在矩阵下方，预留什么都没换到——64 token 的矩阵在 375 DIP 下只有 180 宽、格子 2.5 DIP，而可用的 335 DIP 本可给出 4.9 DIP 的格子
+  - 两处都补了**量绘制结果**的守卫，且都对着「把 bug 放回去」验过：`TestPhoneCardTitlesKeepOneLine` 报 40 DIP 的标题、`TestPhoneHeatmapUsesTheCardsWidth` 报 2.5 DIP 的格子
+  - **标题守卫的第一版是空转的**：它先滚到每个阶段的底部再看，而滚出视口的文字在测试器里高宽都是 0，于是它跳过了每一个本该检查的标题、把 bug 放回去仍然全绿。改成在每个标题**真正被绘制**的偏移位置量之后才生效。这是本仓库第二次踩「通不过 mutation 的新覆盖只是让人以为测过了」，上一次是 `just` 命令守卫
+  - 桌面 43 张截图**逐字节不变**，只有被动到的两个阶段的 6 张手机帧变化
+- **CI 新增手机打包作业**：macOS runner 出 `ios/simulator`（无签名，不需要 Apple 开发者团队；真机与 App Store 要描述文件，本仓库不携带），Ubuntu runner 用 SDK 36 + NDK 29 + JDK 17 出 Android arm64 的 `.apk` 与 `.aab`。此前没有任何东西验证手机目标还能链接——测试作业只跑桌面，手机包编译坏了要等下一个打包的人发现
+  - 它们是**构建作业不是运行作业**：不起模拟器，所以证明的是工具链能链接、不是界面能渲染；界面由 `compact_test.go` 在六个设备宽度上覆盖
+  - `mygo doctor` 先跑一次，缺 SDK/NDK/JDK 时给一行清楚的说明而不是 Gradle 的输出；它允许失败，因为 Linux runner 上它总报缺 GTK 3 与 WebKitGTK，而这个应用的窗口是原生 UI，两者都不用
+- **上游性能回归写成了可提交的报告**：[docs/mygo-first-frame-regression.md](docs/mygo-first-frame-regression.md)。首帧 13.2ms → 50.3ms（3.8×），稳态帧 0.91ms → 0.96ms 不变，三棵树交错测三遍；profile 把时间指到 `purego.syscall_SyscallN` 经 `pangoEngine.shape` / `draw` 的文字整形与光栅化，第二帧起消失
+  - **报告明确写了没定位到的部分**：v0.10.0 新增的 `ui/rasterscale.go` 是时间上最吻合的新代码，但没有逐行定位，所以给的是现象与 profile，不是补丁
+  - 这份文档也是 CONTRIBUTING 里「SIMD 门槛为什么是 600s」那一段的出处
+
 - **本仓库现在真的跑在 iPhone、iPad 和 Android 上，而不只是「能编译」。** MyGo v0.10.0 才带 `internal/mobile`（v0.9.0 / v0.9.1 都没有），所以 v0.8.3 → v0.10.0 是这一步跨过两个版本；升级后 Android 的 `.apk` / `.aab` 能在这台机器上真打出来（SDK + NDK 29 + JDK 17 + Gradle 8.14.3），但**原来的界面在手机上不可用**：三栏布局（224 DIP 侧栏 + 课程 + 330 DIP 检查器）在 393 DIP 宽的手机上把检查器画到 x=521，整块在窗口外；热力图按 `w − SidebarW − InspectorW − …` 算可用宽度，这个减法在手机上得负值，矩阵塌到 160 DIP 的下限
   - 新增 `internal/app/compact.go`：`CompactWidth`（= 桌面最小宽度 `MinWindowWidth` 1180）以下换单栏布局。阶段列表变成顶栏「☰ 阶段」打开的浮层，检查器接在课程下方，步骤条只留进度点和「← ▶ →」
   - **两个布局共用同一个 `View`、同一份状态、同一批卡片**：`View` 只判断宽度后分派到 `wideView` 或 `compactView`，`stageColumn` / `inspectorHeading` / `inspectorBody` / `stepDots` / `promptButtons` 都是两边共用的原语，所以内容不会在两个布局里漂移
