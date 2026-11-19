@@ -276,6 +276,53 @@ func stripYAMLComments(src string) string {
 	return strings.Join(lines, "\n")
 }
 
+// TestWorkflowActionsAreOneMajor pins every workflow to a major and keeps them in step.
+//
+// The actions this repository uses are bumped by dependabot, which is how they got four majors
+// behind on upload-artifact: nothing in the code notices, because an old action still runs. The
+// two things worth holding here are that every `uses:` names an action at all (a typo'd ref
+// fails only in CI), and that the same action is used at one version throughout — a workflow
+// where checkout is v4 in one job and v7 in another works until the day someone copies the
+// wrong one.
+//
+// The versions are read from the files, not listed here: the test asks whether they agree and
+// are majors, not whether they are the versions the registry has today, so it does not need
+// editing when dependabot opens its next PR.
+func TestWorkflowActionsAreOneMajor(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	use := regexp.MustCompile(`uses:\s*([\w.-]+/[\w.-]+(?:/[\w.-]+)?)@(\S+)`)
+	seen := map[string]string{} // action -> version, across every workflow
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range use.FindAllStringSubmatch(string(b), -1) {
+			action, version := m[1], m[2]
+			if strings.HasPrefix(action, "./") {
+				continue // a local action, which has no version
+			}
+			if !regexp.MustCompile(`^v\d+$`).MatchString(version) {
+				t.Errorf("%s: %s is pinned to %q, not a major; pinning a major is what lets "+
+					"dependabot's group update move it with a reviewable diff",
+					filepath.Base(f), action, version)
+			}
+			if prev, ok := seen[action]; ok && prev != version {
+				t.Errorf("%s is used at both %s and %s; one version per action across the "+
+					"workflows, or the two jobs run different code", action, prev, version)
+			}
+			seen[action] = version
+		}
+	}
+	if len(seen) < 4 {
+		t.Fatalf("found only %d actions across the workflows; the guard is not reading them",
+			len(seen))
+	}
+}
+
 // TestSnapshotRecipesExist keeps the visual gate runnable without hand-written shell.
 //
 // Comparing 39 PNGs was done by hand every time the UI changed, and the hand version failed
