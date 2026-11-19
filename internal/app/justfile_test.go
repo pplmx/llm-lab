@@ -177,6 +177,38 @@ func TestCheckCIRecipeMatchesTheWorkflow(t *testing.T) {
 	}
 }
 
+// TestCIBuildsThePhoneTargets keeps the mobile job in the workflow, and its two platforms.
+//
+// The app has a layout for phones and a `just mobile` recipe for building them, but the
+// recipe is for a developer's machine: CI is what notices when the phone targets stop
+// linking, which is how a platform silently rots between the releases that exercise it.
+// The job is easy to drop in a workflow edit — it builds nothing the desktop jobs need —
+// so this pins its existence and the two platforms, and pins the JDK the Android host
+// requires: its Gradle 8.14.3 cannot run on a newer JDK (upstream issue #2064), and an
+// image that moves to JDK 21 would fail the job for a reason the workflow should state.
+func TestCIBuildsThePhoneTargets(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatalf("read ci.yml: %v", err)
+	}
+	ci := string(b)
+
+	if !strings.Contains(ci, "\n  mobile:") {
+		t.Fatal("ci.yml has no mobile job; nothing builds the iOS or Android packages, so " +
+			"a phone target that stops linking is found by whoever next tries to ship one")
+	}
+	for _, want := range []struct{ what, needle string }{
+		{"the iOS simulator build", "ios/simulator"},
+		{"the Android build", "android/arm64"},
+		{"JDK 17 for the Android host", "openjdk-17-jdk-headless"},
+		{"the NDK version", "ndk;29.0.14206865"},
+	} {
+		if !strings.Contains(ci, want.needle) {
+			t.Errorf("ci.yml does not name %s (%q)", want.what, want.needle)
+		}
+	}
+}
+
 // TestSnapshotRecipesExist keeps the visual gate runnable without hand-written shell.
 //
 // Comparing 39 PNGs was done by hand every time the UI changed, and the hand version failed

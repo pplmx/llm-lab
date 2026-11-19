@@ -74,7 +74,7 @@ jobs:
 
       - name: go test GOEXPERIMENT=simd（Linux，实验性 SIMD 内核）
         if: runner.os == 'Linux'
-        # 600s, not 300: MyGo v0.10.0 made a window's first frame 13ms → 51ms (steady
+        # 600s, not 300: since MyGo v0.9.1 (v0.10.0 too) a window's first frame is 13ms → 51ms (steady
         # frames are unchanged at 0.9ms), which puts internal/app at about 380s under
         # SIMD on this 128-core machine. Measured, not guessed: skipping the tests this
         # change added still timed out at 300s. The other steps stay at 300s.
@@ -152,23 +152,30 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # The Android SDK, the NDK the app links with and a JDK 17 for Gradle. The versions
-      # are the ones the build was verified with on this machine (SDK 36, NDK 29, Gradle
-      # 8.14.3); `mygo doctor` names any that is missing.
+      # The Android SDK, the NDK the app links with and JDK 17 for Gradle.
       #
-      # The ubuntu runner already has the SDK and a JDK, so this only adds the two
-      # packages the build needs and points the build at them. `mygo` finds the SDK in
-      # ANDROID_HOME or its usual place, the NDK in ANDROID_NDK_HOME or the SDK, and the
-      # JDK in JAVA_HOME or Android Studio's.
+      # JDK 17 exactly, not "a JDK": the host Gradle pins 8.14.3, which cannot run on a
+      # newer JDK — its embedded Kotlin fails to parse the version string (jdk 25 gives
+      # `java.lang.IllegalArgumentException: 25.0.5.0.3`). That is upstream issue #2064;
+      # this step pins what works rather than working around it.
+      #
+      # The SDK's location differs between runner images, so this finds it instead of
+      # assuming one: $ANDROID_HOME, $ANDROID_SDK_ROOT, or the image's usual directory.
+      # The versions are the ones the build was verified with (SDK 36, NDK 29).
       - name: 安装 Android SDK 包与 JDK 17
         if: matrix.platform == 'android/arm64'
         run: |
           sudo apt-get update
           sudo apt-get install -y openjdk-17-jdk-headless
           echo "JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64" >> "$GITHUB_ENV"
-          echo "ANDROID_HOME=/usr/local/lib/android/sdk" >> "$GITHUB_ENV"
-          # GITHUB_ENV is read by the next step, not this one: set it locally too.
-          sdk=/usr/local/lib/android/sdk
+
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$sdk/cmdline-tools/latest" ]; then
+            echo "no Android SDK at $sdk; the runner image changed its layout" >&2
+            exit 1
+          fi
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+          # GITHUB_ENV is read by the next step, not this one: use the local variable.
           yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null
           "$sdk/cmdline-tools/latest/bin/sdkmanager" \
             "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.14206865"
