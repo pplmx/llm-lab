@@ -275,53 +275,59 @@ func TestCompactInspectorFollowsTheLesson(t *testing.T) {
 // column could not reach its end, the last card would be unreachable with no sign that anything
 // was missing.
 //
-// The wheel sweep runs on two representative sizes rather than all six: driving a wheel is a
-// render and an animation each time, and 6 sizes × 7 stages × a dozen wheels was fifty seconds
-// of the suite's time for the same answer. The other sizes still assert that their column
-// scrolls at all, which is the property that could differ there.
+// The two halves are separate because they are different claims, and the first version of this
+// test conflated them: it required every stage at every size to scroll. On a 1024×1366 tablet a
+// short stage fits the screen, so `MaxY` is 0 and "nothing scrolls" is the right answer, not a
+// failure — measured on macOS CI, where step 2 fits at that size. What must hold is that
+// whatever does overflow can be scrolled to its end, and that every size can move a column that
+// overflows.
 func TestCompactLayoutScrollsToTheEndOfEveryStage(t *testing.T) {
-	for _, size := range []struct {
-		name string
-		w, h int
-	}{
-		{"iPhone SE", 375, 667},
-		{"iPad Pro 11", 1024, 1366},
-	} {
+	for _, size := range phoneSizes {
 		for step := 0; step < len(lessons); step++ {
 			a := newTestApp(t)
 			a.Step = step
 			tr := ui.NewTester(a.View, size.w, size.h)
 			tr.Frame()
 			if a.Scroll.MaxY <= 0 {
-				t.Fatalf("%s step %d: nothing scrolls, so the stage's cards below the fold "+
-					"cannot be reached", size.name, step+1)
+				// The stage fits this screen: nothing is hidden below the fold, so there is
+				// nothing to scroll and no end to reach.
+				continue
 			}
-			// One wheel past the end: a single fling of MaxY+400 covers the tallest column
-			// without a dozen animated steps. The assertion is on the offset reached, so a
-			// column that grew past the wheel fails here with the number it needed.
+			// One wheel past the end reaches it: a fling of MaxY+400 covers the tallest
+			// column without a dozen animated steps, and the assertion is on the offset
+			// reached, so a column that grew past the wheel fails with the number it needed.
 			tr.Move(float32(size.w)/2, float32(size.h)/2)
 			tr.Frame()
 			tr.Wheel(float32(size.w)/2, float32(size.h)/2, 0, a.Scroll.MaxY+400)
 			tr.Advance(2e9)
 			tr.Frame()
 			if a.Scroll.Y != a.Scroll.MaxY {
-				t.Fatalf("%s step %d: one wheel of %.0f reached %.0f of a possible %.0f",
-					size.name, step+1, a.Scroll.MaxY+400, a.Scroll.Y, a.Scroll.MaxY)
+				t.Fatalf("%s (%dx%d) step %d: one wheel of %.0f reached %.0f of a possible %.0f",
+					size.name, size.w, size.h, step+1, a.Scroll.MaxY+400, a.Scroll.Y, a.Scroll.MaxY)
 			}
 		}
 	}
 
-	// The other sizes: the column has something to scroll, which is the part that could differ
-	// between a phone and a tablet in landscape.
-	for _, size := range phoneSizes[2:] {
+	// And the narrowest screens must actually scroll something, or the check above would be
+	// satisfied by a layout that never overflows because it never draws the cards.
+	for _, size := range []struct {
+		name string
+		w, h int
+	}{{"iPhone SE", 375, 667}, {"iPhone 15", 393, 852}} {
+		scrolling := 0
 		for step := 0; step < len(lessons); step++ {
 			a := newTestApp(t)
 			a.Step = step
 			tr := ui.NewTester(a.View, size.w, size.h)
 			tr.Frame()
-			if a.Scroll.MaxY <= 0 {
-				t.Fatalf("%s step %d: nothing scrolls", size.name, step+1)
+			if a.Scroll.MaxY > 0 {
+				scrolling++
 			}
+		}
+		if scrolling < len(lessons) {
+			t.Fatalf("%s: only %d of %d stages scroll; every stage is taller than a phone's "+
+				"screen, so this means the cards are not being drawn",
+				size.name, scrolling, len(lessons))
 		}
 	}
 }
