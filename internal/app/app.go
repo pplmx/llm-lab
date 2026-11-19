@@ -1428,9 +1428,16 @@ func (a *App) inspectorToken(c *ui.Context, tr *model.Trace) {
 			ui.Box(c).Size(34, 34).Radius(6).Background(colAccent.Alpha(0.16)).Children(func() {
 				ui.Text(c, glyph).FontSize(fontHero).Bold().TextColor(colAccentOnTint).NoWrap()
 			})
-			ui.Column(c).Gap(1).Children(func() {
+			ui.Column(c).Gap(1).Grow(1).Children(func() {
 				ui.Text(c, fmt.Sprintf("token #%d / %d", a.SelToken, len(tr.Tokens)-1)).FontSize(fontBody).Bold()
-				ui.Text(c, detail).FontSize(fontMicro).TextColor(colFaint).NoWrap()
+				// No NoWrap: the widest form of this line is a 4-byte character's
+				// "byte 0xF0 · 是 '𝄞' 的第 1/4 个字节（F0 9D 84 9E）", and how wide that
+				// draws is a fact about the machine's fonts, not about this panel. Clipped,
+				// it loses the bytes the sentence exists to show — measured at 271 DIP in
+				// the inspector's 260 on the Ubuntu CI runner, which truncates the "（F0 9D
+				// 84 9E）" tail entirely. Wrapping costs a second line on machines whose
+				// fonts are wide, and nothing on those whose fonts fit.
+				ui.Text(c, detail).FontSize(fontMicro).TextColor(colFaint)
 			})
 		})
 	})

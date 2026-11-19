@@ -3580,18 +3580,56 @@ func TestInspectorHeaderLeavesSingleByteTokensAlone(t *testing.T) {
 	}
 }
 
-// TestInspectorDetailFitsTheColumn keeps the longer header line inside the panel
-// at its narrowest width. The widest realistic form is a 4-byte character.
-func TestInspectorDetailFitsTheColumn(t *testing.T) {
-	var w float32
+// TestInspectorDetailIsNotTruncated keeps the longer header line visible at the panel's
+// narrowest width. The widest realistic form is a 4-byte character.
+//
+// The line used to be NoWrap, and the check measured it against an assumed 260 DIP of room
+// (330 panel − 2×14 padding − 34 icon − 8 gap). Both halves were wrong across platforms: how
+// wide that string draws is a fact about the machine's fonts — 236 DIP here, 271 on the Ubuntu
+// CI runner — so on that runner the panel really did cut off its "（F0 9D 84 9E）" tail, which
+// is the part of the sentence that exists to show the bytes. A test asserting "fits in 260"
+// was reporting a real defect, not noise.
+//
+// The line now wraps, so the property to hold is that nothing of it is lost: the string is
+// drawn whole, on one line or several. That is measured by rendering the real inspector and
+// comparing what it drew, rather than by re-deriving the panel's width from constants.
+//
+// Its reach is worth stating, because it is easy to overestimate: on a machine whose fonts make
+// the line fit (236 of 260 DIP here) the check passes with the old NoWrap restored too, since
+// nothing is truncated there. It reports the defect only where the fonts are wide enough to
+// provoke it — the Ubuntu CI runner, measured at 271. That is the platform this test exists
+// for, and the reason it renders rather than asserts a width: a width assertion failed there
+// while the defect was real, and would have kept failing after it was fixed.
+func TestInspectorDetailIsNotTruncated(t *testing.T) {
+	// The widest form: a 4-byte rune's detail line.
+	const detail = `byte 0xF0 · 是 '𝄞' 的第 1/4 个字节（F0 9D 84 9E）`
+	var measured float32
 	ui.Render(func(c *ui.Context) {
-		w, _ = c.MeasureText(0, ui.Span{
-			Text: `byte 0xF0 · 是 '𝄞' 的第 1/4 个字节（F0 9D 84 9E）`, Size: fontMicro})
+		measured, _ = c.MeasureText(0, ui.Span{Text: detail, Size: fontMicro})
 	}, 400, 100, 1)
-	// 330 panel - 2*14 card padding - 34 icon - 8 gap.
+
+	// The panel's own room, for the message only: the assertion below does not depend on it.
 	const available = 330 - 2*14 - 34 - 8
-	if w > available {
-		t.Fatalf("the detail line is %.0f wide, the header offers %.0f", w, float32(available))
+
+	// A real inspector at the app's narrowest window, showing a 4-byte token.
+	a := newTestApp(t)
+	a.Prompt = "𝄞"
+	a.recompute()
+	a.SelToken = 0
+	if a.SelToken >= len(a.Trace.Tokens) {
+		t.Skip("the test prompt produced no tokens")
+	}
+	tr := ui.NewTester(a.View, MinWindowWidth, MinWindowHeight)
+	tr.Frame()
+	if !tr.HasText(detail) && measured <= available {
+		// Fits on one line, and the token this test picked may not be the rune's first byte;
+		// the measurement above is the assertion in that case.
+		return
+	}
+	if !tr.HasText(detail) {
+		t.Fatalf("the inspector does not draw the whole detail line for a 4-byte token "+
+			"(it measures %.0f DIP against %.0f of room, so it has to wrap); the bytes it "+
+			"ends with are what the card exists to show", measured, float32(available))
 	}
 }
 
@@ -9148,9 +9186,22 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 		tr := ui.NewTester(a.View, 1500, 2300)
 		tr.Frame()
 		base := tr.Texts()
-		// Start below the card-row chips (they end near y=235 at this size) so a chip tooltip
-		// is never mistaken for the element, and above the first card's contents.
-		for y := 320; y < 2200; y += 25 {
+		// Start below the card-row chips so a chip's tooltip is never mistaken for the element,
+		// and below the stage heading, which is above them.
+		//
+		// The start used to be a literal 320, on the note that the chips "end near y=235 at
+		// this size". That is true only of the fonts it was measured with: the chips are text,
+		// so a machine whose fonts run taller pushes them below 320, and the sweep then began
+		// inside the chip row. macOS CI found it — "stage 6 no longer carries hover feedback
+		// (the pointer never reached it)" — because the first hits there were chips, whose
+		// tooltips change text without setting the field the test reads.
+		//
+		// The row is found by its chips instead, which are labelled "本步" plus the card names.
+		top := float32(320)
+		if r, ok := tr.Find(stageCards[step][0]); ok && r.W > 0 {
+			top = r.Y + r.H + 40 // past the chips and their tooltips
+		}
+		for y := int(top); y < 2200; y += 25 {
 			for x := 300; x < 1150; x += 100 {
 				tr.Move(float32(x), float32(y))
 				tr.Frame()
