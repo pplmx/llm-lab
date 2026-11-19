@@ -140,10 +140,12 @@ jobs:
           # does not carry, and a fork's secrets are not the maintainer's.
           - os: macos-latest
             platform: ios/simulator
+            artifact: ios-simulator
           # Android links with the NDK's clang and Gradle builds the APK; any runner can
           # do it. arm64 is what Google Play requires of an app with native code.
           - os: ubuntu-latest
             platform: android/arm64
+            artifact: android-arm64
     steps:
       - uses: actions/checkout@v4
 
@@ -194,7 +196,11 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: llm-lab-${{ strategy.job-index }}-${{ replace(matrix.platform, '/', '-') }}
+          # No `replace()`: GitHub Actions has no such expression function (its set is
+          # contains, startsWith, endsWith, format, join, toJSON, fromJSON, hashFiles,
+          # case), and an unknown one rejects the whole workflow before any job runs.
+          # The two platforms are distinct names already, so the slice is the label.
+          name: llm-lab-${{ matrix.artifact }}
           path: build/
           if-no-files-found: error
           retention-days: 7

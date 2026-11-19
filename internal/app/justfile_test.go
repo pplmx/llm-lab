@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -207,6 +208,72 @@ func TestCIBuildsThePhoneTargets(t *testing.T) {
 			t.Errorf("ci.yml does not name %s (%q)", want.what, want.needle)
 		}
 	}
+}
+
+// TestWorkflowExpressionsUseOnlyRealFunctions catches a workflow GitHub rejects outright.
+//
+// An unknown expression function does not fail the job it is in: it rejects the whole
+// workflow before any job is planned. The run shows "This run likely failed because of a
+// workflow file issue", zero jobs and no logs, which says nothing about which expression
+// is wrong. That is how a `replace(matrix.platform, '/', '-')` I wrote in the mobile job
+// cost a push to find: `replace` is not one of GitHub's functions, and every job of the
+// run disappeared with it.
+//
+// The list is GitHub's own (docs: Evaluate expressions in workflows and actions), and the
+// check is deliberately narrow: it looks at identifiers called as functions inside `${{ }}`,
+// so a context property like `matrix.artifact` is not mistaken for one.
+func TestWorkflowExpressionsUseOnlyRealFunctions(t *testing.T) {
+	// GitHub's expression functions, plus the status checks allowed in `if`.
+	known := map[string]bool{
+		"contains": true, "startsWith": true, "endsWith": true, "format": true,
+		"join": true, "toJSON": true, "fromJSON": true, "hashFiles": true, "case": true,
+		"success": true, "failure": true, "cancelled": true, "always": true,
+	}
+	files, err := filepath.Glob(filepath.Join("..", "..", ".github", "workflows", "*.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// `<name>(` inside an expression, with the name not preceded by a dot: `matrix.x(`
+	// would be a property, not a function, and does not occur, but the guard costs nothing.
+	call := regexp.MustCompile(`(^|[^.[:alnum:]_-])([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\(`)
+	expr := regexp.MustCompile(`\$\{\{([^}]*)\}\}`)
+	checked := 0
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range expr.FindAllStringSubmatch(stripYAMLComments(string(b)), -1) {
+			checked++
+			for _, c := range call.FindAllStringSubmatch(m[1], -1) {
+				name := c[2]
+				if known[name] {
+					continue
+				}
+				t.Errorf("%s calls %q, which is not a GitHub Actions expression function; "+
+					"the whole workflow is rejected before any job runs", filepath.Base(f), name)
+			}
+		}
+	}
+	if checked < 5 {
+		t.Fatalf("only %d expressions found; the guard is not reading the workflows", checked)
+	}
+}
+
+// stripYAMLComments removes `#` comments, so a comment that names a function — as the one
+// explaining why `replace` is not used does — is not read as a call to it.
+func stripYAMLComments(src string) string {
+	lines := strings.Split(src, "\n")
+	for i, line := range lines {
+		if j := strings.Index(line, " #"); j >= 0 && !strings.Contains(line[:j], "'") {
+			lines[i] = line[:j]
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			lines[i] = ""
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // TestSnapshotRecipesExist keeps the visual gate runnable without hand-written shell.
