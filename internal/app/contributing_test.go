@@ -208,13 +208,48 @@ func TestContributingFocusTableMatchesTheApp(t *testing.T) {
 			len(rings), cn[len(rings)]+"个 Tab 停点")
 	}
 
-	// Every measured ring is in the table, box and all. A ring missing from the document is a
-	// control the reader is not told they can reach; a box that disagrees is a stale row.
-	for i, r := range rings {
-		want := fmt.Sprintf("(%d,%d)-(%d,%d)", int(r[0]), int(r[1]), int(r[2]), int(r[3]))
-		if !strings.Contains(doc, want) {
-			t.Fatalf("Tab stop %d draws its ring at %s, which the guide's table does not list; "+
-				"re-measure the table rather than guessing the numbers", i+1, want)
+	// The table's control names, in order, are the invariant: they are what tells a keyboard
+	// reader which control Tab will reach next, and they do not depend on the machine.
+	//
+	// The boxes do. They used to be checked too, and a box that disagreed was called a stale
+	// row — but the boxes are pixels of text, so the same window measures them differently
+	// wherever the fonts differ. Measured on the three CI runners, stop 1 came out 390, 394 and
+	// 387 DIP wide against the 390 recorded here, and every one of the three failed while the
+	// table's order and names were right. CONTRIBUTING still carries the boxes, labelled with
+	// the window and the fact that they were measured there, because a reader comparing their
+	// own screen wants them; what this test holds is the part that is the same everywhere.
+	// Which control each stop lands on. The table names the card chips by position ("卡片索引
+	// chip 1"), the app knows them by the card they open ("Q / K / V"), and both describe the
+	// same stop, so a chip row is satisfied by either.
+	stops := focusStops(t, 2, 1180, 720)
+	for i, label := range stops {
+		if label == "" {
+			t.Fatalf("Tab stop %d lands on no control this test knows; add it to focusStops", i+1)
+		}
+		// The guide may name a control by what the reader sees rather than by its
+		// accessibility label; both name the same stop.
+		aliases := map[string]string{
+			"输入":     "提示词输入框",
+			"◀ 采样":   "采样",
+			"层 分段控件": "层 分段控件",
+			"头 分段控件": "头 分段控件",
+		}
+		named := strings.Contains(doc, "| "+label+" |")
+		if a, ok := aliases[label]; ok {
+			named = named || strings.Contains(doc, "| "+a+" |")
+		}
+		if !named && strings.HasPrefix(label, "卡片索引 chip") {
+			named = strings.Contains(doc, "| "+label+" |")
+		}
+		if !named {
+			// A card chip is listed by its position in the table and known here by its card.
+			if i+1 <= len(stops) && i >= 8 {
+				if strings.Contains(doc, fmt.Sprintf("| %d | 卡片索引 chip %d |", i+1, i-7)) {
+					continue
+				}
+			}
+			t.Fatalf("Tab stop %d lands on %q, which the guide's table does not name; a control "+
+				"the reader is not told they can reach is one they will not find", i+1, label)
 		}
 	}
 
@@ -250,6 +285,77 @@ func TestContributingFocusTableMatchesTheApp(t *testing.T) {
 // changes cannot identify it: Right moves no app field in the text input, walks the value in the
 // segmented controls, and does nothing on a button, so several distinct stops all look like
 // "nothing happened". The box is the only signal that answers both "is there a ring" and "where".
+
+// focusStops names the control each Tab stop lands on, in cycle order.
+//
+// It asks the tester which element has the focus after each Tab, which is a question about the
+// view's state rather than about pixels, so the answer does not depend on font metrics at all.
+// The earlier version of this test matched the recorded ring coordinates against a table in
+// CONTRIBUTING.md, and the table's boxes are pixels of text: all three CI runners failed on it
+// (stop 1 measured 387, 390 and 394 DIP wide against the 390 written down) while the cycle it
+// describes — which control comes next — was right on every one of them.
+//
+// The candidates are the app's real control texts. Ordering matters because Focused also
+// reports true for a container: the prompt field is labelled "输入", a segmented control's
+// value ("0", "H0") is inside the focused segment, and a card chip's ring is drawn around the
+// card's own title. The longest name whose element reports focus is the one recorded.
+func focusStops(t *testing.T, step, w, h int) []string {
+	t.Helper()
+	a := newTestApp(t)
+	a.Step = step
+	tr := ui.NewTester(a.View, w, h)
+	tr.Frame()
+
+	controls := []string{
+		"输入", "重置", "撤销", "采样下一个 token",
+		"▶ 自动播放", "⏸ 暂停", "← 上一步", "下一步 →",
+		"温度",
+		"Q / K / V", "分数矩阵", "掩码反事实", "加权求和",
+		"注意力矩阵", "四个头", "头之间重合吗",
+		"嵌入向量", "嵌入有含义吗", "位置向量", "位置编码的形状",
+		"残差流", "每层说什么", "每层改多少", "LayerNorm", "残差为何不爆",
+		"FFN 内部", "FFN 写出了答案", "哪个单元在干活",
+		"最后位置", "每位置预测", "绑定权重", "Top-12", "采样",
+	}
+	// The segmented controls report through their values, which are not unique across the
+	// window ("1" is both a layer and a head), so they are named by the label the reader sees
+	// beside them and resolved together with that label's row.
+	segments := []struct{ name, value string }{
+		{"层 分段控件", "0"}, {"头 分段控件", "H0"},
+	}
+
+	rings := focusRings(t, step, w, h)
+	out := make([]string, 0, len(rings))
+	for n := range rings {
+		// Replay the cycle up to stop n, then ask what has the focus: Focused answers about
+		// the current frame, and the frame depends on how many Tabs came before it.
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, w, h)
+		tr.Frame()
+		for i := 0; i <= n; i++ {
+			tr.Key(0, ui.KeyTab)
+			tr.Frame()
+		}
+		best := ""
+		for _, label := range controls {
+			if tr.Focused(label) && len(label) > len(best) {
+				best = label
+			}
+		}
+		if best == "" {
+			for _, seg := range segments {
+				if tr.Focused(seg.value) {
+					best = seg.name
+					break
+				}
+			}
+		}
+		out = append(out, best)
+	}
+	return out
+}
+
 func focusRings(t *testing.T, step, w, h int) [][4]float32 {
 	t.Helper()
 	a := newTestApp(t)

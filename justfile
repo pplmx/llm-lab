@@ -155,6 +155,7 @@ snapshots dir="/tmp/llm-lab-shots":
 # 重新生成 README 引用的 6 张截图（写进 docs/）
 docs:
     RENDER_DOCS=1 go test ./internal/app -run TestRenderDocs -count=1
+    MYGO_DOCS_IMAGES=1 go test ./internal/app -run TestDocsImagesAreCurrent -count=1
     @echo "docs/ 已更新（$(ls docs/*.png | wc -l) 张）"
 
 # 与另一份截图逐字节对比：just snapshots-diff <基线目录> [新目录]
