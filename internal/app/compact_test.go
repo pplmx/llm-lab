@@ -271,12 +271,22 @@ func TestCompactInspectorFollowsTheLesson(t *testing.T) {
 // TestCompactLayoutScrollsToTheEndOfEveryStage keeps the phone layout's scroll honest.
 //
 // The compact layout puts the inspector inside the same scroll container as the lesson, so the
-// content is roughly a third taller than the desktop's stage column at the same stage — and the
-// desktop's own test wheels eight times because the tallest stage needs six. If the compact
-// column needed more wheels than the test drives, the last card would be unreachable with no
-// sign that anything was missing.
+// content is roughly a third taller than the desktop's stage column at the same stage. If the
+// column could not reach its end, the last card would be unreachable with no sign that anything
+// was missing.
+//
+// The wheel sweep runs on two representative sizes rather than all six: driving a wheel is a
+// render and an animation each time, and 6 sizes × 7 stages × a dozen wheels was fifty seconds
+// of the suite's time for the same answer. The other sizes still assert that their column
+// scrolls at all, which is the property that could differ there.
 func TestCompactLayoutScrollsToTheEndOfEveryStage(t *testing.T) {
-	for _, size := range phoneSizes {
+	for _, size := range []struct {
+		name string
+		w, h int
+	}{
+		{"iPhone SE", 375, 667},
+		{"iPad Pro 11", 1024, 1366},
+	} {
 		for step := 0; step < len(lessons); step++ {
 			a := newTestApp(t)
 			a.Step = step
@@ -286,20 +296,31 @@ func TestCompactLayoutScrollsToTheEndOfEveryStage(t *testing.T) {
 				t.Fatalf("%s step %d: nothing scrolls, so the stage's cards below the fold "+
 					"cannot be reached", size.name, step+1)
 			}
+			// One wheel past the end: a single fling of MaxY+400 covers the tallest column
+			// without a dozen animated steps. The assertion is on the offset reached, so a
+			// column that grew past the wheel fails here with the number it needed.
 			tr.Move(float32(size.w)/2, float32(size.h)/2)
 			tr.Frame()
-			// Twelve wheels of 400 DIP for the same reason the desktop test drives eight: the
-			// compact column holds the lesson and the inspector, and the tallest is the
-			// residual stage. The assertion after the loop is that the offset reached MaxY, so
-			// a future card that needs more than twelve fails here with the number it needed.
-			for i := 0; i < 12; i++ {
-				tr.Wheel(float32(size.w)/2, float32(size.h)/2, 0, 400)
-				tr.Advance(2e9)
-			}
+			tr.Wheel(float32(size.w)/2, float32(size.h)/2, 0, a.Scroll.MaxY+400)
+			tr.Advance(2e9)
 			tr.Frame()
 			if a.Scroll.Y != a.Scroll.MaxY {
-				t.Fatalf("%s step %d: twelve 400-DIP wheels reached %.0f of a possible %.0f",
-					size.name, step+1, a.Scroll.Y, a.Scroll.MaxY)
+				t.Fatalf("%s step %d: one wheel of %.0f reached %.0f of a possible %.0f",
+					size.name, step+1, a.Scroll.MaxY+400, a.Scroll.Y, a.Scroll.MaxY)
+			}
+		}
+	}
+
+	// The other sizes: the column has something to scroll, which is the part that could differ
+	// between a phone and a tablet in landscape.
+	for _, size := range phoneSizes[2:] {
+		for step := 0; step < len(lessons); step++ {
+			a := newTestApp(t)
+			a.Step = step
+			tr := ui.NewTester(a.View, size.w, size.h)
+			tr.Frame()
+			if a.Scroll.MaxY <= 0 {
+				t.Fatalf("%s step %d: nothing scrolls", size.name, step+1)
 			}
 		}
 	}

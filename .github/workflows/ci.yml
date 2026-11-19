@@ -74,7 +74,11 @@ jobs:
 
       - name: go test GOEXPERIMENT=simd（Linux，实验性 SIMD 内核）
         if: runner.os == 'Linux'
-        run: GOEXPERIMENT=simd go test -timeout 300s ./...
+        # 600s, not 300: MyGo v0.10.0 made a window's first frame 13ms → 51ms (steady
+        # frames are unchanged at 0.9ms), which puts internal/app at about 380s under
+        # SIMD on this 128-core machine. Measured, not guessed: skipping the tests this
+        # change added still timed out at 300s. The other steps stay at 300s.
+        run: GOEXPERIMENT=simd go test -timeout 600s ./...
 
   build:
     name: build (${{ matrix.artifact }})

@@ -158,11 +158,15 @@ func TestCheckCIRecipeMatchesTheWorkflow(t *testing.T) {
 		body = body[:j]
 	}
 
+	// The SIMD step's timeout is 600s rather than 300s since MyGo v0.10.0: a window's first
+	// frame went from 13ms to 51ms, which puts internal/app at about 380s under SIMD on this
+	// machine. The command is spelled out here so a change to either the recipe or the
+	// workflow has to change this line too — the point of the test is that the two agree.
 	for _, want := range []string{
 		"go mod tidy",
 		"git diff --exit-code -- go.mod go.sum",
 		"go test -race -timeout 300s ./internal/model/",
-		"GOEXPERIMENT=simd go test -timeout 300s ./...",
+		"GOEXPERIMENT=simd go test -timeout 600s ./...",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("check-ci does not run %q", want)

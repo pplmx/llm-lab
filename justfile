@@ -83,7 +83,9 @@ check:
     go vet ./...
     go test ./...
 
-# 比 check 多三到四分钟：SIMD 那一步要把整个测试集（含 internal/app 的两百秒）再跑一遍。
+# 比 check 多六到七分钟：SIMD 那一步要把整个测试集（含 internal/app 的 380 秒左右）再跑一遍。
+# 那两个数是 MyGo v0.10.0 之后的实测：升级让「新建窗口后的第一帧」从 13ms 变成 51ms（稳态帧
+# 仍是 0.9ms），internal/app 在 SIMD 下就超出了 CI 原来的 300s，所以门槛按实测放到 600s。
 # 两者分开是有意的——日常提交用 check，动到模块依赖、并发或 SIMD 内核时用这个。
 
 # CI 的全部检查，逐条对应 .github/workflows/ci.yml
@@ -91,7 +93,7 @@ check-ci: check
     go mod tidy
     git diff --exit-code -- go.mod go.sum
     go test -race -timeout 300s ./internal/model/
-    GOEXPERIMENT=simd go test -timeout 300s ./...
+    GOEXPERIMENT=simd go test -timeout 600s ./...
 
 # 格式化全部 Go 代码
 fmt:
