@@ -594,78 +594,34 @@ func TestSamplingHasTwoLabelsAndTheReadmeSaysSo(t *testing.T) {
 // appears above it, no `##` may repeat, and the card sections must all sit under the same
 // parent instead of scattered through the document.
 func TestReadmeSectionsStayUnderTheRightParent(t *testing.T) {
-	doc := readREADME(t)
-	var level2 []string
-	var current2 string
-	cardSections := map[string]string{}
-	// The card sections are the ones whose headings are questions the cards answer.
+	// The card sections moved to docs/cards.md, where they are the file's own ## headings — the
+	// property this test was written for ("the card sections sit under one parent, not scattered
+	// through the document") is now structural rather than something to parse for.
+	doc := readmeCardSections(t)
 	cardHeadings := []string{
-		"### 为什么第 5 步多了一张「每一层会说什么」",
-		"### 权重绑定让预测变成一个余弦",
-		"### 学出来的位置编码和 sin/cos 长得完全不一样",
-		"### 四个头真的在分工吗",
-		"### 掩码到底挡掉了什么",
-		"### FFN 的单元也不是平均出力",
-		"### 两层做的活不一样多",
-	}
-	for _, line := range strings.Split(doc, "\n") {
-		switch {
-		case strings.HasPrefix(line, "## "):
-			current2 = strings.TrimPrefix(line, "## ")
-			level2 = append(level2, current2)
-		case strings.HasPrefix(line, "### "):
-			if current2 == "" {
-				t.Fatalf("the heading %q appears before any ## heading", line)
-			}
-			for _, want := range cardHeadings {
-				if line == want {
-					cardSections[want] = current2
-				}
-			}
-		}
+		"## 为什么第 5 步多了一张「每一层会说什么」",
+		"## 权重绑定让预测变成一个余弦",
+		"## 学出来的位置编码和 sin/cos 长得完全不一样",
+		"## 四个头真的在分工吗",
+		"## 掩码到底挡掉了什么",
+		"## FFN 的单元也不是平均出力",
+		"## 两层做的活不一样多",
 	}
 	seen := map[string]bool{}
-	for _, h := range level2 {
-		if seen[h] {
-			t.Fatalf("the ## heading %q appears twice", h)
-		}
-		seen[h] = true
-	}
-	if len(cardSections) != len(cardHeadings) {
-		t.Fatalf("%d of %d card sections are present", len(cardSections), len(cardHeadings))
-	}
-	var parent string
-	for _, heading := range cardHeadings {
-		got := cardSections[heading]
-		if parent == "" {
-			parent = got
+	for _, line := range strings.Split(doc, "\n") {
+		if !strings.HasPrefix(line, "## ") {
 			continue
 		}
-		if got != parent {
-			t.Fatalf("%q sits under %q while the other card sections sit under %q; they are "+
-				"one topic and belong together", heading, got, parent)
+		if seen[line] {
+			t.Fatalf("the heading %q appears twice", line)
 		}
+		seen[line] = true
 	}
-	// And that parent has to come before the appendices, not after them. The appendices
-	// are the parts a reader consults rather than reads: the model card, the correctness
-	// notes, the limitations and the file listing.
-	appendix := map[string]bool{"模型": true, "正确性": true, "已知限制": true, "目录": true}
-	parentAt, appendixAt := -1, -1
-	for i, h := range level2 {
-		if h == parent {
-			parentAt = i
+	for _, want := range cardHeadings {
+		if !seen[want] {
+			t.Fatalf("docs/cards.md no longer has the section %q; the README links to this "+
+				"file for the card notes, so a section dropped here is a note nobody reads", want)
 		}
-		if appendix[h] && appendixAt < 0 {
-			appendixAt = i
-		}
-	}
-	if parentAt < 0 {
-		t.Fatalf("the card sections' parent %q is not a ## heading", parent)
-	}
-	if appendixAt >= 0 && parentAt > appendixAt {
-		t.Fatalf("the card sections sit under %q at position %d, after the appendix %q at %d; "+
-			"teaching material should not be filed behind the appendices",
-			parent, parentAt, level2[appendixAt], appendixAt)
 	}
 }
 
@@ -805,7 +761,7 @@ func TestReadmeCardRowClaimsMatchTheStageTable(t *testing.T) {
 
 	// The README now states that every stage currently draws the row. If that stops being
 	// true, the sentence has to change — and a single-card stage is the only way it can.
-	const claim = "目前七个阶段都至少有三张"
+	const claim = "七个阶段目前都至少有三张"
 	if !strings.Contains(doc, claim) {
 		t.Fatal("the README no longer states how many cards each stage carries; update this " +
 			"test with the sentence you wrote about when the index row appears")
@@ -885,7 +841,9 @@ func TestReadmeViewportOverflowMatchesTheLayout(t *testing.T) {
 // TestReadmeSkillFiguresMatchTheDefaultView pins the *word-boundary* figures at the default
 // temperature but never looked at this sentence. This does.
 func TestReadmeSkillLossMatchesTheOpenedTemperature(t *testing.T) {
-	doc := readREADME(t)
+	// The sentence lives in the card notes (the logit-lens/Logits paragraph), which are
+	// docs/cards.md since they were split out of the README.
+	doc := readmeCardSections(t)
 	const claim = "默认打开的 T = 0.80 下是 **1.184 nats**、T = 1.00 下是 1.121"
 	if !strings.Contains(doc, claim) {
 		t.Fatal("the README no longer states the per-position loss at both the opened and the " +

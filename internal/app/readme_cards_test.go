@@ -12,7 +12,8 @@ import (
 	"llmlab/internal/model"
 )
 
-// The README's "这些卡片量到了什么" section quotes measured figures for eight cards. Those
+// docs/cards.md — the card notes split out of the README — quotes measured figures for eight
+// cards. Those
 // numbers were all correct when written, and — unlike the numbers in the interaction tables
 // and the gate timings — nothing re-derived them. The card tests in workings_test.go check
 // that each card prints *its own* computed values, which is a different property: they would
@@ -27,17 +28,21 @@ import (
 // 0.80. The same shape as the per-position loss figure corrected in the previous round. The
 // README now states the temperature, and the test pins both.
 
-// readmeCardSections returns the README's body, or fails if the section it guards is gone.
+// readmeCardSections returns the card notes, or fails if the file it guards is gone.
+//
+// The notes were a 139-line section of the README — a third of it — until they moved to
+// docs/cards.md, which is where a reader who wants them looks and what the README links to.
+// The figures did not change when they moved; only the file this reads did.
 func readmeCardSections(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "cards.md"))
 	if err != nil {
-		t.Fatalf("read README.md: %v", err)
+		t.Fatalf("read docs/cards.md: %v", err)
 	}
 	doc := string(b)
-	if !strings.Contains(doc, "## 这些卡片量到了什么") {
-		t.Fatal("the README no longer has the card section these tests guard; if it was " +
-			"renamed or removed, update or delete this file together with it")
+	if !strings.Contains(doc, "## FFN 写出了答案") {
+		t.Fatal("docs/cards.md no longer has the card notes these tests guard; if the file " +
+			"was renamed or removed, update or delete this file together with it")
 	}
 	return doc
 }
@@ -675,7 +680,9 @@ func TestReadmeHeadProfileTableMatchesTheHeads(t *testing.T) {
 // README's copy of it had no owner, which is the same gap this file closes for the other
 // figures.
 func TestReadmeFFNHistogramFiguresMatchTheRow(t *testing.T) {
-	doc := readmeCardSections(t)
+	// This figure lives in the README's "图上每个元素怎么读" table, not in the card notes, so it
+	// reads the README — the only one of this file's tests that does.
+	doc := readREADME(t)
 
 	re := regexp.MustCompile(`本模型一行里 (\d+)/(\d+) 个负值只分布在 0 左侧 (\d+)% 的宽度内`)
 	m := re.FindStringSubmatch(doc)
