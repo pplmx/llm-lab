@@ -16,7 +16,7 @@
   - 它们是**构建作业不是运行作业**：不起模拟器，所以证明的是工具链能链接、不是界面能渲染；界面由 `compact_test.go` 在六个设备宽度上覆盖
   - `mygo doctor` 先跑一次，缺 SDK/NDK/JDK 时给一行清楚的说明而不是 Gradle 的输出；它允许失败，因为 Linux runner 上它总报缺 GTK 3 与 WebKitGTK，而这个应用的窗口是原生 UI，两者都不用
 - **上游性能回归写成了可提交的报告**：[docs/mygo-first-frame-regression.md](docs/mygo-first-frame-regression.md)。首帧 13.2ms → 50.3ms（3.8×），稳态帧 0.91ms → 0.96ms 不变，三棵树交错测三遍；profile 把时间指到 `purego.syscall_SyscallN` 经 `pangoEngine.shape` / `draw` 的文字整形与光栅化，第二帧起消失
-  - **报告明确写了没定位到的部分**：v0.10.0 新增的 `ui/rasterscale.go` 是时间上最吻合的新代码，但没有逐行定位，所以给的是现象与 profile，不是补丁
+  - **报告里有一条被自己推翻的推断，如实留着**：最初把原因归给 v0.10.0 新增的 `ui/rasterscale.go`，但 v0.9.1 的对照表明回归那时就已发生，`rasterscale.go` 还不是原因；真正的机制是 #1730 的「每个 Tester 一套文字系统」。profile 只定位到文字整形与光栅化，没有逐行定位，所以给的是现象与 profile，不是补丁
   - 这份文档也是 CONTRIBUTING 里「SIMD 门槛为什么是 600s」那一段的出处
 
 - **本仓库现在真的跑在 iPhone、iPad 和 Android 上，而不只是「能编译」。** MyGo v0.10.0 才带 `internal/mobile`（v0.9.0 / v0.9.1 都没有），所以 v0.8.3 → v0.10.0 是这一步跨过两个版本；升级后 Android 的 `.apk` / `.aab` 能在这台机器上真打出来（SDK + NDK 29 + JDK 17 + Gradle 8.14.3），但**原来的界面在手机上不可用**：三栏布局（224 DIP 侧栏 + 课程 + 330 DIP 检查器）在 393 DIP 宽的手机上把检查器画到 x=521，整块在窗口外；热力图按 `w − SidebarW − InspectorW − …` 算可用宽度，这个减法在手机上得负值，矩阵塌到 160 DIP 的下限
@@ -33,7 +33,7 @@
 - `justfile` 新增 `mobile` / `android` / `ios` 三个配方，**不进默认构建**：iOS 要 macOS + Xcode，Android 要 SDK / NDK / JDK 17，而桌面三端不需要。默认 `just` 和以前一样只出三端桌面包
 - `mygo.json` 加了 `ios.orientations`（竖屏 + 横屏）与 `android.splash`（`#0E1117`，与背景同色，启动时不闪白）
 - README 新增「手机与平板」一节：需要什么工具链、怎么打包、布局在手机上换成了什么样、默认签名是调试密钥（Play 会拒）
-- **MyGo v0.10.0 让「新建窗口后的第一帧」慢了 3.9 倍，CI 的 SIMD 门槛因此从 300s 放到 600s。** 实测：同一份 view，稳态帧两版都是 **0.9ms**，但新建一个窗口后的第一帧从 **13ms 变成 51ms**（`ui.Render` 与 `ui.NewTester` 都是这个数）。测试里每个 tester 都是一次新窗口，于是整个 `internal/app` 跟着变慢
+- **MyGo 从 v0.9.1 起让「新建窗口后的第一帧」慢了 4 倍多（v0.10.0 仍如此），CI 的 SIMD 门槛因此从 300s 放到 600s。** 实测：同一份 view，稳态帧两版都是 **0.9ms**，但新建一个窗口后的第一帧从 **13ms 变成 51ms**（`ui.Render` 与 `ui.NewTester` 都是这个数）。测试里每个 tester 都是一次新窗口，于是整个 `internal/app` 跟着变慢
   - 这不是环境噪声：交替跑三棵树（原始 HEAD / 只升级 / 本轮）各两遍，差异稳定复现；期间这台机器的 `load average` 在 50 以上，所以每个结论都是交错测出来的
   - **SIMD 那一步因此真的红了**：`GOEXPERIMENT=simd go test -timeout 300s ./...` 实测约 380s。把本轮新增的测试全部 `-skip` 掉仍然超时，所以红来自升级本身，不是新测试
   - 处理：只把这一个数字按实测放到 600s，理由写进 `justfile` 与 `ci.yml` 的注释；`gofmt`、`vet`、标量测试与 `-race` 的标准一个字没动，`TestCheckCIRecipeMatchesTheWorkflow` 仍然要求配方与 workflow 逐条一致（现在它写 600s）

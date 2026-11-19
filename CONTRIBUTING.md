@@ -48,9 +48,9 @@ GOEXPERIMENT=simd go test -timeout 600s ./...   # 实验性 SIMD 内核
 
 两个门槛分开是有意的：`just check` 约 **6.5 分钟**，`just check-ci` 冷缓存约 **13 分钟**。日常提交跑前者；动到模块依赖、并发或 SIMD 内核时跑后者。
 
-这两个数的由来（含三棵树交错实测的基准数据、CPU profile 与推断边界）见 [docs/mygo-first-frame-regression.md](docs/mygo-first-frame-regression.md)，那份文档同时是给上游的问题报告底稿。**这两个数在 MyGo v0.10.0 之后翻了一倍。** 升级让「新建窗口后的第一帧」从 **13ms 变成 51ms**（稳态帧不变，仍是 0.9ms）；测试里每个 `ui.NewTester` / `ui.Render` 都是一次新窗口，所以整个 `internal/app` 跟着变慢。SIMD 那一步因此超出原来的 `-timeout 300s`（实测约 380s），门槛按实测调到了 600s。**这不是把红灯改绿**：`gofmt`、`vet`、标量测试和 `-race` 都仍是原来的标准，只有这一个具体数字跟着实测走，理由写在 `justfile` 与 `ci.yml` 的注释里。
+这两个数的由来（含三棵树交错实测的基准数据、CPU profile 与推断边界）见 [docs/mygo-first-frame-regression.md](docs/mygo-first-frame-regression.md)，那份文档同时是给上游的问题报告底稿。**这两个数在 MyGo v0.9.1 之后翻了一倍**（v0.10.0 仍如此）。「新建窗口后的第一帧」从 **13ms 变成 51ms**（稳态帧不变，仍是 0.9ms）；测试里每个 `ui.NewTester` / `ui.Render` 都是一次新窗口，所以整个 `internal/app` 跟着变慢。SIMD 那一步因此超出原来的 `-timeout 300s`（实测约 380s），门槛按实测调到了 600s。**这不是把红灯改绿**：`gofmt`、`vet`、标量测试和 `-race` 都仍是原来的标准，只有这一个具体数字跟着实测走，理由写在 `justfile` 与 `ci.yml` 的注释里。
 
-这两个数是从「约 35 秒 / 约 75 秒」改过来的，那几个值低估了一个数量级。差别几乎都在 `internal/app`：它有五百多个测试函数，MyGo v0.10.0 之后标量一遍约 400 秒、SIMD 一遍约 380 秒，而 `just check-ci` 会把它**跑两遍**，再加上 vet、`go mod tidy`、`-race` 的 model 包。实测命令：`go clean -testcache && time just check-ci`（这台机器上必须在一个没有别的重负载作业的时段跑，否则数字会虚高两三倍——这台机器的 `load average` 长期在 50 以上）。
+这两个数是从「约 35 秒 / 约 75 秒」改过来的，那几个值低估了一个数量级。差别几乎都在 `internal/app`：它有五百多个测试函数，MyGo v0.9.1 之后标量一遍约 400 秒、SIMD 一遍约 380 秒，而 `just check-ci` 会把它**跑两遍**，再加上 vet、`go mod tidy`、`-race` 的 model 包。实测命令：`go clean -testcache && time just check-ci`（这台机器上必须在一个没有别的重负载作业的时段跑，否则数字会虚高两三倍——这台机器的 `load average` 长期在 50 以上）。
 
 这个数字值得写准：它是读者决定「这次改动要不要跑全量」的依据，写小了会让人以为顺手跑一下没关系。测试函数写成「五百多个」而不是精确值，是因为精确值每加一个测试就会过期——上一版写的是「489 个」，二十多个测试之后就成了假话，而没有任何测试盯着它。`TestContributingTestCountStaysAboveItsStatedBound` 现在盯着这个下界，低于它就会失败并提示改写这句话。
 

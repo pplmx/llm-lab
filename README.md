@@ -364,6 +364,8 @@ go run . -weights /path/to/other.json  # 换一份权重（需为 vocab 256 的 
 
 性能（AMD EPYC 7742，Go 1.27，单核 / 4 核）：前向 16 token 1.4 / 1.2 ms、64 token 6.2 / 2.6 ms；用实验性 SIMD 构建（`just build-simd`，Go 1.27 的 `simd` 包，amd64 走 AVX、arm64 走 NEON）后 16 token 0.52 / 0.51 ms、64 token 2.5 / 1.6 ms。矩阵乘按行、注意力按头并行，最多 8 个 worker；整帧 `ui.Render` 1500×940 ≈ 13.6 ms（CPU 光栅化，热力图只画因果掩码内的格子）。基准：`just bench-cores` 按这一节的「单核 / 4 核」条件重量（标量与 SIMD 都跑一遍）；`just bench` / `just bench-simd` 用机器默认 GOMAXPROCS，适合和自己改动的前后做对比，数值不能直接和这里引用的比。
 
+**上面那个整帧数字是 MyGo v0.8.3 时代的。** 从 v0.9.1 起（v0.10.0 仍如此），`ui.Render` / `ui.NewTester` **每次都是新建一个窗口**，而新建窗口的首帧要为一套新的文字系统付出代价：同一份 view 的首帧从 **13.2 ms 变成 50.3 ms**（3.8×），**同一个窗口的第二帧起没有变化**（0.91 ms → 0.96 ms）。这既影响这里的性能数字，也影响测试——测试里每个 tester 都是一次新窗口，所以 `just check-ci` 的 SIMD 那一步从 216 s 涨到约 380 s。实测方法、三个版本的对照表与 CPU profile 见 [docs/mygo-first-frame-regression.md](docs/mygo-first-frame-regression.md)，那份文档同时是提到上游的问题报告（[egoist/mygo#2085](https://github.com/egoist/mygo/issues/2085)）。上游修好之后，这一节的数字与 CI 的超时可以按同样的方法测回来。
+
 ## 已知限制
 
 - 权重很小，输出质量只够演示；中文输入可以分词和可视化，但模型没在中文上训练，续写没有意义
