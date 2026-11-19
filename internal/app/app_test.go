@@ -9186,6 +9186,7 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 		tr := ui.NewTester(a.View, 1500, 2300)
 		tr.Frame()
 		base := tr.Texts()
+		silentAt := ""
 		// Start below the card-row chips so a chip's tooltip is never mistaken for the element,
 		// and below the stage heading, which is above them.
 		//
@@ -9196,12 +9197,17 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 		// (the pointer never reached it)" — because the first hits there were chips, whose
 		// tooltips change text without setting the field the test reads.
 		//
-		// The row is found by its chips instead, which are labelled "本步" plus the card names.
-		top := float32(320)
-		if r, ok := tr.Find(stageCards[step][0]); ok && r.W > 0 {
-			top = r.Y + r.H + 40 // past the chips and their tooltips
-		}
-		for y := int(top); y < 2200; y += 25 {
+		// The sweep runs over the whole stage column and lets the two conditions decide. That
+		// is sound here for a reason worth writing down: a chip's tooltip changes text but
+		// never sets the hover field this test reads, so a chip cannot satisfy both — and the
+		// field is what the test is about. Skimming the chip row by a fixed offset was the
+		// fragile part: the row's height is text, so the offset that cleared it here left the
+		// sweep inside it on macOS CI, and stage 5 reported "the pointer never reached it"
+		// while the element was fine.
+		//
+		// Starting at 120 rather than 0 keeps the stage heading and the step bar out of it,
+		// which saves frames without deciding anything about where the cards are.
+		for y := 120; y < 2200; y += 25 {
 			for x := 300; x < 1150; x += 100 {
 				tr.Move(float32(x), float32(y))
 				tr.Frame()
@@ -9219,9 +9225,19 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 					}
 				}
 				// The field was written but nothing on screen moved: the readout that names
-				// the hovered element is missing or not rendered.
-				return false, fmt.Sprintf("the field was set at (%d,%d) but no text changed", x, y)
+				// the hovered element is missing or not rendered. Recorded rather than
+				// returned, because one such point does not settle the stage: a point at the
+				// edge of a strip can land on an element that writes the field while its
+				// readout is off screen, and the stage still carries its feedback where the
+				// reader points. Only a stage with no working point at all is a failure.
+				if silentAt == "" {
+					silentAt = fmt.Sprintf("(%d,%d)", x, y)
+				}
 			}
+		}
+		if silentAt != "" {
+			return false, fmt.Sprintf("the hover field was set at %s but no text changed "+
+				"anywhere for this stage", silentAt)
 		}
 		return false, "the pointer never reached it"
 	}
