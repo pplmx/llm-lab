@@ -9177,8 +9177,16 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 	// dimension while the reader sees nothing change, and a field-only assertion stays green
 	// (verified by mutation). The two together are what "pointing at an element names it" means.
 	//
-	// The pointer has to land on the element and the elements sit at different heights per
-	// stage, so the probe sweeps. It stops at the first hit that satisfies both conditions.
+	// Where the elements are is a fact about the fonts, and the earlier attempts at guessing
+	// it all failed on that: a literal start y=320 that landed inside the chip row on macOS;
+	// an x range of 300..1150 that already began past the strips' left edge (measured at 275
+	// here), so a stage only passed where its strip happened to run wide enough to cross 300.
+	// So the sweep covers the stage column — x 200..1250, y from below the heading — and it
+	// runs in two passes: a coarse one that settles most stages, and a fine one only for a
+	// stage the coarse pass missed, which is the narrow per-position strip of the last stage.
+	//
+	// A whole-window sweep at the fine pitch costs about a minute; two passes cost 20 seconds
+	// and cover more than either did alone.
 	reaches := func(step int, read func(*App) int) (bool, string) {
 		a := newTestApp(t)
 		a.Step = step
@@ -9187,51 +9195,34 @@ func TestHoverFeedbackIsWhereItCarriesInformation(t *testing.T) {
 		tr.Frame()
 		base := tr.Texts()
 		silentAt := ""
-		// Start below the card-row chips so a chip's tooltip is never mistaken for the element,
-		// and below the stage heading, which is above them.
-		//
-		// The start used to be a literal 320, on the note that the chips "end near y=235 at
-		// this size". That is true only of the fonts it was measured with: the chips are text,
-		// so a machine whose fonts run taller pushes them below 320, and the sweep then began
-		// inside the chip row. macOS CI found it — "stage 6 no longer carries hover feedback
-		// (the pointer never reached it)" — because the first hits there were chips, whose
-		// tooltips change text without setting the field the test reads.
-		//
-		// The sweep runs over the whole stage column and lets the two conditions decide. That
-		// is sound here for a reason worth writing down: a chip's tooltip changes text but
-		// never sets the hover field this test reads, so a chip cannot satisfy both — and the
-		// field is what the test is about. Skimming the chip row by a fixed offset was the
-		// fragile part: the row's height is text, so the offset that cleared it here left the
-		// sweep inside it on macOS CI, and stage 5 reported "the pointer never reached it"
-		// while the element was fine.
-		//
-		// Starting at 120 rather than 0 keeps the stage heading and the step bar out of it,
-		// which saves frames without deciding anything about where the cards are.
-		for y := 120; y < 2200; y += 25 {
-			for x := 300; x < 1150; x += 100 {
-				tr.Move(float32(x), float32(y))
-				tr.Frame()
-				if read(a) < 0 {
-					continue
-				}
-				now := tr.Texts()
-				n := len(base)
-				if len(now) < n {
-					n = len(now)
-				}
-				for i := 0; i < n; i++ {
-					if base[i] != now[i] {
-						return true, ""
+		for pass := 0; pass < 2; pass++ {
+			yStep, xStep := 40, 100
+			if pass == 1 {
+				yStep, xStep = 20, 50
+			}
+			for y := 120; y < 2200; y += yStep {
+				for x := 200; x < 1250; x += xStep {
+					if pass == 1 && x%100 == 0 && y%40 == 0 {
+						continue // the coarse pass covered this point
 					}
-				}
-				// The field was written but nothing on screen moved: the readout that names
-				// the hovered element is missing or not rendered. Recorded rather than
-				// returned, because one such point does not settle the stage: a point at the
-				// edge of a strip can land on an element that writes the field while its
-				// readout is off screen, and the stage still carries its feedback where the
-				// reader points. Only a stage with no working point at all is a failure.
-				if silentAt == "" {
-					silentAt = fmt.Sprintf("(%d,%d)", x, y)
+					tr.Move(float32(x), float32(y))
+					tr.Frame()
+					if read(a) < 0 {
+						continue
+					}
+					now := tr.Texts()
+					n := len(base)
+					if len(now) < n {
+						n = len(now)
+					}
+					for i := 0; i < n; i++ {
+						if base[i] != now[i] {
+							return true, ""
+						}
+					}
+					if silentAt == "" {
+						silentAt = fmt.Sprintf("(%d,%d)", x, y)
+					}
 				}
 			}
 		}
