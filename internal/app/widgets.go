@@ -431,7 +431,12 @@ func (a *App) heatmapAxed(c *ui.Context, attn [][]float32, kind string, axes boo
 		// that had 361 DIP to give.
 		chrome := a.SidebarW + a.InspectorW + 2 + 32 + 28 + 240
 		if a.compact(c) {
-			chrome = 32 + 28 + 160
+			// On a phone the card's second column — the legend, or the bars — wraps below the
+			// matrix instead of sitting beside it, so nothing is reserved for it and the matrix
+			// gets the card's whole inner width. Reserving 160 for it here asked for 2.5-DIP
+			// cells on a 64-token prompt at 375 DIP, when 4.9 fit: measured, the box came out
+			// 180 wide with the card's inner width at 315.
+			chrome = 32 + 28
 		}
 		if room := w - chrome; room < avail {
 			avail = room

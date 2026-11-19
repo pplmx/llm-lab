@@ -140,9 +140,17 @@ func scoreColor(v, scale float32) ui.Color {
 	return base.Alpha(0.06 + 0.9*t)
 }
 
+// sectionTitle is a card's heading: the card's name, then the qualifier that says which layer,
+// head or position its numbers belong to.
+//
+// The title does not shrink and the row wraps, for the reason the stage header wraps: at 375 DIP
+// the FFN card's "升维 → GELU → 降维" was squeezed into two lines by a note about its parameter
+// share, so the card's own name broke in the middle while the qualifier held its full width. The
+// title is what the reader scans for; the qualifier is what they read second. On a desktop both
+// fit on one line and nothing wraps, which the snapshot set checks byte for byte.
 func sectionTitle(c *ui.Context, title, note string) {
-	ui.Row(c).AlignItems(ui.Center).Gap(8).Children(func() {
-		ui.Text(c, title).FontSize(fontTitle).Bold().TextColor(colText)
+	ui.Row(c).Wrap().AlignItems(ui.Center).Gap(8).Children(func() {
+		ui.Text(c, title).FontSize(fontTitle).Bold().TextColor(colText).Shrink(0)
 		if note != "" {
 			ui.Text(c, note).FontSize(fontSmall).TextColor(colFaint)
 		}

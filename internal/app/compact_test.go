@@ -326,6 +326,137 @@ func TestCompactLayoutScrollsToTheEndOfEveryStage(t *testing.T) {
 	}
 }
 
+// TestPhoneCardTitlesKeepOneLine keeps a card's name from being squeezed by its qualifier.
+//
+// The FFN card's "升维 → GELU → 降维" was drawn at 375 DIP as two lines — "升维 → GELU" then
+// "降维" — because the note beside it ("层 0 · d_ff = 384 · 占全部参数 58%") held its own width
+// and the title had to give way. That is backwards: the title is what the reader scans for, and
+// a broken arrow reads as two steps rather than one path. The same failure was fixed in the
+// stage header, which is why this test words the rule rather than naming the one card.
+//
+// A title is measured only while it is on screen. Outside the viewport the tester reports it at
+// zero size, and the first version of this test scrolled to the bottom of every stage before
+// looking — so it skipped every title it was meant to check and passed with the bug restored.
+// Measured, that mutation left it green. This version checks each title at the scroll offset
+// where it is actually drawn.
+func TestPhoneCardTitlesKeepOneLine(t *testing.T) {
+	size := phoneSizes[0] // the narrowest: 375
+	for step := 0; step < len(lessons); step++ {
+		a := newTestApp(t)
+		a.Step = step
+		tr := ui.NewTester(a.View, size.w, size.h)
+		tr.Frame()
+		titles := sectionTitlesOnStage(a)
+		checked := 0
+		for offset := 0; ; offset += 150 {
+			for _, title := range titles {
+				r, ok := tr.Find(title)
+				if !ok || r.W <= 0 {
+					continue // scrolled out of sight: nothing is drawn to measure
+				}
+				checked++
+				// One line of fontTitle is 19–20 DIP; the wrapped version measured 38.
+				if r.H > 24 {
+					t.Fatalf("step %d at %d DIP (scroll %d): the card title %q is drawn %.0f "+
+						"DIP tall, so it wrapped; the qualifier beside it should move to its own "+
+						"line instead", step+1, size.w, offset, title, r.H)
+				}
+			}
+			if offset > int(a.Scroll.MaxY)+size.h {
+				break
+			}
+			tr.Wheel(float32(size.w)/2, float32(size.h)/2, 0, 150)
+			tr.Advance(2e9)
+			tr.Frame()
+		}
+		// The guard has to have looked at something, or it is the vacuous test it replaced.
+		if checked < len(titles) {
+			t.Fatalf("step %d: %d of %d card titles were ever on screen; the sweep or the "+
+				"titles list is wrong", step+1, checked, len(titles))
+		}
+	}
+}
+
+// sectionTitlesOnStage is every heading the stage's cards draw, so the test above walks the
+// real set rather than a list that drifts from it.
+func sectionTitlesOnStage(a *App) []string {
+	titles := []string{lessons[a.Step].title}
+	tr := a.Trace
+	if tr == nil || len(tr.Tokens) == 0 {
+		return titles
+	}
+	switch a.Step {
+	case 0:
+		titles = append(titles, "提示词变成 token 序列", "字符 → 字节", "数据流与形状")
+	case 1:
+		titles = append(titles, fmt.Sprintf("token %d「%s」的输入向量", a.SelToken, tr.Tokens[a.SelToken].Text))
+	case 2:
+		titles = append(titles, fmt.Sprintf("token %d 的 Q / K / V", a.SelToken),
+			"分数矩阵", "掩码挡掉了什么")
+	case 3:
+		titles = append(titles, "注意力矩阵", "加权求和")
+	case 4:
+		titles = append(titles, "残差流", "LayerNorm", "每一层会说什么")
+	case 5:
+		titles = append(titles, "升维 → GELU → 降维")
+	case 6:
+		titles = append(titles, "最后位置的向量")
+	}
+	return titles
+}
+
+// TestPhoneHeatmapUsesTheCardsWidth keeps the matrix from being squeezed by a column that is not
+// beside it on a phone.
+//
+// The heatmap sizes its cells from the width the window leaves after the panels and the card's
+// second column. On a desktop that column holds the legend or the bars beside the matrix; on a
+// phone the same row wraps, so the legend is below the matrix and nothing sits beside it — but
+// the arithmetic still reserved 160 DIP for it. Measured with a 64-token prompt at 375 DIP: the
+// matrix came out 180 DIP wide with 2.5-DIP cells in a card with about 313 DIP of content, so
+// 335 DIP and 4.9-DIP cells were there for the taking.
+//
+// The assertion is on the cells, not on the box: a few DIP of the box are the axis-label gutter
+// and the cell rounding, and pinning the box to the content width would fail for reasons that
+// have nothing to do with the reserve.
+func TestPhoneHeatmapUsesTheCardsWidth(t *testing.T) {
+	prompt := "attention is a weighted sum attention is a weighted sum attention is a"
+	for _, size := range []struct {
+		name string
+		w, h int
+	}{
+		{"iPhone SE", 375, 667},
+		{"iPhone 15", 393, 852},
+	} {
+		a := newTestApp(t)
+		a.Prompt = prompt
+		a.recompute()
+		a.Step = 3
+		a.SelToken = len(a.Trace.Tokens) - 1
+		tr := ui.NewTester(a.View, size.w, size.h)
+		tr.Frame()
+		box := a.lastHeatmapRect
+		T := len(a.Trace.Tokens)
+		if T < 32 {
+			t.Fatalf("%s: the prompt produced only %d tokens; this test needs a full matrix",
+				size.name, T)
+		}
+		// The room the card has: from the matrix's own left edge to the window's right edge less
+		// the same margin. Not "the window less twice the margin" — the matrix sits at the
+		// card's content edge, and the card's right margin is not the same number.
+		room := float32(size.w) - 2*box.X
+		cell := (box.W - heatmapGutter.X) / float32(T)
+		if cell < 4 {
+			t.Fatalf("%s: %d tokens give %.1f-DIP cells in a %.0f-DIP matrix with about %.0f "+
+				"DIP of room — the cells are sized from a width that is not there",
+				size.name, T, cell, box.W, room)
+		}
+		// And the matrix has to fit: a box past the window is clipped, with no scroll to find it.
+		if right := box.X + box.W; right > float32(size.w) {
+			t.Fatalf("%s: the heatmap ends at x=%.0f in a %d-DIP window", size.name, right, size.w)
+		}
+	}
+}
+
 // TestCompactHeaderNamesTheCurrentStage keeps the one piece of navigation the compact layout
 // cannot show as a list.
 //
