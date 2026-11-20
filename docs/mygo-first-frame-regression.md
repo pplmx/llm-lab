@@ -8,7 +8,7 @@
 
 ## 复现
 
-`llm-lab` 的 `internal/app` 里，`BenchmarkFirstFrame` 是 `ui.Render(a.View, 1500, 940, 1)`（每次都是新窗口），`BenchmarkSteadyFrame` 是同一个 `ui.Tester` 反复 `Frame()`：
+`llm-xray` 的 `internal/app` 里，`BenchmarkFirstFrame` 是 `ui.Render(a.View, 1500, 940, 1)`（每次都是新窗口），`BenchmarkSteadyFrame` 是同一个 `ui.Tester` 反复 `Frame()`：
 
 ```go
 func BenchmarkFirstFrame(b *testing.B) {

@@ -84,7 +84,7 @@ RENDER=1 go test ./internal/app -run 'TestRenderSteps|TestRenderSizes'
 RENDER=1 RENDER_DIR=/tmp/after go test ./internal/app -run 'TestRenderSteps|TestRenderSizes'
 ```
 
-截图默认写到 `/tmp/llmlab-step*.png`、`/tmp/size-*.png`，覆盖 1180/1500/1920 三种宽度与 64 token 长提示词。改动 UI 请在 PR 里附 1180×720 和 1500×940 两张。
+截图默认写到 `/tmp/llm-xray-step*.png`、`/tmp/size-*.png`，覆盖 1180/1500/1920 三种宽度与 64 token 长提示词。改动 UI 请在 PR 里附 1180×720 和 1500×940 两张。
 
 对比改动前后时给两次渲染各指定一个 `RENDER_DIR`：默认位置每跑一次就覆盖，跑完一轮再想比就没有基线了。`cmp -s` 是够用的比对方式——这个渲染是确定的，同一状态两次出图逐字节相同。
 

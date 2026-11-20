@@ -1,6 +1,6 @@
-# LLM Lab · Transformer 解剖台
+# llm-xray · Transformer 逐层透视
 
-用 **MyGo** 的原生 UI（纯 Go、GPU 绘制、没有 WebView、没有 HTML/JS）写的一个 Transformer 架构学习工具：输入一句话，然后逐层剥开它——分词、嵌入、Q/K/V、注意力矩阵、残差与 LayerNorm、FFN、logits 与采样，每一步都能看到真实的数字。
+用 **MyGo** 的原生 UI（纯 Go、GPU 绘制、没有 WebView、没有 HTML/JS）写的一个 Transformer 架构学习工具：输入一句话，然后逐层看进去——分词、嵌入、Q/K/V、注意力矩阵、残差与 LayerNorm、FFN、logits 与采样，每一步都能看到真实的数字。
 
 同一份代码也跑在 iPhone、iPad 和 Android 上：手机与平板用一栏布局（阶段列表收进浮层、检查器移到课程下方），界面在 375 DIP 宽也能读，见[手机与平板](#手机与平板)。
 
@@ -68,11 +68,11 @@ just clean      # 清空 build/
 
 | 目标 | 产物 |
 | --- | --- |
-| `linux/amd64`、`linux/arm64` | 可执行文件、`llm-lab_<ver>_<arch>.deb`、带 `install.sh` 的 `.tar.gz`、`PKGBUILD` |
-| `windows/amd64` | `LLM Lab.exe`；在 Windows 上构建时自动补 `LLM Lab-setup-<ver>-amd64.exe`（NSIS） |
-| `darwin/universal` | `LLM Lab.app`（同时含 arm64 与 amd64）；在 macOS 上构建时额外产出 `.dmg`，可配置签名/公证 |
-| `android/arm64` | `llm-lab-<ver>.apk` 与 `llm-lab-<ver>.aab`（Play 用后者）；默认用调试密钥签名，见[手机与平板](#手机与平板) |
-| `ios/simulator` | 模拟器用的 `LLM Lab.app`；真机与 App Store 要 `-platform ios`，另需签名身份与描述文件 |
+| `linux/amd64`、`linux/arm64` | 可执行文件、`llm-xray_<ver>_<arch>.deb`、带 `install.sh` 的 `.tar.gz`、`PKGBUILD` |
+| `windows/amd64` | `llm-xray.exe`；在 Windows 上构建时自动补 `llm-xray-setup-<ver>-amd64.exe`（NSIS） |
+| `darwin/universal` | `llm-xray.app`（同时含 arm64 与 amd64）；在 macOS 上构建时额外产出 `.dmg`，可配置签名/公证 |
+| `android/arm64` | `llm-xray-<ver>.apk` 与 `llm-xray-<ver>.aab`（Play 用后者）；默认用调试密钥签名，见[手机与平板](#手机与平板) |
+| `ios/simulator` | 模拟器用的 `llm-xray.app`；真机与 App Store 要 `-platform ios`，另需签名身份与描述文件 |
 
 MyGo 不依赖 cgo，所以**在任意系统上都能交叉编译三端**，不需要 macOS 机器也能出 `.app`。只有三件事必须在 macOS 本机完成：`.dmg` 打包、Developer ID 签名、公证。Windows 安装包需要 `makensis`，Linux/macOS 上没装就跳过，不影响 exe 本体。
 
