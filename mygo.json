@@ -1,6 +1,7 @@
 {
-  "name": "LLM Lab",
-  "identifier": "dev.llmlab.app",
+  "name": "llm-xray",
+  "slug": "llm-xray",
+  "identifier": "dev.llmxray.app",
   "out": "build",
   "ios": {
     "orientations": ["portrait", "landscape"]

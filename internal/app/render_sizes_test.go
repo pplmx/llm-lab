@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"llmlab/internal/model"
+	"llm-xray/internal/model"
 
 	"github.com/egoist/mygo/ui"
 )

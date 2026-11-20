@@ -18,7 +18,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"llmlab/internal/model"
+	"llm-xray/internal/model"
 )
 
 // bundledWeights parses weights.json once per test binary. model.Bundled re-reads
@@ -56,14 +56,14 @@ func TestRenderSteps(t *testing.T) {
 	}
 	for step := range lessons {
 		a.Step = step
-		writeSnapshot(t, dir, fmt.Sprintf("llmlab-step%d.png", step), ui.Render(a.View, 1500, 940, 1))
+		writeSnapshot(t, dir, fmt.Sprintf("llm-xray-step%d.png", step), ui.Render(a.View, 1500, 940, 1))
 	}
 
 	// A CJK prompt exercises three-byte tokens and wider chips.
 	a.Prompt = "注意力就是加权求和"
 	a.Step = 0
 	a.recompute()
-	writeSnapshot(t, dir, "llmlab-step0-cjk.png", ui.Render(a.View, 1500, 940, 1))
+	writeSnapshot(t, dir, "llm-xray-step0-cjk.png", ui.Render(a.View, 1500, 940, 1))
 }
 
 func TestRecomputeKeepsSelectionValid(t *testing.T) {

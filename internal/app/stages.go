@@ -9,7 +9,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"llmlab/internal/model"
+	"llm-xray/internal/model"
 )
 
 type lesson struct {

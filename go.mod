@@ -1,4 +1,4 @@
-module llmlab
+module llm-xray
 
 go 1.27.3
 

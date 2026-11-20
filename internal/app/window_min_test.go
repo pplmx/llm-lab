@@ -200,11 +200,11 @@ func TestShortPromptsRenderWithoutNaNAcrossEveryStage(t *testing.T) {
 // Five sizes spanning the supported range, including two that are not in the snapshot set.
 func TestFixedChromeStaysInsideTheWindow(t *testing.T) {
 	anchors := []string{
-		"LLM Lab", // the app title in the sidebar
-		"vocab",   // the sidebar's model block
-		"参数",      // the model block's parameter row
-		"检查器",     // the inspector's header
-		"▶ 自动播放",  // the stage bar's play button
+		"llm-xray", // the app title in the sidebar
+		"vocab",    // the sidebar's model block
+		"参数",       // the model block's parameter row
+		"检查器",      // the inspector's header
+		"▶ 自动播放",   // the stage bar's play button
 	}
 	for _, size := range [][2]int{
 		{1180, 720}, {1280, 800}, {1500, 940}, {1700, 1000}, {1920, 1080},
@@ -254,7 +254,7 @@ func TestExtremeAspectRatiosKeepTheChromeInside(t *testing.T) {
 			a.Step = step
 			tr := ui.NewTester(a.View, size[0], size[1])
 			tr.Frame()
-			for _, s := range []string{"LLM Lab", "检查器", "▶ 自动播放"} {
+			for _, s := range []string{"llm-xray", "检查器", "▶ 自动播放"} {
 				r, ok := tr.Find(s)
 				if !ok {
 					t.Fatalf("%dx%d stage %d: %q is not rendered", size[0], size[1], step, s)

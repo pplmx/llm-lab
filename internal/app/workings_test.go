@@ -15,7 +15,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"llmlab/internal/model"
+	"llm-xray/internal/model"
 )
 
 // TestWorkingsStaysFreeOfTheInterface keeps workings.go what it claims to be:

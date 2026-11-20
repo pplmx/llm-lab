@@ -91,7 +91,7 @@ func (a *App) compactHeader(c *ui.Context) {
 		// what the step bar no longer has room for.
 		list.Label(fmt.Sprintf("阶段列表，共 %d 个阶段，当前第 %d 个 %s",
 			len(lessons), a.Step+1, lessons[a.Step].name))
-		ui.Text(c, "LLM Lab").FontSize(fontTitle).Bold().TextColor(colText).Shrink(0)
+		ui.Text(c, "llm-xray").FontSize(fontTitle).Bold().TextColor(colText).Shrink(0)
 		ui.Spacer(c).Grow(1)
 		// The desktop step bar's position label, word for word: the two layouts say where the
 		// reader is the same way. It carries the stage's name rather than its title for the

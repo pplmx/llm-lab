@@ -7,7 +7,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"llmlab/internal/model"
+	"llm-xray/internal/model"
 )
 
 // vectorStrip paints a row of cells, one per dimension, colored by sign.

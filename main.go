@@ -1,4 +1,4 @@
-// LLM Lab is a Transformer anatomy viewer built with MyGo's native UI: no
+// llm-xray is a Transformer observability tool built with MyGo's native UI: no
 // webview, no HTML, every pixel drawn by Go on the GPU.
 package main
 
@@ -10,8 +10,8 @@ import (
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
 
-	"llmlab/internal/app"
-	"llmlab/internal/model"
+	"llm-xray/internal/app"
+	"llm-xray/internal/model"
 )
 
 func main() {
@@ -71,7 +71,7 @@ func main() {
 
 	mygo.App.WhenReady(func() {
 		mygo.NewWindow(mygo.WindowOptions{
-			Title:     "LLM Lab — Transformer 解剖台",
+			Title:     "llm-xray — Transformer 逐层透视",
 			Width:     *width,
 			Height:    *height,
 			MinWidth:  app.MinWindowWidth,

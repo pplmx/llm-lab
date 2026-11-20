@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"llmlab/internal/model"
+	"llm-xray/internal/model"
 )
 
 // docs/cards.md — the card notes split out of the README — quotes measured figures for eight

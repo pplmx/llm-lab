@@ -22,7 +22,7 @@ import (
 	"sort"
 	"unicode/utf8"
 
-	"llmlab/internal/model"
+	"llm-xray/internal/model"
 )
 
 // softmaxParts is the arithmetic behind one attention weight, as the inspector

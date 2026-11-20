@@ -9,7 +9,7 @@ import (
 
 	"github.com/egoist/mygo/ui"
 
-	"llmlab/internal/model"
+	"llm-xray/internal/model"
 )
 
 type modelToken = model.Token
@@ -923,8 +923,8 @@ func (a *App) sidebar(c *ui.Context) {
 				ui.Text(c, "λ").FontSize(fontHero).Bold().TextColor(colBg)
 			})
 			ui.Column(c).Gap(0).Children(func() {
-				ui.Text(c, "LLM Lab").FontSize(fontTitle).Bold().TextColor(colText)
-				ui.Text(c, "Transformer 解剖台").FontSize(fontMicro).TextColor(colFaint)
+				ui.Text(c, "llm-xray").FontSize(fontTitle).Bold().TextColor(colText)
+				ui.Text(c, "Transformer 逐层透视").FontSize(fontMicro).TextColor(colFaint)
 			})
 		})
 
