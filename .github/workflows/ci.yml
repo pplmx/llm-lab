@@ -119,7 +119,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: llm-lab-${{ matrix.artifact }}
+          name: llm-xray-${{ matrix.artifact }}
           path: build/
           if-no-files-found: error
           retention-days: 7
@@ -207,7 +207,7 @@ jobs:
           # contains, startsWith, endsWith, format, join, toJSON, fromJSON, hashFiles,
           # case), and an unknown one rejects the whole workflow before any job runs.
           # The two platforms are distinct names already, so the slice is the label.
-          name: llm-lab-${{ matrix.artifact }}
+          name: llm-xray-${{ matrix.artifact }}
           path: build/
           if-no-files-found: error
           retention-days: 7

@@ -46,12 +46,12 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           ditto -c -k --sequesterRsrc --keepParent \
-            "build/darwin-universal/LLM Lab.app" \
-            "build/LLM-Lab-${GITHUB_REF_NAME}-macos-universal.zip"
+            "build/darwin-universal/llm-xray.app" \
+            "build/llm-xray-${GITHUB_REF_NAME}-macos-universal.zip"
 
       - uses: actions/upload-artifact@v7
         with:
-          name: llm-lab-${{ matrix.artifact }}
+          name: llm-xray-${{ matrix.artifact }}
           path: build/
           if-no-files-found: error
 

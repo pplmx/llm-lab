@@ -1,4 +1,4 @@
-# LLM Lab —— 构建、测试与运行
+# llm-xray —— 构建、测试与运行
 #
 #   just              三端全量构建（Linux + Windows + macOS）
 #   just build        同上；也可指定平台：just build windows/amd64
@@ -145,8 +145,8 @@ doctor:
 clean:
     rm -rf build
 
-# 渲染全部截图到指定目录（默认 /tmp/llm-lab-shots）
-snapshots dir="/tmp/llm-lab-shots":
+# 渲染全部截图到指定目录（默认 /tmp/llm-xray-shots）
+snapshots dir="/tmp/llm-xray-shots":
     RENDER=1 RENDER_DIR="{{dir}}" go test ./internal/app -run 'TestRenderSteps|TestRenderSizes' -count=1
     @echo "截图已写入 {{dir}}（$(ls {{dir}}/*.png | wc -l) 张）"
 
@@ -166,7 +166,7 @@ docs:
 # 或者把空目录当基线（会误报「全部变化」）都不会有人发现。
 
 # 对比两次截图，逐张报告变化
-snapshots-diff base new="/tmp/llm-lab-shots":
+snapshots-diff base new="/tmp/llm-xray-shots":
     #!/usr/bin/env bash
     if [ ! -d "{{base}}" ]; then echo "基线目录不存在：{{base}}"; exit 1; fi
     if [ -z "$(ls -A {{base}} 2>/dev/null)" ]; then echo "基线目录是空的：{{base}}"; exit 1; fi

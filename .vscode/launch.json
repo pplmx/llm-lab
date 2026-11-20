@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "运行 LLM Lab",
+      "name": "运行 llm-xray",
       "type": "go",
       "request": "launch",
       "mode": "auto",
